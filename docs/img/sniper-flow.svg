@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" role="img" aria-labelledby="t d">
+  <title id="t">sniper decision flow</title>
+  <desc id="d">Flow of bots/sniper/sniper.mjs: detect a new token, apply dev-buy and holder filters, check cooldown and position cap, buy, then exit on take-profit, stop-loss or timeout, with limits ending the session.</desc>
+  <rect width="1200" height="600" fill="#0f1724"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
+    </marker>
+    <style>
+      .b { fill:#16243a; stroke:#2dd4bf; stroke-width:2; rx:10; }
+      .b2 { fill:#1b1a10; stroke:#fbbf24; stroke-width:2; rx:10; }
+      .b3 { fill:#151d2b; stroke:#3b5578; stroke-width:2; rx:10; }
+      .lbl { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:13px; fill:#dbe7f5; }
+      .sm { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:11px; fill:#8aa0b8; }
+      .hd { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:19px; font-weight:700; fill:#e6f1ff; }
+      .e { stroke:#2dd4bf; stroke-width:2; fill:none; marker-end:url(#a); }
+    </style>
+  </defs>
+  <text x="36" y="38" class="hd">sniper.mjs — decision flow (thresholds are the env default names)</text>
+
+  <rect x="36" y="60" width="250" height="66" class="b3"/>
+  <text x="50" y="86" class="lbl">New token event</text>
+  <text x="50" y="106" class="sm">Create / CreateV2 in pump.fun logs</text>
+
+  <rect x="36" y="146" width="250" height="66" class="b"/>
+  <text x="50" y="172" class="lbl">Dev buy filter</text>
+  <text x="50" y="192" class="sm">SNIPER_MIN_DEV_BUY (0 = off)</text>
+
+  <rect x="36" y="232" width="250" height="80" class="b"/>
+  <text x="50" y="258" class="lbl">Holder gate</text>
+  <text x="50" y="278" class="sm">SNIPER_MIN_HOLDERS distinct wallets</text>
+  <text x="50" y="296" class="sm">within SNIPER_HOLDER_WAIT_SEC</text>
+
+  <rect x="36" y="332" width="250" height="66" class="b"/>
+  <text x="50" y="358" class="lbl">Organic crowd</text>
+  <text x="50" y="378" class="sm">SNIPER_MIN_SLOTS · SNIPER_MIN_DELAY_MS</text>
+
+  <rect x="36" y="418" width="250" height="66" class="b"/>
+  <text x="50" y="444" class="lbl">Cooldown / slots</text>
+  <text x="50" y="464" class="sm">SNIPER_COOLDOWN_SEC · SNIPER_MAX_POSITIONS</text>
+
+  <rect x="36" y="504" width="250" height="66" class="b2"/>
+  <text x="50" y="530" class="lbl">Buy</text>
+  <text x="50" y="550" class="sm">SNIPER_BUY_SOL · guard limits</text>
+
+  <path d="M161 126 V 146" class="e"/><path d="M161 212 V 232" class="e"/><path d="M161 312 V 332" class="e"/><path d="M161 398 V 418" class="e"/><path d="M161 484 V 504" class="e"/>
+
+  <rect x="360" y="232" width="230" height="66" class="b3"/>
+  <text x="374" y="258" class="lbl">No: drop the token</text>
+  <text x="374" y="278" class="sm">no money spent, logged once</text>
+  <path d="M286 272 H 360" class="e"/>
+
+  <rect x="360" y="418" width="230" height="66" class="b3"/>
+  <text x="374" y="444" class="lbl">Skip: not eligible now</text>
+  <text x="374" y="464" class="sm">cooldown / position cap</text>
+  <path d="M286 451 H 360" class="e"/>
+
+  <rect x="360" y="504" width="230" height="66" class="b2"/>
+  <text x="374" y="530" class="lbl">Open position</text>
+  <text x="374" y="550" class="sm">entry price from the trade</text>
+
+  <rect x="660" y="504" width="290" height="66" class="b"/>
+  <text x="674" y="528" class="lbl">Poll exits (POLL_MS 3000)</text>
+  <text x="674" y="548" class="sm">TP · SL · timeout</text>
+  <path d="M590 537 H 660" class="e"/>
+
+  <rect x="660" y="418" width="290" height="66" class="b3"/>
+  <text x="674" y="444" class="lbl">Exit rules</text>
+  <text x="674" y="464" class="sm">SNIPER_TAKE_PROFIT · SNIPER_STOP_LOSS · SNIPER_TIMEOUT_SEC</text>
+  <path d="M805 504 V 484" class="e"/>
+
+  <rect x="660" y="332" width="290" height="66" class="b3"/>
+  <text x="674" y="358" class="lbl">Sell and journal</text>
+  <text x="674" y="378" class="sm">recordResult → MAX_CONSEC_LOSSES counter</text>
+  <path d="M805 418 V 398" class="e"/>
+
+  <rect x="660" y="232" width="290" height="66" class="b2"/>
+  <text x="674" y="258" class="lbl">Session end</text>
+  <text x="674" y="278" class="sm">MAX_SESSION_SOL / MAX_CONSEC_LOSSES / Ctrl+C / SNIPER_MAX_SEC</text>
+  <path d="M805 332 V 298" class="e"/>
+
+  <rect x="660" y="146" width="290" height="66" class="b3"/>
+  <text x="674" y="172" class="lbl">Close open positions</text>
+  <text x="674" y="192" class="sm">manual stop trades, then SESSION SUMMARY</text>
+  <path d="M805 232 V 212" class="e"/>
+
+  <text x="36" y="592" class="sm">DRY RUN runs the same flow with the transaction step replaced by a simulated fill. The instance lock prevents two snipers on one journal dir.</text>
+</svg>

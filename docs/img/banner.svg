@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="t d">
+  <title id="t">pump-bot banner</title>
+  <desc id="d">Deep navy banner with a teal bonding-curve line that rises and flattens, an amber accent, and a small node pattern suggesting a blockchain stream.</desc>
+  <rect width="1280" height="320" fill="#0b1220"/>
+  <g stroke="#1a2b45" stroke-width="1">
+    <path d="M0 80h1280M0 160h1280M0 240h1280"/>
+    <path d="M160 0v320M320 0v320M480 0v320M640 0v320M800 0v320M960 0v320M1120 0v320"/>
+  </g>
+  <g fill="none" stroke="#2dd4bf" stroke-width="6" stroke-linecap="round">
+    <path d="M80 250 C 260 250, 340 210, 470 150 S 700 60, 880 58 C 1000 57, 1080 70, 1200 76"/>
+  </g>
+  <g fill="#2dd4bf">
+    <circle cx="470" cy="150" r="7"/><circle cx="700" cy="86" r="7"/><circle cx="880" cy="58" r="7"/>
+  </g>
+  <g fill="none" stroke="#fbbf24" stroke-width="3" stroke-dasharray="6 8">
+    <path d="M80 250 L 1200 78"/>
+  </g>
+  <g fill="#0b1220" stroke="#fbbf24" stroke-width="3">
+    <circle cx="1040" cy="64" r="26"/>
+  </g>
+  <text x="1040" y="72" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="26" font-weight="700" fill="#fbbf24">p</text>
+  <g fill="#8aa0b8" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+    <circle cx="1120" cy="180" r="5"/><circle cx="1160" cy="200" r="5"/><circle cx="1200" cy="180" r="5"/>
+    <circle cx="1140" cy="236" r="5"/><circle cx="1186" cy="246" r="5"/>
+    <path d="M1120 180 L 1160 200 L 1200 180 M 1160 200 L 1140 236 M 1140 236 L 1186 246" fill="none" stroke="#2a405c" stroke-width="2"/>
+  </g>
+  <text x="80" y="108" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="58" font-weight="800" fill="#e6f1ff">pump-bot</text>
+  <text x="82" y="150" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="22" fill="#9fb3c8">pump.fun on-chain bots and analytics. Dry-run first.</text>
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16">
+    <rect x="80" y="276" width="176" height="30" rx="15" fill="#122238" stroke="#2dd4bf"/>
+    <text x="168" y="296" text-anchor="middle" fill="#2dd4bf">DRY RUN by default</text>
+    <rect x="272" y="276" width="196" height="30" rx="15" fill="#1a1508" stroke="#fbbf24"/>
+    <text x="370" y="296" text-anchor="middle" fill="#fbbf24">research tool, no hype</text>
+  </g>
+</svg>

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="t d">
+  <title id="t">DRY RUN versus LIVE</title>
+  <desc id="d">Two lanes. DRY RUN is the default: signal, guard check, preview and journal, and it never signs or sends. LIVE requires the --live flag and LIVE_CONFIRM=yes: signal, guard check, simulation, sign and send, confirmation, journal.</desc>
+  <rect width="1200" height="520" fill="#0f1724"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
+    </marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#fbbf24"/>
+    </marker>
+    <style>
+      .hd { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:20px; font-weight:700; fill:#e6f1ff; }
+      .lbl { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:14px; fill:#dbe7f5; }
+      .small { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:12px; fill:#8aa0b8; }
+      .boxA { fill:#10241f; stroke:#2dd4bf; stroke-width:2; rx:10; }
+      .boxB { fill:#241a08; stroke:#fbbf24; stroke-width:2; rx:10; }
+      .edgeA { stroke:#2dd4bf; stroke-width:2; fill:none; marker-end:url(#a); }
+      .edgeB { stroke:#fbbf24; stroke-width:2; fill:none; marker-end:url(#b); }
+    </style>
+  </defs>
+  <text x="40" y="42" class="hd">Modes: what actually happens</text>
+  <text x="40" y="66" class="small">Mode is decided in lib/config.mjs: LIVE = --live present AND --dry-run absent. LIVE also requires LIVE_CONFIRM=yes or the process exits before any connection.</text>
+
+  <rect x="40" y="92" width="1120" height="180" fill="#0d1b18" stroke="#2dd4bf" stroke-width="2" rx="14"/>
+  <text x="60" y="122" class="hd" fill="#2dd4bf">DRY RUN — default, never signs</text>
+  <rect x="60" y="146" width="190" height="90" class="boxA"/><text x="76" y="176" class="lbl">1. Signal</text><text x="76" y="198" class="small">WS trade/create event</text><text x="76" y="216" class="small">or CLI command</text>
+  <rect x="285" y="146" width="190" height="90" class="boxA"/><text x="301" y="176" class="lbl">2. Guard</text><text x="301" y="198" class="small">MAX_TRADE_SOL</text><text x="301" y="216" class="small">MAX_SESSION_SOL</text>
+  <rect x="510" y="146" width="190" height="90" class="boxA"/><text x="526" y="176" class="lbl">3. Preview</text><text x="526" y="198" class="small">curve math, exit check</text><text x="526" y="216" class="small">fees, slippage</text>
+  <rect x="735" y="146" width="190" height="90" class="boxA"/><text x="751" y="176" class="lbl">4. Journal</text><text x="751" y="198" class="small">data/journal/*.jsonl</text><text x="751" y="216" class="small">“would buy / would sell”</text>
+  <rect x="960" y="146" width="180" height="90" class="boxA"/><text x="976" y="176" class="lbl">No tx</text><text x="976" y="198" class="small">no key used</text><text x="976" y="216" class="small">no SOL spent</text>
+  <path d="M250 191 H 285" class="edgeA"/><path d="M475 191 H 510" class="edgeA"/><path d="M700 191 H 735" class="edgeA"/><path d="M925 191 H 960" class="edgeA"/>
+
+  <rect x="40" y="300" width="1120" height="180" fill="#1d1608" stroke="#fbbf24" stroke-width="2" rx="14"/>
+  <text x="60" y="330" class="hd" fill="#fbbf24">LIVE — --live + LIVE_CONFIRM=yes</text>
+  <rect x="60" y="354" width="170" height="90" class="boxB"/><text x="76" y="384" class="lbl">1. Signal</text><text x="76" y="406" class="small">same as dry-run</text>
+  <rect x="250" y="354" width="170" height="90" class="boxB"/><text x="266" y="384" class="lbl">2. Guard</text><text x="266" y="406" class="small">limits + halt</text>
+  <rect x="440" y="354" width="170" height="90" class="boxB"/><text x="456" y="384" class="lbl">3. Simulate</text><text x="456" y="406" class="small">simulateTx in lib/exec.mjs</text>
+  <rect x="630" y="354" width="170" height="90" class="boxB"/><text x="646" y="384" class="lbl">4. Sign + send</text><text x="646" y="406" class="small">keys/&lt;name&gt;.json</text>
+  <rect x="820" y="354" width="150" height="90" class="boxB"/><text x="836" y="384" class="lbl">5. Confirm</text><text x="836" y="406" class="small">blockhash window</text>
+  <rect x="990" y="354" width="150" height="90" class="boxB"/><text x="1006" y="384" class="lbl">6. Journal</text><text x="1006" y="406" class="small">actual fill from meta</text>
+  <path d="M230 399 H 250" class="edgeB"/><path d="M420 399 H 440" class="edgeB"/><path d="M610 399 H 630" class="edgeB"/><path d="M800 399 H 820" class="edgeB"/><path d="M970 399 H 990" class="edgeB"/>
+  <text x="60" y="470" class="small">If the simulation fails the transaction is NOT sent (it would pay the fee and fail on-chain).</text>
+  <text x="60" y="492" class="small">A failed sell is retried a bounded number of times, then the position is marked STUCK and listed in the session summary.</text>
+</svg>

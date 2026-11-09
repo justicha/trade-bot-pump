@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="t d">
+  <title id="t">wallet setup flow</title>
+  <desc id="d">Generate a local wallet, store the key file under keys which is gitignored, fund it with a small amount, run only dry-run first, and enable live mode only with an explicit flag and confirmation. A warning marks the key file as a secret.</desc>
+  <rect width="1200" height="420" fill="#0f1724"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
+    </marker>
+    <style>
+      .b { fill:#16243a; stroke:#2dd4bf; stroke-width:2; rx:10; }
+      .b2 { fill:#241a08; stroke:#fbbf24; stroke-width:2; rx:10; }
+      .b3 { fill:#151d2b; stroke:#3b5578; stroke-width:2; rx:10; }
+      .lbl { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:14px; fill:#dbe7f5; }
+      .sm { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:11px; fill:#8aa0b8; }
+      .hd { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:19px; font-weight:700; fill:#e6f1ff; }
+      .e { stroke:#2dd4bf; stroke-width:2; fill:none; marker-end:url(#a); }
+    </style>
+  </defs>
+  <text x="36" y="40" class="hd">Wallet setup — from zero to a dry run</text>
+
+  <rect x="36" y="70" width="210" height="90" class="b"/>
+  <text x="50" y="98" class="lbl">1. Generate</text>
+  <text x="50" y="120" class="sm">node lib/wallet.mjs generate [name]</text>
+  <text x="50" y="138" class="sm">prints the public address</text>
+
+  <rect x="286" y="70" width="230" height="90" class="b2"/>
+  <text x="300" y="98" class="lbl">2. Key file</text>
+  <text x="300" y="120" class="sm">keys/&lt;name&gt;.json — JSON array</text>
+  <text x="300" y="138" class="sm">gitignored, chmod 0600 on POSIX</text>
+
+  <rect x="556" y="70" width="220" height="90" class="b"/>
+  <text x="570" y="98" class="lbl">3. Fund</text>
+  <text x="570" y="120" class="sm">send a small amount of SOL</text>
+  <text x="570" y="138" class="sm">throwaway wallet only</text>
+
+  <rect x="816" y="70" width="348" height="90" class="b"/>
+  <text x="830" y="98" class="lbl">4. Dry run first</text>
+  <text x="830" y="120" class="sm">npm run sniper -- --dry-run</text>
+  <text x="830" y="138" class="sm">no key is used to sign, nothing is sent</text>
+
+  <path d="M246 115 H 286" class="e"/><path d="M516 115 H 556" class="e"/><path d="M776 115 H 816" class="e"/>
+
+  <rect x="556" y="220" width="608" height="80" class="b2"/>
+  <text x="572" y="248" class="lbl">5. Optional: live (only after you reviewed the code and the limits)</text>
+  <text x="572" y="270" class="sm">--live requires LIVE_CONFIRM=yes in the environment; otherwise the process exits with a clear message.</text>
+  <text x="572" y="288" class="sm">Never publish a screenshot with the API key in RPC_URL or with the key file open.</text>
+  <path d="M990 160 V 220" class="e"/>
+
+  <rect x="36" y="220" width="470" height="80" class="b3"/>
+  <text x="52" y="248" class="lbl">Check what git tracks</text>
+  <text x="52" y="270" class="sm">git ls-files — keys/ and .env must not appear</text>
+  <text x="52" y="288" class="sm">The bot loads the key once and only signs with it.</text>
+
+  <g transform="translate(140,350)">
+    <path d="M0 -30 L 30 -18 V 6 C 30 22, 18 32, 0 38 C -18 32, -30 22, -30 6 V -18 Z" fill="#241a08" stroke="#fbbf24" stroke-width="3"/>
+    <text x="0" y="2" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="26" font-weight="700" fill="#fbbf24">!</text>
+    <text x="52" y="-8" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="15" font-weight="700" fill="#fbbf24">Never share keys/ or .env</text>
+    <text x="52" y="14" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="12" fill="#c9b48a">Anyone with the key file controls all funds in that wallet.</text>
+    <text x="52" y="34" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="12" fill="#c9b48a">No screenshots, no chats, no commits. Use a throwaway wallet.</text>
+  </g>
+</svg>

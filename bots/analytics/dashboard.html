@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pump.fun Live Analytics</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0a0a0f; color: #e0e0e0; padding: 20px; }
+  h1 { color: #00ff88; margin-bottom: 20px; font-size: 1.4em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: #14141f; border: 1px solid #2a2a3f; border-radius: 8px; padding: 16px; }
+  .card .label { color: #888; font-size: 0.75em; text-transform: uppercase; letter-spacing: 1px; }
+  .card .value { font-size: 1.6em; color: #00ff88; margin-top: 4px; }
+  .card .value.red { color: #ff4444; }
+  .card .value.blue { color: #4488ff; }
+  h2 { color: #aaa; font-size: 1em; margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+  th { text-align: left; color: #666; padding: 6px 8px; border-bottom: 1px solid #2a2a3f; }
+  td { padding: 6px 8px; border-bottom: 1px solid #1a1a2f; }
+  .token-row td:first-child { color: #00ff88; }
+  .buy { color: #00cc66; }
+  .sell { color: #ff4444; }
+  .time { color: #666; font-size: 0.8em; }
+  #status { position: fixed; top: 10px; right: 20px; font-size: 0.75em; }
+  .live { color: #00ff88; }
+  .dead { color: #ff4444; }
+  .section { background: #14141f; border: 1px solid #2a2a3f; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<h1>pump.fun Live Analytics</h1>
+<div id="status" class="dead">connecting...</div>
+
+<div class="grid">
+  <div class="card"><div class="label">New Tokens</div><div class="value" id="creates">-</div></div>
+  <div class="card"><div class="label">Total Trades</div><div class="value blue" id="trades">-</div></div>
+  <div class="card"><div class="label">Buys</div><div class="value" id="buys">-</div></div>
+  <div class="card"><div class="label">Sells</div><div class="value red" id="sells">-</div></div>
+  <div class="card"><div class="label">Volume (SOL)</div><div class="value blue" id="volume">-</div></div>
+  <div class="card"><div class="label">Creates/min</div><div class="value" id="cpm">-</div></div>
+  <div class="card"><div class="label">Trades/min</div><div class="value blue" id="tpm">-</div></div>
+  <div class="card"><div class="label">Uptime</div><div class="value" id="uptime">-</div></div>
+</div>
+
+<div class="section">
+  <h2>Recent Tokens</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Symbol</th><th>Mint</th><th>Creator</th><th>Time</th></tr></thead>
+    <tbody id="tokens"></tbody>
+  </table>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+  <div class="section">
+    <h2>Top Buyers (by volume)</h2>
+    <table>
+      <thead><tr><th>Address</th><th>Trades</th><th>Volume (SOL)</th></tr></thead>
+      <tbody id="buyers"></tbody>
+    </table>
+  </div>
+  <div class="section">
+    <h2>Top Tokens (by volume)</h2>
+    <table>
+      <thead><tr><th>Mint</th><th>Volume (SOL)</th></tr></thead>
+      <tbody id="topTokens"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function fmt(n) { return Number(n).toLocaleString(); }
+function ago(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return s + 's ago';
+  return Math.floor(s / 60) + 'm ago';
+}
+function uptimeFmt(s) {
+  s = Number(s);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m ${Math.floor(s % 60)}s`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/stats');
+    const d = await res.json();
+    document.getElementById('status').className = 'live';
+    document.getElementById('status').textContent = 'LIVE';
+
+    document.getElementById('creates').textContent = fmt(d.creates);
+    document.getElementById('trades').textContent = fmt(d.trades);
+    document.getElementById('buys').textContent = fmt(d.buys);
+    document.getElementById('sells').textContent = fmt(d.sells);
+    document.getElementById('volume').textContent = d.volume;
+    document.getElementById('cpm').textContent = d.createsPerMin;
+    document.getElementById('tpm').textContent = d.tradesPerMin;
+    document.getElementById('uptime').textContent = uptimeFmt(d.uptime);
+
+    document.getElementById('tokens').innerHTML = d.recentTokens.map(t =>
+      `<tr class="token-row"><td>${t.name}</td><td>${t.symbol}</td><td>${t.mint.slice(0,12)}...</td><td>${t.creator.slice(0,8)}...</td><td class="time">${ago(t.ts)}</td></tr>`
+    ).join('');
+
+    document.getElementById('buyers').innerHTML = d.topBuyers.map(b =>
+      `<tr><td>${b.addr}</td><td>${b.count}</td><td>${b.volume}</td></tr>`
+    ).join('');
+
+    document.getElementById('topTokens').innerHTML = d.topTokens.map(t =>
+      `<tr><td>${t.mint}</td><td>${t.volume}</td></tr>`
+    ).join('');
+  } catch {
+    document.getElementById('status').className = 'dead';
+    document.getElementById('status').textContent = 'disconnected';
+  }
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

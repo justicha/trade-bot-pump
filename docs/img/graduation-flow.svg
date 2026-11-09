@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" role="img" aria-labelledby="t d">
+  <title id="t">graduation sniper decision flow</title>
+  <desc id="d">Flow of bots/graduation-sniper/graduation.mjs: real fill filter, holder filter, exit-preview gate, simulation, real entry, take-profit and stop-loss from the sell quote, partial sells bounded by real SOL reserves, bounded retries and a STUCK state.</desc>
+  <rect width="1200" height="600" fill="#0f1724"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
+    </marker>
+    <style>
+      .b { fill:#16243a; stroke:#2dd4bf; stroke-width:2; rx:10; }
+      .b2 { fill:#1b1a10; stroke:#fbbf24; stroke-width:2; rx:10; }
+      .b3 { fill:#151d2b; stroke:#3b5578; stroke-width:2; rx:10; }
+      .lbl { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:13px; fill:#dbe7f5; }
+      .sm { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:11px; fill:#8aa0b8; }
+      .hd { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:19px; font-weight:700; fill:#e6f1ff; }
+      .e { stroke:#2dd4bf; stroke-width:2; fill:none; marker-end:url(#a); }
+    </style>
+  </defs>
+  <text x="36" y="38" class="hd">graduation.mjs — decision flow (real-reserve fill, bounded exits)</text>
+
+  <rect x="36" y="60" width="250" height="66" class="b3"/><text x="50" y="86" class="lbl">Buy event on the curve</text><text x="50" y="106" class="sm">reserves from the trade payload</text>
+  <rect x="36" y="146" width="250" height="80" class="b"/><text x="50" y="172" class="lbl">Real fill</text><text x="50" y="192" class="sm">rSol / 85 SOL × 100</text><text x="50" y="210" class="sm">MIN_FILL 92 … MAX_FILL 97</text>
+  <rect x="36" y="246" width="250" height="66" class="b"/><text x="50" y="272" class="lbl">Holders from the stream</text><text x="50" y="292" class="sm">MIN_HOLDERS (7) distinct buyers</text>
+  <rect x="36" y="332" width="250" height="66" class="b"/><text x="50" y="358" class="lbl">Exit preview</text><text x="50" y="378" class="sm">round trip ≥ EXIT_MIN_RATIO (0.9) and payable</text>
+  <rect x="36" y="418" width="250" height="66" class="b2"/><text x="50" y="444" class="lbl">Simulate, then buy</text><text x="50" y="464" class="sm">GRAD_BUY_SOL · BUY_SLIPPAGE_BPS · guard</text>
+  <rect x="36" y="504" width="250" height="66" class="b3"/><text x="50" y="530" class="lbl">Entry price</text><text x="50" y="550" class="sm">actual: SOL spent / tokens received</text>
+
+  <path d="M161 126 V 146" class="e"/><path d="M161 226 V 246" class="e"/><path d="M161 312 V 332" class="e"/><path d="M161 398 V 418" class="e"/><path d="M161 484 V 504" class="e"/>
+
+  <rect x="360" y="146" width="240" height="66" class="b3"/><text x="374" y="172" class="lbl">Skip: outside the band</text><text x="374" y="192" class="sm">too early or last % before migration</text>
+  <path d="M286 179 H 360" class="e"/>
+  <rect x="360" y="246" width="240" height="66" class="b3"/><text x="374" y="272" class="lbl">Skip: holders below the gate</text><text x="374" y="292" class="sm">count grows later — not blacklisted</text>
+  <path d="M286 279 H 360" class="e"/>
+  <rect x="360" y="332" width="240" height="66" class="b3"/><text x="374" y="358" class="lbl">Skip: exit would be a loss</text><text x="374" y="378" class="sm">journaled with exitRatio and reason</text>
+  <path d="M286 365 H 360" class="e"/>
+
+  <rect x="660" y="504" width="290" height="66" class="b"/><text x="674" y="528" class="lbl">TP / SL / timeout</text><text x="674" y="548" class="sm">GRAD_TAKE_PROFIT 1.5 · GRAD_STOP_LOSS 0.7 · GRAD_TIMEOUT_SEC 300</text>
+  <path d="M590 537 H 660" class="e"/>
+
+  <rect x="660" y="418" width="290" height="66" class="b2"/><text x="674" y="444" class="lbl">Sell plan</text><text x="674" y="464" class="sm">parts with payout ≤ 0.95 × realSolReserves</text>
+  <path d="M805 504 V 484" class="e"/>
+
+  <rect x="660" y="332" width="290" height="66" class="b"/><text x="660" y="999" class="sm"> </text><text x="674" y="358" class="lbl">Simulate → send</text><text x="674" y="378" class="sm">up to 3 attempts, slippage 500 → 1000 → 2000 bps</text>
+  <path d="M805 418 V 398" class="e"/>
+
+  <rect x="660" y="246" width="290" height="66" class="b3"/><text x="674" y="272" class="lbl">STUCK</text><text x="674" y="292" class="sm">retries stopped, alert in the summary, rescue-sell.mjs</text>
+  <path d="M805 332 V 312" class="e"/>
+
+  <rect x="660" y="160" width="290" height="66" class="b3"/><text x="674" y="186" class="lbl">PumpSwap route</text><text x="674" y="206" class="sm">curve complete: gated by LIVE_CONFIRM_AMM=yes (UNVERIFIED)</text>
+  <path d="M805 246 V 226" class="e"/>
+
+  <text x="36" y="592" class="sm">Session end: Ctrl+C closes open positions, prints the summary (wallet delta, failed-tx fees, STUCK list) and releases the lock.</text>
+</svg>
