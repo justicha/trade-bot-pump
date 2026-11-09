@@ -71,6 +71,12 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ticks-"));
       SNIPER_MAX_SEC: "6",
       SNIPER_DRAIN_MAX_SEC: "0",
       TICKS: "0",
+      // Pin the filters so a local .env cannot change this test.
+      SNIPER_MIN_HOLDERS: "4",
+      SNIPER_HOLDER_WAIT_SEC: "45",
+      SNIPER_MIN_DEV_BUY: "0",
+      SNIPER_MIN_SLOTS: "1",
+      SNIPER_MIN_DELAY_MS: "0",
     },
   });
   asrt(run.status === 0, "sniper with TICKS=0 exits cleanly, got " + run.status);

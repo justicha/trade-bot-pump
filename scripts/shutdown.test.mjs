@@ -34,6 +34,13 @@ const env = {
   SNIPER_COOLDOWN_SEC: "0",
   SNIPER_MAX_POSITIONS: "3",
   SNIPER_BUY_SOL: "0.02",
+  // Pin every sniper filter: the developer's .env must not change test outcomes.
+  SNIPER_MIN_HOLDERS: "4",
+  SNIPER_HOLDER_WAIT_SEC: "45",
+  SNIPER_MIN_DEV_BUY: "0",
+  SNIPER_MIN_SLOTS: "1",
+  SNIPER_MIN_DELAY_MS: "0",
+  SNIPER_POST_EXIT_SEC: "0",
   SNIPER_TIMEOUT_SEC: "300", // no timeout: positions stay open until the stop
   SNIPER_TAKE_PROFIT: "1000", // no TP
   SNIPER_STOP_LOSS: "0", // no SL
