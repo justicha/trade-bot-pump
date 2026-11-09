@@ -25,6 +25,7 @@ import {
   buyIx,
   calcBuyTokens,
   calcSellSol,
+  ensureGlobalFeeState,
   getBondingCurveState,
   getPrice,
   refreshGlobalFeeState,
@@ -168,6 +169,8 @@ async function copyBuyUnlocked(mint, copiedFrom) {
   }
 
   try {
+    // Never send a live buy with a stale fee recipient: retry the global read right here.
+    await ensureGlobalFeeState().catch((e) => log(`  fee state refresh failed: ${e.message}`));
     const ixs = [
       ...computeBudgetIxs(),
       userAtaIx(wallet.publicKey, mintPk),

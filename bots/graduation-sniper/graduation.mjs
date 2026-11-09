@@ -51,6 +51,7 @@ import {
   buyIx,
   calcBuyTokens,
   calcSellSol,
+  ensureGlobalFeeState,
   getBondingCurveState,
   getPrice,
   refreshGlobalFeeState,
@@ -82,6 +83,9 @@ const SELL_MAX_ATTEMPTS = Number(process.env.SELL_MAX_ATTEMPTS || 3);
 const SELL_MAX_SLIPPAGE = Number(process.env.SELL_MAX_SLIPPAGE || 2000); // bps
 const BUY_REJECT_COOLDOWN_MS = 60_000; // after a failed buy, do not touch this mint for a minute
 const BUY_SLIPPAGE_BPS = Number(process.env.BUY_SLIPPAGE_BPS || SLIPPAGE_BPS);
+// An entry that never settles (a hung RPC call used to hang forever) must not block every other
+// mint: after this long the slot is released and an ALERT is printed.
+const OPENING_STALE_SEC = Number(process.env.OPENING_STALE_SEC || 120);
 
 const VIRTUAL_SOL_AT_GRADUATION = 85_000_000_000n;
 
@@ -135,6 +139,18 @@ const wallet = loadKeypair();
 await refreshGlobalFeeState().catch((e) => console.warn(`[fee-state] ${e.message}`));
 const positions = new Map();
 const watchlist = new Map();
+// Entry bookkeeping: `opening` blocks concurrent buys of the same mint, `openingSince` lets the
+// watchdog release a slot whose RPC call never came back, `aboveBand` makes "fill > MAX_FILL" loud.
+const openingSince = new Map();
+const aboveBand = new Set();
+let lastSlotWarn = 0;
+const SLOT_WARN_MS = 30_000; // one line per 30s is enough: the stream can fire many events per second
+function warnSlot(msg) {
+  const now = Date.now();
+  if (now - lastSlotWarn < SLOT_WARN_MS) return;
+  lastSlotWarn = now;
+  log(`  skip: ${msg}`);
+}
 let lastBuyTime = 0;
 let totalPnl = 0;
 let totalTrades = 0;
@@ -313,6 +329,8 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     const minTokens = (expectedTokens * BigInt(10000 - BUY_SLIPPAGE_BPS)) / 10000n;
     // Slippage headroom on max_sol_cost: without it any upward tick means Custom 6002.
     const maxSolCost = BigInt(Math.floor(BUY_SOL * 1e9 * (1 + BUY_SLIPPAGE_BPS / 10000)));
+    // Never send a live buy with a stale fee recipient: retry the global read right here.
+    await ensureGlobalFeeState().catch((e) => log(`  fee state refresh failed: ${e.message}`));
     const ixs = [
       ...computeBudgetIxs(),
       userAtaIx(wallet.publicKey, mintPk),
@@ -750,6 +768,19 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), async (result) => {
       // Real fill: rSol / 85 SOL (vSol would overstate it by ~35%).
       const fillPct = getFillPct(ev.realSolReserves);
 
+      // Fill above the band is NOT a bug: the bot refuses the last MAX_FILL..100% before migration.
+      // It used to do that silently, which read as "the bot died at 97%".
+      if (fillPct > MAX_FILL_PCT) {
+        if (!aboveBand.has(ev.mint)) {
+          aboveBand.add(ev.mint);
+          log(
+            `ABOVE BAND: ${ev.mint.slice(0, 12)} fill=${fillPct.toFixed(1)}% > MAX_FILL=${MAX_FILL_PCT}% — too close to migration, no entry`,
+          );
+        }
+      } else {
+        aboveBand.delete(ev.mint);
+      }
+
       if (fillPct >= MIN_FILL_PCT && fillPct <= MAX_FILL_PCT) {
         const prev = watchlist.get(ev.mint);
         if (!prev || fillPct > prev.fillPct) {
@@ -759,17 +790,27 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), async (result) => {
           );
         }
 
-        if (
-          !positions.has(ev.mint) &&
-          !opening.has(ev.mint) &&
-          positions.size + opening.size < MAX_POSITIONS
-        ) {
+        const inFlight = opening.has(ev.mint);
+        const full = positions.size + opening.size >= MAX_POSITIONS;
+        if (!positions.has(ev.mint) && !inFlight && !full) {
           opening.add(ev.mint);
+          openingSince.set(ev.mint, Date.now());
           try {
             await buyToken(ev.mint, fillPct, ev.virtualSolReserves, ev.virtualTokenReserves, { holders });
           } finally {
             opening.delete(ev.mint);
+            openingSince.delete(ev.mint);
           }
+        } else if (!inFlight && full) {
+          // Say it out loud. With GRAD_MAX_POSITIONS=1 a single open position used to silence the
+          // bot completely: every new candidate was dropped without a log line or a journal record.
+          warnSlot(
+            `no free slot (${positions.size} open, ${opening.size} opening) — ${ev.mint.slice(0, 8)} ignored at fill=${fillPct.toFixed(1)}%`,
+          );
+        } else if (inFlight) {
+          warnSlot(
+            `entry already in flight for ${ev.mint.slice(0, 8)} (${Math.round((Date.now() - (openingSince.get(ev.mint) || Date.now())) / 1000)}s)`,
+          );
         }
       }
     } catch { /* malformed Program data payload: skip this line, keep the subscription alive */ }
@@ -785,10 +826,30 @@ const cleanupTimer = setInterval(() => {
   for (const [mint, info] of watchlist) {
     if (now - info.ts > 600_000) watchlist.delete(mint);
   }
+  // Watchdog: an entry whose RPC call never settled used to hold the `opening` slot forever, so
+  // with GRAD_MAX_POSITIONS=1 every later candidate was dropped silently. Release it and say so.
+  for (const [mint, since] of openingSince) {
+    if (now - since > OPENING_STALE_SEC * 1000) {
+      opening.delete(mint);
+      openingSince.delete(mint);
+      log(
+        `ALERT: entry for ${mint.slice(0, 8)} did not settle in ${Math.round((now - since) / 1000)}s — slot released`,
+      );
+    }
+  }
   // Holder sets are only useful while a mint is a live candidate.
   if (holdersSeen.size > 5_000) {
     const keep = new Set([...watchlist.keys(), ...positions.keys(), ...opening]);
     for (const mint of holdersSeen.keys()) if (!keep.has(mint)) holdersSeen.delete(mint);
+  }
+  // Heartbeat: proves the process is alive AND shows why nothing is bought. Silence must never be
+  // the only signal that something is wrong.
+  if (!stopping) {
+    log(
+      `HEARTBEAT: watchlist=${watchlist.size} positions=${positions.size} opening=${opening.size} ` +
+        `freeSlots=${Math.max(0, MAX_POSITIONS - positions.size - opening.size)} ` +
+        `rpc=${rpcStats.calls} (429 x${rpcStats.retries429}, errors ${rpcStats.errors})`,
+    );
   }
 }, 60_000);
 

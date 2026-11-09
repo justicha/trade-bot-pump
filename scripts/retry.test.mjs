@@ -1,6 +1,16 @@
 // Unit test for withBackoff + isRetryable with REAL web3.js 429 shapes (by message and status/code).
 import { withBackoff, isRetryable } from "../lib/retry.mjs";
 
+// A request that hit its RPC deadline is transient: the retry loop must not give up on it.
+const timeouts = [
+  Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }),
+  Object.assign(new Error("This operation was aborted"), { name: "AbortError" }),
+  new Error("request timed out"),
+];
+for (const [i, t] of timeouts.entries()) {
+  if (!isRetryable(t)) { console.error("FAIL: timeout form not retryable #" + i); process.exit(1); }
+}
+
 const forms = [
   new Error("429 Too Many Requests"),
   Object.assign(new Error("Server responded with 429 Too Many Requests.  Retrying after 500ms delay..."), { status: 429 }),
@@ -33,4 +43,4 @@ const res = await withBackoff(
 
 console.log(JSON.stringify({ forms: forms.length, permanentRetryable: isRetryable(new Error("invalid input")), res, calls, retries, sleeps }));
 if (res !== "ok" || calls !== 3 || retries !== 2) { console.error("FAIL: retry flow"); process.exit(1); }
-console.log("PASS: 3 real 429 shapes retryable, permanent not, retried 2x -> success");
+console.log("PASS: 3 real 429 shapes retryable, 3 timeout shapes retryable, permanent not, retried 2x -> success");

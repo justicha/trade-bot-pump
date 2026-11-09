@@ -39,6 +39,9 @@ there; the table lists the ones a trader will actually meet). `describeTxError()
 | `--live requires LIVE_CONFIRM=yes` | Live mode was requested without the second switch | `$env:LIVE_CONFIRM="yes"` for that command only |
 | `Keypair not found: …\keys\default.json` | No wallet has been generated | `node lib/wallet.mjs generate` |
 | `FATAL: another sniper instance is already running` | The single-instance lock is held by a live PID | Stop the other process, or remove a stale lock file if the PID is dead |
+| `WATCHLIST` stops at ~97% fill and nothing else is printed | Not a crash: entries above `MAX_FILL` (default `97`) are refused by design — the last 3% before migration has no room left | Expected. The current build prints `ABOVE BAND: <mint> fill=…% > MAX_FILL=97%` once per mint, so the silence is explained |
+| The process is alive but enters nothing and prints nothing | A single RPC call hung forever (a throttled endpoint with no HTTP deadline); the entry was never released, and with `GRAD_MAX_POSITIONS=1` every later candidate was dropped without a log line or a journal record | Fixed: `RPC_TIMEOUT_MS` (15 s, retried like a 429), the `OPENING_STALE_SEC` watchdog (`ALERT: entry … did not settle`) and a `HEARTBEAT` line with slot/RPC counters every 60 s |
+| `[fee-state] pump global account unavailable/short` | The `global` account read failed (transient RPC error or throttling) | The read is now throttled and retried like any other RPC call, and every live buy re-checks it (`ensureGlobalFeeState`) before building the transaction. If it still fails, buys fall back to the hardcoded fee recipient and the program may reject them — check `RPC_URL` / quota |
 | `bigint: Failed to load bindings, pure JS will be used` | A transitive dependency has no native binding | Harmless warning; the pure-JS path is used |
 | Garbled characters like `вЂ”` in the console | Windows code page | `chcp 65001` before running |
 

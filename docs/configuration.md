@@ -23,6 +23,7 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `MAX_SESSION_SOL` | `0.2` | `≥ 0` | Total SOL a session may put into buys. Exhausted → the session ends. `0` = no cap. `.env.example` ships `0.1`. |
 | `MAX_CONSEC_LOSSES` | `3` | `≥ 0` | Consecutive losing trades that end a session. `0` = no limit. |
 | `CURVE_CACHE_MS` | `0` | `≥ 0` | Bonding-curve state cache TTL. `0` disables caching. |
+| `RPC_TIMEOUT_MS` | `15000` | `1000..120000` | Hard deadline for every HTTP RPC call. A throttled endpoint can accept the connection and never answer; without a deadline the promise never settles, the entry slot stays busy and the bot silently stops trading while the process looks alive. A timeout is retried like a 429. |
 | `LOG_LEVEL` | `info` | `debug\|info\|warn\|error` | Console verbosity. Logs are masked for secrets regardless. |
 | `LIVE_CONFIRM` | unset | — (deliberately) | Second switch for live mode. Without it `--live` exits before connecting. Not in `.env.example` so it cannot persist by accident. |
 
@@ -66,9 +67,10 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `GRAD_TIMEOUT_SEC` | `300` | `300` | Max hold time |
 | `GRAD_MAX_POSITIONS` | `3` | `3` | Concurrent positions |
 | `GRAD_COOLDOWN_SEC` | `30` | `30` | Pause between buys |
+| `OPENING_STALE_SEC` | `120` | — | Watchdog for one entry: if its RPC call has not settled for this long, the slot is released with an `ALERT:` line, so a single stuck call cannot block every later candidate |
 | `GRAD_MIN_FILL_PCT` | `92` | `92` | Minimum **real** fill (rSol / 85 SOL); `MIN_FILL` overrides it |
 | `MIN_FILL` | — | — | Alias for `GRAD_MIN_FILL_PCT`; wins when both are set |
-| `MAX_FILL` | `97` | commented | Maximum real fill |
+| `MAX_FILL` | `97` | commented | Maximum real fill. Above it the bot prints `ABOVE BAND: …` and does **not** enter: the last 3% before migration is refused by design |
 | `MIN_HOLDERS` / `GRAD_MIN_HOLDERS` | `7` | commented | Distinct buyers since first sighting (lower bound) |
 | `MAX_TOP10_SHARE` | `0` (off) | commented | Not verifiable from the stream; enabling it skips every candidate |
 | `EXIT_MIN_RATIO` | `0.9` | — | Skip an entry whose immediate round trip returns less |

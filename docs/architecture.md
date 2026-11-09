@@ -8,7 +8,7 @@
 |---|---|
 | `config.mjs` | Loads `.env` (without overriding real env vars), validates numbers, requires `RPC_URL`, derives `WS_URL`, computes `LIVE`/`DRY_RUN`, enforces `LIVE_CONFIRM=yes`, caps the priority fee |
 | `wallet.mjs` | The only module that reads `keys/<name>.json` (`Keypair.fromSecretKey`) |
-| `rpc.mjs` | Shared `Connection` (built-in 429 retry disabled), rate-limited `rpcCall`, `sendTxWithRetry`, RPC stats (calls, 429s, errors, failed-tx fees) |
+| `rpc.mjs` | Shared `Connection` (built-in 429 retry disabled, `RPC_TIMEOUT_MS` hard deadline on every HTTP call), rate-limited `rpcCall`, `sendTxWithRetry`, RPC stats (calls, 429s, errors, failed-tx fees) |
 | `ratelimit.mjs` | Priority queue (0 = exit, 1 = entry, 2 = ticks, 3 = rest) with 429 counting and a `degraded` flag |
 | `retry.mjs` | `withBackoff`, `isRetryable` |
 | `ws.mjs` | `SolanaWs`: `logsSubscribe`/`accountSubscribe`, re-subscribe on reconnect, dedup per subscription+signature, exponential backoff, never rejects on a handshake error |

@@ -174,7 +174,8 @@ $env:LIVE_CONFIRM="yes"; npm run graduation -- --live
 | `LIVE_CONFIRM_AMM` | Allow the UNVERIFIED PumpSwap sell | off | `yes` to try it in live |
 
 **Output and files.**
-- Console: `WATCHLIST: <mint> fill=..% rSol=.. holders=..`, `*** PRE-GRADUATION BUY ***`, `bought!`,
+- Console: `WATCHLIST: <mint> fill=..% rSol=.. holders=..`, `ABOVE BAND: <mint> fill=..% > MAX_FILL=97%`,
+  `skip: no free slot (…)`, `skip: entry already in flight for …`, `*** PRE-GRADUATION BUY ***`, `bought!`,
   `sold on curve|pumpswap`, `sell attempt n/3 failed`, `ALERT: … STUCK`, `SESSION SUMMARY`.
 - `data/journal/YYYY-MM-DD.jsonl` — `candidate` (fill, fillBasis, holders, holdersSource, top10Share,
   spot, exitRatio, action, reason), `buy`, `buy_attempt`, `sell`, `sell_attempt`, `sell_failed`,
