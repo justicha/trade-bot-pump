@@ -22,14 +22,15 @@ import {
   createCloseAccountInstruction,
 } from "@solana/spl-token";
 import { DRY_RUN, LIVE, numOr } from "../lib/config.mjs";
+import { TOKEN_2022_PROGRAM, WSOL } from "../lib/constants.mjs";
 import {
-  ATA_PROGRAM,
-  PUMP_PROGRAM,
-  PUMPSWAP_PROGRAM,
-  SYSTEM_PROGRAM,
-  TOKEN_2022_PROGRAM,
-  WSOL,
-} from "../lib/constants.mjs";
+  AMM_GLOBAL_CONFIG,
+  TOKEN_PROGRAM,
+  ammSellIx,
+  canonicalPool,
+  decodeGlobalConfig,
+  decodePool,
+} from "../lib/pumpswap-sell.mjs";
 import { connection, getSOLBalance, sendTxWithRetry } from "../lib/rpc.mjs";
 import {
   calcSellSol,
@@ -37,21 +38,12 @@ import {
   refreshGlobalFeeState,
   sellIx,
 } from "../lib/pumpfun.mjs";
+
 import { planSellParts } from "../lib/sell-plan.mjs";
 import { simulateTx } from "../lib/exec.mjs";
 import { describeTxError } from "../lib/pump-errors.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../lib/tx.mjs";
 import { loadKeypair } from "../lib/wallet.mjs";
-
-const AMM_FEE_PROGRAM = new PublicKey("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
-const AMM_GLOBAL_CONFIG = PublicKey.findProgramAddressSync([Buffer.from("global_config")], PUMPSWAP_PROGRAM)[0];
-const AMM_EVENT_AUTH = PublicKey.findProgramAddressSync([Buffer.from("__event_authority")], PUMPSWAP_PROGRAM)[0];
-const AMM_FEE_CONFIG = PublicKey.findProgramAddressSync(
-  [Buffer.from("fee_config"), PUMPSWAP_PROGRAM.toBuffer()],
-  AMM_FEE_PROGRAM,
-)[0];
-// SPL Token (classic) program for WSOL; pump mints themselves are Token-2022.
-const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
 const args = process.argv.slice(2);
 // Single source of truth: LIVE/DRY_RUN come from lib/config.mjs (--live AND NOT --dry-run,
@@ -106,59 +98,6 @@ async function holdings() {
 }
 
 // ---------- venues ----------
-function canonicalPool(mint) {
-  const authority = PublicKey.findProgramAddressSync([Buffer.from("pool-authority"), mint.toBuffer()], PUMP_PROGRAM)[0];
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("pool"), Buffer.from([0, 0]), authority.toBuffer(), mint.toBuffer(), WSOL.toBuffer()],
-    PUMPSWAP_PROGRAM,
-  )[0];
-}
-
-function readI128(d, o) {
-  const lo = d.readBigUInt64LE(o);
-  const hi = d.readBigInt64LE(o + 8);
-  return lo + (hi << 64n);
-}
-
-// PumpSwap PoolState (borsh after the 8-byte discriminator), from the official pump-amm IDL.
-function decodePool(d) {
-  const pk = (o) => new PublicKey(d.subarray(o, o + 32));
-  return {
-    baseMint: pk(43),
-    quoteMint: pk(75),
-    baseVault: pk(139),
-    quoteVault: pk(171),
-    coinCreator: pk(211),
-    isMayhem: d[243] === 1,
-    isCashback: d[244] === 1,
-    virtualQuoteReserves: readI128(d, 245),
-    creatorFeeBps: d.readBigUInt64LE(261),
-  };
-}
-
-// GlobalConfig (borsh WITH the 8-byte discriminator). Offsets from the official pump-amm IDL type
-// `GlobalConfig`: protocol_fee_recipients[8]@57, reserved_fee_recipient@385,
-// reserved_fee_recipients[8]@418 (see lib/pumpswap.mjs decodeGlobalConfig for the full map).
-function decodeGlobalConfig(d) {
-  const pk = (o) => new PublicKey(d.subarray(o, o + 32));
-  return {
-    lpFeeBps: Number(d.readBigUInt64LE(40)),
-    protocolFeeBps: Number(d.readBigUInt64LE(48)),
-    protocolFeeRecipients: Array.from({ length: 8 }, (_, i) => pk(57 + i * 32)),
-    coinCreatorFeeBps: Number(d.readBigUInt64LE(313)),
-    reservedFeeRecipient: pk(385),
-    reservedFeeRecipients: Array.from({ length: 8 }, (_, i) => pk(418 + i * 32)),
-    buybackFeeRecipients: Array.from({ length: 8 }, (_, i) => pk(675 + i * 32)),
-  };
-}
-
-// Same selection rule as lib/pumpswap.mjs pickProtocolFeeRecipient (and pump-sdk swap/fees.ts).
-function pickProtocolFeeRecipient(g, isMayhem) {
-  const list = isMayhem ? [g.reservedFeeRecipient, ...g.reservedFeeRecipients] : g.protocolFeeRecipients;
-  const live = list.filter((p) => p && !p.equals(PublicKey.default));
-  if (live.length === 0) throw new Error("AMM global config has no fee recipient");
-  return live[Math.floor(Math.random() * live.length)];
-}
 
 async function quoteVenue(mintStr, raw) {
   const mint = new PublicKey(mintStr);
@@ -198,7 +137,9 @@ async function quoteVenue(mintStr, raw) {
   const quoteReserve = BigInt(qv.value.amount);
   const gross = quoteReserve + (p.virtualQuoteReserves > 0n ? p.virtualQuoteReserves : 0n);
   const out = (gross * raw) / (baseReserve + raw);
-  const gc = await connection.getAccountInfo(AMM_GLOBAL_CONFIG);
+  // .catch like lib/pumpswap.mjs: an unreadable global config must degrade to the fallback fees,
+  // not throw and kill the whole rescue cycle.
+  const gc = await connection.getAccountInfo(AMM_GLOBAL_CONFIG).catch(() => null);
   const g = gc
     ? decodeGlobalConfig(gc.data)
     : { lpFeeBps: 20, protocolFeeBps: 5, coinCreatorFeeBps: 5, protocolFeeRecipients: [], reservedFeeRecipient: null, reservedFeeRecipients: [], buybackFeeRecipients: [] };
@@ -207,6 +148,10 @@ async function quoteVenue(mintStr, raw) {
   return {
     venue: "pool",
     expectedSol: Number(net) / 1e9,
+    // Raw lamports of the quote: the min_out must be BigInt arithmetic on this, never
+    // Math.floor(expectedSol * 1e9) (float rounding, AUDIT_SELL.md §4).
+    expectedLamports: net,
+
     note: `${curveNote}; pool ${pool.toBase58().slice(0, 8)} fee≈${(feeBps / 100).toFixed(2)}%`,
     sellable: true,
     pool,
@@ -215,43 +160,6 @@ async function quoteVenue(mintStr, raw) {
   };
 }
 
-// PumpSwap (AMM) sell — 21 accounts per the official IDL. UNVERIFIED until one live rescue works.
-function ammSellIx(user, baseMint, pool, p, g, baseAmountIn, minQuoteOut) {
-  const feeRecipient = pickProtocolFeeRecipient(g, p.isMayhem);
-  const creatorAuth = PublicKey.findProgramAddressSync(
-    [Buffer.from("creator_vault"), p.coinCreator.toBuffer()],
-    PUMPSWAP_PROGRAM,
-  )[0];
-  const creatorVaultAta = getAssociatedTokenAddressSync(p.quoteMint, creatorAuth, true, TOKEN_PROGRAM);
-  const keys = [
-    { pubkey: pool, isSigner: false, isWritable: true },
-    { pubkey: user, isSigner: true, isWritable: true },
-    { pubkey: AMM_GLOBAL_CONFIG, isSigner: false, isWritable: false },
-    { pubkey: baseMint, isSigner: false, isWritable: false },
-    { pubkey: p.quoteMint, isSigner: false, isWritable: false },
-    { pubkey: getAssociatedTokenAddressSync(baseMint, user, false, TOKEN_2022_PROGRAM), isSigner: false, isWritable: true },
-    { pubkey: getAssociatedTokenAddressSync(p.quoteMint, user, false, TOKEN_PROGRAM), isSigner: false, isWritable: true },
-    { pubkey: p.baseVault, isSigner: false, isWritable: true },
-    { pubkey: p.quoteVault, isSigner: false, isWritable: true },
-    { pubkey: feeRecipient, isSigner: false, isWritable: true },
-    { pubkey: getAssociatedTokenAddressSync(p.quoteMint, feeRecipient, false, TOKEN_PROGRAM), isSigner: false, isWritable: true },
-    { pubkey: TOKEN_2022_PROGRAM, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM, isSigner: false, isWritable: false },
-    { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-    { pubkey: ATA_PROGRAM, isSigner: false, isWritable: false },
-    { pubkey: AMM_EVENT_AUTH, isSigner: false, isWritable: false },
-    { pubkey: PUMPSWAP_PROGRAM, isSigner: false, isWritable: false },
-    { pubkey: creatorVaultAta, isSigner: false, isWritable: true },
-    { pubkey: creatorAuth, isSigner: false, isWritable: false },
-    { pubkey: AMM_FEE_CONFIG, isSigner: false, isWritable: false },
-    { pubkey: AMM_FEE_PROGRAM, isSigner: false, isWritable: false },
-  ];
-  const data = Buffer.alloc(24);
-  Buffer.from("33e685a4017f83ad", "hex").copy(data, 0); // sha256("global:sell")[0..8]
-  data.writeBigUInt64LE(baseAmountIn, 8);
-  data.writeBigUInt64LE(minQuoteOut, 16);
-  return { programId: PUMPSWAP_PROGRAM, keys, data };
-}
 
 // ---------- main ----------
 console.log(`[rescue] ${DRY_RUN ? "DRY RUN" : "LIVE"} | wallet ${wallet.publicKey.toBase58().slice(0, 8)}… | slippage ${SLIP} bps`);
@@ -310,7 +218,9 @@ for (const h of targets) {
       }
     } else {
       const amountRaw = h.raw;
-      const quoteOut = BigInt(Math.floor(q.expectedSol * 1e9));
+      // BigInt lamports straight from the quote (no float round trip): min_out is then exact
+      // integer arithmetic on the net quote (AUDIT_SELL.md §4).
+      const quoteOut = q.expectedLamports;
       const userWsol = getAssociatedTokenAddressSync(WSOL, wallet.publicKey, false, TOKEN_PROGRAM);
       const ixs = [
         ...computeBudgetIxs(),
