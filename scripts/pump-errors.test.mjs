@@ -30,6 +30,16 @@ assert.equal(isCurveCompleteError({ InstructionError: [2, { Custom: 6005 }] }), 
 assert.equal(isCurveCompleteError({ InstructionError: [2, { Custom: 6081 }] }), true, "6081 BondingCurveAlreadyMigrated must also blacklist the mint (no repeat buys)");
 assert.equal(isCurveCompleteError({ InstructionError: [2, { Custom: 6024 }] }), false);
 
+// A2: wrapped shapes — txError()/simulateThenSend stringify the payload into the Error message;
+// the structure must survive so 6005/6081 are still recognized on the send/confirm path.
+const wrappedJson = new Error(`tx SIG failed on-chain: {"InstructionError":[2,{"Custom":6005}]}`);
+assert.equal(isCurveCompleteError(wrappedJson), true, "stringified InstructionError in the message is decoded");
+const wrappedProp = Object.assign(new Error("x"), { err: { InstructionError: [2, { Custom: 6081 }] } });
+assert.equal(isCurveCompleteError(wrappedProp), true, "payload attached as .err is decoded");
+assert.equal(isCurveCompleteError(new Error('{"Custom":6024}')), false, "6024 is still not a complete-curve error");
+assert.match(describeTxError(wrappedJson), /instruction n\/a: 6005 BondingCurveComplete/, "wrapped error describes the real code");
+assert.match(describeTxError(new Error('tx failed on-chain: {"InstructionError":[3,{"Custom":6024}]}')), /6024 Overflow/, "slippage/overflow codes decode from the message too");
+
 const mk = (vSol, vTok, rSol, rTok) => ({
   virtualSolReserves: vSol,
   virtualTokenReserves: vTok,
@@ -52,4 +62,4 @@ const tinySell = calcSellSol(drainedState, 1_000_000n);
 assert.ok(BigInt(drainedState.realSolReserves) >= tinySell, "a tiny sell is still payable");
 
 console.log(JSON.stringify({ ratio: Number(pv.ratio.toFixed(4)), drainedOut: Number(bigSell) / 1e9, drainedRSol: 786_439 / 1e9 }));
-console.log("PASS: pump error codes are human-readable and rSol<out is detected before sending");
+console.log("PASS: pump error codes are human-readable, survive wrapper layers, and rSol<out is detected before sending");

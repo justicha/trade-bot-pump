@@ -86,12 +86,15 @@ asrt(manual.every((t) => Number.isFinite(Number(t.pnlSol)) && Number.isFinite(Nu
 const ss = records.filter((r) => r.type === "session_summary");
 asrt(ss.length === 1, `one session_summary record (got ${ss.length})`);
 asrt(ss[0].manualStopCloses === manual.length, "session_summary records the manual-stop close count");
+// B11: open-at-stop state must be captured BEFORE the positions are deleted.
+asrt(ss[0].openPositions >= manual.length, `session_summary counts open-at-stop positions (${ss[0].openPositions} >= ${manual.length})`);
+asrt(Number(ss[0].openSpentSol) > 0, "session_summary counts SOL locked in open-at-stop positions");
 
 const sumFiles = fs.readdirSync(dir).filter((f) => f.startsWith("summary-") && f.endsWith(".txt"));
 asrt(sumFiles.length === 1, `summary file written (got ${sumFiles.length})`);
 const sumTxt = fs.readFileSync(path.join(dir, sumFiles[0]), "utf8");
 asrt(/spentSol/.test(sumTxt) && /closedAtStop/.test(sumTxt), "summary file has spent + closedAtStop");
-asrt(/openPositions: 0/.test(sumTxt), "no open positions left at stop");
+asrt(/openPositions: [1-9]\d*/.test(sumTxt), `summary file shows the real open-at-stop count (got "${sumTxt.match(/openPositions: \d+/)?.[0] || "none"}")`);
 
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(JSON.stringify({ code, elapsedMs: elapsed, manualCloses: manual.length }));

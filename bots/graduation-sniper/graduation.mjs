@@ -35,7 +35,7 @@ import { previewExit, readExecution, simulateTx } from "../../lib/exec.mjs";
 import { planSellParts } from "../../lib/sell-plan.mjs";
 import { ammSellIx, ammSellQuote, TOKEN_PROGRAM } from "../../lib/pumpswap.mjs";
 import { curvePrice, gradFillPct } from "../../lib/curve.mjs";
-import { SLIPPAGE_BPS, DRY_RUN, LIVE } from "../../lib/config.mjs";
+import { SLIPPAGE_BPS, DRY_RUN, LIVE, numOr } from "../../lib/config.mjs";
 import { TradeGuard } from "../../lib/guards.mjs";
 import { log as logger } from "../../lib/logger.mjs";
 import {
@@ -65,27 +65,28 @@ import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
 
-const BUY_SOL = Number(process.env.GRAD_BUY_SOL || 0.1);
-const MIN_FILL_PCT = Number(process.env.MIN_FILL || process.env.GRAD_MIN_FILL_PCT || 92);
-const MAX_FILL_PCT = Number(process.env.MAX_FILL || process.env.GRAD_MAX_FILL_PCT || 97);
-const MIN_HOLDERS = Number(process.env.MIN_HOLDERS || process.env.GRAD_MIN_HOLDERS || 7);
+// Numeric config via numOr: an invalid value (e.g. copied from .env.example with an inline
+// comment) fails loudly with the variable name instead of silently becoming NaN.
+const BUY_SOL = numOr(process.env.GRAD_BUY_SOL, 0.1, "GRAD_BUY_SOL");
+const MIN_FILL_PCT = numOr(process.env.MIN_FILL || process.env.GRAD_MIN_FILL_PCT, 92, "MIN_FILL/GRAD_MIN_FILL_PCT");
+const MAX_FILL_PCT = numOr(process.env.MAX_FILL || process.env.GRAD_MAX_FILL_PCT, 97, "MAX_FILL/GRAD_MAX_FILL_PCT");
+const MIN_HOLDERS = numOr(process.env.MIN_HOLDERS || process.env.GRAD_MIN_HOLDERS, 7, "MIN_HOLDERS/GRAD_MIN_HOLDERS");
 // 0 = disabled. The stream has no balances, so a non-zero value can never be verified yet.
-const MAX_TOP10_SHARE = Number(process.env.MAX_TOP10_SHARE || 0);
-const TAKE_PROFIT = Number(process.env.GRAD_TAKE_PROFIT || 1.5);
-const STOP_LOSS = Number(process.env.GRAD_STOP_LOSS || 0.7);
-const TIMEOUT_SEC = Number(process.env.GRAD_TIMEOUT_SEC || 300);
-const MAX_POSITIONS = Number(process.env.GRAD_MAX_POSITIONS || 3);
-const COOLDOWN_SEC = Number(process.env.GRAD_COOLDOWN_SEC || 30);
+const MAX_TOP10_SHARE = numOr(process.env.MAX_TOP10_SHARE, 0, "MAX_TOP10_SHARE");
+const TAKE_PROFIT = numOr(process.env.GRAD_TAKE_PROFIT, 1.5, "GRAD_TAKE_PROFIT");
+const STOP_LOSS = numOr(process.env.GRAD_STOP_LOSS, 0.7, "GRAD_STOP_LOSS");
+const TIMEOUT_SEC = numOr(process.env.GRAD_TIMEOUT_SEC, 300, "GRAD_TIMEOUT_SEC");
+const MAX_POSITIONS = numOr(process.env.GRAD_MAX_POSITIONS, 3, "GRAD_MAX_POSITIONS");
+const COOLDOWN_SEC = numOr(process.env.GRAD_COOLDOWN_SEC, 30, "GRAD_COOLDOWN_SEC");
 const POLL_MS = 3000;
 // --- step-2 reliability knobs ---------------------------------------------------------------
-const EXIT_MIN_RATIO = Number(process.env.EXIT_MIN_RATIO || 0.9); // skip an entry whose own exit < 90% of the buy
-const SELL_MAX_ATTEMPTS = Number(process.env.SELL_MAX_ATTEMPTS || 3);
-const SELL_MAX_SLIPPAGE = Number(process.env.SELL_MAX_SLIPPAGE || 2000); // bps
-const BUY_REJECT_COOLDOWN_MS = 60_000; // after a failed buy, do not touch this mint for a minute
-const BUY_SLIPPAGE_BPS = Number(process.env.BUY_SLIPPAGE_BPS || SLIPPAGE_BPS);
+const EXIT_MIN_RATIO = numOr(process.env.EXIT_MIN_RATIO, 0.9, "EXIT_MIN_RATIO"); // skip an entry whose own exit < 90% of the buy
+const SELL_MAX_ATTEMPTS = numOr(process.env.SELL_MAX_ATTEMPTS, 3, "SELL_MAX_ATTEMPTS");
+const SELL_MAX_SLIPPAGE = numOr(process.env.SELL_MAX_SLIPPAGE, 2000, "SELL_MAX_SLIPPAGE"); // bps
+const BUY_SLIPPAGE_BPS = numOr(process.env.BUY_SLIPPAGE_BPS, SLIPPAGE_BPS, "BUY_SLIPPAGE_BPS");
 // An entry that never settles (a hung RPC call used to hang forever) must not block every other
 // mint: after this long the slot is released and an ALERT is printed.
-const OPENING_STALE_SEC = Number(process.env.OPENING_STALE_SEC || 120);
+const OPENING_STALE_SEC = numOr(process.env.OPENING_STALE_SEC, 120, "OPENING_STALE_SEC");
 
 const VIRTUAL_SOL_AT_GRADUATION = 85_000_000_000n;
 
@@ -93,13 +94,12 @@ const VIRTUAL_SOL_AT_GRADUATION = 85_000_000_000n;
 const journal = new TradeJournal({ bot: "graduation-sniper" });
 const SESSION_ID = newSessionId("grad");
 const PARAMS_HASH = paramsHash({
-  BUY_SOL, MIN_FILL_PCT, TAKE_PROFIT, STOP_LOSS, TIMEOUT_SEC, MAX_POSITIONS, COOLDOWN_SEC,
+  BUY_SOL, MIN_FILL_PCT, MAX_FILL_PCT, MIN_HOLDERS, MAX_TOP10_SHARE, TAKE_PROFIT, STOP_LOSS, TIMEOUT_SEC, MAX_POSITIONS, COOLDOWN_SEC,
   EXIT_MIN_RATIO, SELL_MAX_ATTEMPTS, SELL_MAX_SLIPPAGE, BUY_SLIPPAGE_BPS,
 });
 const GIT_SHA = gitSha();
 // A mint is bought at most once per session; a completed curve is blacklisted for good.
 const attempted = new Set();
-const buyFailUntil = new Map();
 const blacklistPath = path.join(journal.dir, "graduation-blacklist.json");
 const blacklist = new Set(
   (() => {
@@ -119,16 +119,34 @@ function processAlive(pid) {
 function acquireInstanceLock() {
   try {
     fs.mkdirSync(journal.dir, { recursive: true });
-    const existing = fs.readFileSync(LOCK_PATH, "utf8").trim();
-    if (existing) {
-      const pid = Number(existing);
-      if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && processAlive(pid)) {
-        console.error(`FATAL: another graduation-sniper is already running (PID ${pid}). Refusing to start to avoid duplicate trades.`);
-        process.exit(1);
-      }
+  } catch { /* dir exists */ }
+  // Atomic capture: "wx" fails if another instance created the lock first — the TOCTOU window
+  // between "read" and "write" is gone for the common case.
+  try {
+    const fd = fs.openSync(LOCK_PATH, "wx");
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+    return;
+  } catch (e) {
+    if (e.code !== "EEXIST") return; // best effort
+  }
+  // The lock exists: only a dead PID may be replaced.
+  const existing = fs.readFileSync(LOCK_PATH, "utf8").trim();
+  const pid = Number(existing);
+  if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && processAlive(pid)) {
+    console.error(`FATAL: another graduation-sniper is already running (PID ${pid}). Refusing to start to avoid duplicate trades.`);
+    process.exit(1);
+  }
+  try {
+    fs.writeFileSync(LOCK_PATH, String(process.pid));
+    // Re-read: if a simultaneous starter raced us and its PID is alive, we must not run twice.
+    const reread = fs.readFileSync(LOCK_PATH, "utf8").trim();
+    const other = Number(reread);
+    if (Number.isInteger(other) && other !== process.pid && processAlive(other)) {
+      console.error(`FATAL: another graduation-sniper is already running (PID ${other}). Refusing to start to avoid duplicate trades.`);
+      process.exit(1);
     }
-  } catch { /* no lock yet */ }
-  try { fs.writeFileSync(LOCK_PATH, String(process.pid)); } catch { /* best effort */ }
+  } catch { /* best effort */ }
 }
 function releaseInstanceLock() {
   try { if (fs.readFileSync(LOCK_PATH, "utf8").trim() === String(process.pid)) fs.unlinkSync(LOCK_PATH); } catch { /* gone */ }
@@ -235,7 +253,6 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
   if (positions.size >= MAX_POSITIONS) return;
   if (positions.has(mint)) return; // `opening` is owned by the WS handler: it holds the slot while buyToken runs
   if (blacklist.has(mint) || attempted.has(mint)) return;
-  if ((buyFailUntil.get(mint) || 0) > Date.now()) return;
   if (Date.now() - lastBuyTime < COOLDOWN_SEC * 1000) return;
 
   const mintPk = new PublicKey(mint);
@@ -347,7 +364,6 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     if (!sim.ok) {
       guard.release(BUY_SOL);
       attempted.add(mint);
-      buyFailUntil.set(mint, Date.now() + BUY_REJECT_COOLDOWN_MS);
       const why = describeTxError(sim.err);
       log(`  buy simulation failed: ${why} — not sending`);
       journal.write({ ...candidate, type: "buy_attempt", simulationResult: "fail", sent: false, error: why });
@@ -389,7 +405,6 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     log(`  bought! entry ${entryPrice.toExponential(3)} SOL/token (${ex.found ? "actual" : "quote"})`);
   } catch (err) {
     guard.release(BUY_SOL);
-    buyFailUntil.set(mint, Date.now() + BUY_REJECT_COOLDOWN_MS);
     attempted.add(mint);
     if (isCurveCompleteError(err)) {
       blacklist.add(mint);
@@ -699,6 +714,9 @@ async function finish(reason = stopReason || "stopped") {
       }
     }
   }
+  // B11: capture the open-at-stop state BEFORE any deletion — the summary must show the real
+  // position count/spend, not zeros.
+  const openAtStop = [...positions.entries()].map(([mint, pos]) => ({ mint, spentSol: pos.entrySolSol ?? BUY_SOL }));
   for (const [mint, pos] of [...positions]) {
     stuck.add(`${mint.slice(0, 12)}: open at stop`);
     journal.write({ type: "stuck", sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, reason: "open at stop", attempts: pos.attempts || 0 });
@@ -708,9 +726,9 @@ async function finish(reason = stopReason || "stopped") {
   const endSol = LIVE ? await getSOLBalance(wallet.publicKey).catch(() => null) : null;
   session.report({
     reason,
-    openPositions: positions.size,
+    openPositions: openAtStop.length,
     endSol,
-    openSpentSol: positions.size * BUY_SOL,
+    openSpentSol: openAtStop.reduce((a, p) => a + p.spentSol, 0),
     rpc: rpcStats.snapshot(),
     stuck: [...stuck],
   });
@@ -862,4 +880,8 @@ process.on("SIGINT", () => {
     process.exit(0);
   }
   void finish("manual stop (Ctrl+C)");
+});
+process.on("SIGTERM", () => {
+  // Process managers send SIGTERM: run the same graceful shutdown (summary + lock release).
+  if (!exited) void finish("SIGTERM");
 });

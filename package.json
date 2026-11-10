@@ -35,14 +35,15 @@
     "mayhem-sol": "node scripts/mayhem-sol.mjs",
     "lab-raw": "node scripts/lab-raw.mjs",
     "rebuild": "node scripts/rebuild-report.mjs",
-    "test": "node scripts/retry.test.mjs && node scripts/rpc-timeout.test.mjs && node scripts/pumpswap.test.mjs && node scripts/fetchtx.integration.test.mjs && node scripts/session.test.mjs && node scripts/holders.test.mjs && node scripts/journal.test.mjs && node scripts/solprice.test.mjs && node scripts/research.test.mjs && node scripts/strategy.test.mjs && node scripts/replay.test.mjs && node scripts/events-latency.test.mjs && node scripts/rawcap.test.mjs && node scripts/mayhem.test.mjs && node scripts/smoke.test.mjs && node scripts/ticks.test.mjs && node scripts/curve-model.test.mjs && node scripts/ratelimit.test.mjs && node scripts/shadow.test.mjs && node scripts/shutdown.test.mjs && node scripts/instance-lock.test.mjs && node scripts/dedupe.test.mjs && node scripts/pessimistic.test.mjs && node scripts/pump-errors.test.mjs && node scripts/sell-plan.test.mjs && node scripts/fill.test.mjs && node scripts/graduation-analyze.test.mjs",
+    "test": "node scripts/retry.test.mjs && node scripts/env-inline.test.mjs && node scripts/wallet-gen.test.mjs && node scripts/expired-tx.test.mjs && node scripts/paramshash.test.mjs && node scripts/ws-shutdown.test.mjs && node scripts/lab-prune.test.mjs && node scripts/tz-boundary.test.mjs && node scripts/buyix-layout.test.mjs && node scripts/rpc-timeout.test.mjs && node scripts/pumpswap.test.mjs && node scripts/fetchtx.integration.test.mjs && node scripts/session.test.mjs && node scripts/holders.test.mjs && node scripts/journal.test.mjs && node scripts/solprice.test.mjs && node scripts/research.test.mjs && node scripts/strategy.test.mjs && node scripts/replay.test.mjs && node scripts/events-latency.test.mjs && node scripts/rawcap.test.mjs && node scripts/mayhem.test.mjs && node scripts/smoke.test.mjs && node scripts/ticks.test.mjs && node scripts/curve-model.test.mjs && node scripts/ratelimit.test.mjs && node scripts/shadow.test.mjs && node scripts/shutdown.test.mjs && node scripts/instance-lock.test.mjs && node scripts/dedupe.test.mjs && node scripts/pessimistic.test.mjs && node scripts/pump-errors.test.mjs && node scripts/sell-plan.test.mjs && node scripts/fill.test.mjs && node scripts/graduation-analyze.test.mjs",
     "smoke": "node scripts/smoke.test.mjs",
     "diag-curve": "node scripts/diag-curve.mjs",
     "rescue": "node scripts/rescue-sell.mjs"
   },
   "dependencies": {
-    "@solana/web3.js": "1.99.0",
     "@solana/spl-token": "0.4.15",
-    "bs58": "6.0.0"
+    "@solana/web3.js": "1.99.0",
+    "bs58": "6.0.0",
+    "ws": "^7.5.13"
   }
 }

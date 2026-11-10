@@ -32,6 +32,25 @@ for (const [i, e] of notRetry.entries()) {
   if (isRetryable(e)) { console.error("FAIL: non-429 wrongly retryable #" + i + " -> " + e.message); process.exit(1); }
 }
 
+// 5xx and network failures are transient (B3): the comment and the implementation now agree.
+const transient = [
+  Object.assign(new Error("Server error"), { status: 503 }),
+  Object.assign(new Error("bad gateway"), { statusCode: 500 }),
+  new Error("fetch failed"),
+  new Error("socket hang up"),
+  new Error("network error"),
+  Object.assign(new Error("conn reset"), { cause: { code: "ECONNRESET" } }),
+  Object.assign(new Error("refused"), { cause: { code: "ECONNREFUSED" } }),
+  Object.assign(new Error("timed out"), { cause: { code: "ETIMEDOUT" } }),
+];
+for (const [i, t] of transient.entries()) {
+  if (!isRetryable(t)) { console.error("FAIL: transient form not retryable #" + i + " -> " + t.message); process.exit(1); }
+}
+// Permanent 4xx (other than 429) must NOT be retried.
+for (const [i, t] of [Object.assign(new Error("bad request"), { status: 400 }), Object.assign(new Error("not found"), { status: 404 })].entries()) {
+  if (isRetryable(t)) { console.error("FAIL: permanent 4xx wrongly retryable #" + i); process.exit(1); }
+}
+
 // mock: throw a real 429 message twice, then succeed
 let calls = 0, retries = 0;
 const sleeps = [];
@@ -43,4 +62,4 @@ const res = await withBackoff(
 
 console.log(JSON.stringify({ forms: forms.length, permanentRetryable: isRetryable(new Error("invalid input")), res, calls, retries, sleeps }));
 if (res !== "ok" || calls !== 3 || retries !== 2) { console.error("FAIL: retry flow"); process.exit(1); }
-console.log("PASS: 3 real 429 shapes retryable, 3 timeout shapes retryable, permanent not, retried 2x -> success");
+console.log("PASS: 3 real 429 shapes retryable, 3 timeout shapes retryable, 5xx/network retryable, 4xx permanent, retried 2x -> success");

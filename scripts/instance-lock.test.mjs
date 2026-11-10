@@ -50,4 +50,15 @@ const run = (env, ms) => new Promise((resolve) => {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-console.log("PASS: instance lock refuses a second live instance and ignores stale locks");
+// 3) a garbage lock file -> not a live PID, so the bot replaces it and starts (atomic capture)
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lock-journal-"));
+  fs.writeFileSync(path.join(dir, ".sniper.lock"), "garbage-not-a-pid");
+  const env = { ...process.env, RPC_URL: "http://127.0.0.1:1", RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"), WS_MOCK: path.join(here, "mocks", "ws-mock.mjs"), JOURNAL_DIR: dir, KEYS_DIR: makeTempKeys(), SNIPER_MAX_SEC: "3", SNIPER_DRAIN_MAX_SEC: "0", TICKS: "0" };
+  const { c, out } = await run(env, 10000);
+  asrt(c === 0, `starts over a garbage lock file (exit ${c})`);
+  asrt(/SESSION SUMMARY/.test(out), "ran and printed the summary (garbage lock replaced)");
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+console.log("PASS: instance lock refuses a second live instance, ignores stale locks, replaces garbage");

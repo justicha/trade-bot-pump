@@ -323,19 +323,22 @@ function statusLine() {
   log(formatStatus({ closed, startedAt, target: TARGET_TRADES }));
 }
 
-setInterval(statusLine, 10 * 60 * 1000);
+const statusLineTimer = setInterval(statusLine, 10 * 60 * 1000);
 
 // 1s timer: time-based exits, price samples at +30/60/120/300s, tracker pruning, flush
-setInterval(() => {
+const tickTimer = setInterval(() => {
   const now = Date.now();
   lab.onTick({ ts: now, priceOf });
 
+  // A mint is pruned only when no variant still holds an open position on it: deleting the entry
+  // freezes priceOf -> null, and an open paper position could then never exit (stuck forever).
+  const openMints = lab.openMints();
   for (const [mint, t] of tokens) {
     const ageSec = (now - t.createTs) / 1000;
     for (const s of SAMPLE_SECS) {
       if (ageSec >= s && t.samples[s] === undefined) t.samples[s] = t.lastPrice;
     }
-    if (ageSec > KEEP_SEC) {
+    if (ageSec > KEEP_SEC && !openMints.has(mint)) {
       writeCandidate(t);
       tokens.delete(mint);
     }
@@ -356,6 +359,8 @@ setInterval(() => {
 }, 1000);
 
 process.on("SIGINT", async () => {
+  clearInterval(tickTimer);
+  clearInterval(statusLineTimer);
   log("\nFlushing candidates...");
   for (const [, t] of tokens) writeCandidate(t);
   await ws.close().catch(() => {});

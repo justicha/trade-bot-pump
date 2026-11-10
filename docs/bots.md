@@ -202,6 +202,12 @@ releases the lock. A second Ctrl+C exits immediately.
 bot itself. Live **observed** in the git history; entry/exit logic was rewritten afterwards. The
 PumpSwap route is **UNVERIFIED**.
 
+> **Cashback pools (audit BUG 13).** The AMM sell builds the v1 `sell` instruction (21 accounts),
+> which has no buyback accounts. Cashback pools (`is_cashback_coin`) may require `sell_v2`
+> (with `user_volume_accumulator` + `buyback_fee_recipient`) instead. Until that is confirmed
+> on-chain, cashback pools are NOT supported by the AMM sell; the route stays gated behind
+> `LIVE_CONFIRM_AMM=yes`.
+
 ## copy-trader — mirror wallets
 
 **Purpose.** Watches a list of wallets and repeats their pump.fun trades: buy when the target buys,

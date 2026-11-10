@@ -17,7 +17,7 @@ import { PublicKey } from "@solana/web3.js";
 import path from "node:path";
 import fs from "node:fs";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { SLIPPAGE_BPS, DRY_RUN, LIVE } from "../../lib/config.mjs";
+import { SLIPPAGE_BPS, DRY_RUN, LIVE, numOr } from "../../lib/config.mjs";
 import { TradeGuard } from "../../lib/guards.mjs";
 import { log as logger } from "../../lib/logger.mjs";
 import {
@@ -51,30 +51,31 @@ import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
 import { MAYHEM_PROGRAM_ID } from "../../lib/mayhem.mjs";
-import { brusselsIso, hourInZone, weekdayInZone, BRUSSELS_TZ } from "../../lib/time.mjs";
+import { brusselsIso, hourInZone, weekdayInZone, MSK_TZ, mskDateKey } from "../../lib/time.mjs";
 import { newSessionId, paramsHash, gitSha } from "../../lib/runmeta.mjs";
 import { TickLog } from "../../lib/ticks.mjs";
 import { evaluateShadow, shadowLines } from "../../lib/shadow.mjs";
 import { loadCreatorRegistry, noteCreatorLaunch, creatorLaunches30m, saveCreatorRegistry } from "../../lib/creators.mjs";
 import { HolderTickLog } from "../../lib/holderticks.mjs";
 
-// Config
-const BUY_SOL = Number(process.env.SNIPER_BUY_SOL || 0.1);
-const TAKE_PROFIT = Number(process.env.SNIPER_TAKE_PROFIT || 2.0);
-const STOP_LOSS = Number(process.env.SNIPER_STOP_LOSS || 0.5);
-const TIMEOUT_SEC = Number(process.env.SNIPER_TIMEOUT_SEC || 120);
-const MAX_POSITIONS = Number(process.env.SNIPER_MAX_POSITIONS || 3);
-const MIN_DEV_BUY = Number(process.env.SNIPER_MIN_DEV_BUY || 0);
-const COOLDOWN_SEC = Number(process.env.SNIPER_COOLDOWN_SEC || 10);
+// Config — numeric values via numOr: an invalid value (e.g. copied from .env.example with an
+// inline comment) fails loudly with the variable name instead of silently becoming NaN.
+const BUY_SOL = numOr(process.env.SNIPER_BUY_SOL, 0.1, "SNIPER_BUY_SOL");
+const TAKE_PROFIT = numOr(process.env.SNIPER_TAKE_PROFIT, 2.0, "SNIPER_TAKE_PROFIT");
+const STOP_LOSS = numOr(process.env.SNIPER_STOP_LOSS, 0.5, "SNIPER_STOP_LOSS");
+const TIMEOUT_SEC = numOr(process.env.SNIPER_TIMEOUT_SEC, 120, "SNIPER_TIMEOUT_SEC");
+const MAX_POSITIONS = numOr(process.env.SNIPER_MAX_POSITIONS, 3, "SNIPER_MAX_POSITIONS");
+const MIN_DEV_BUY = numOr(process.env.SNIPER_MIN_DEV_BUY, 0, "SNIPER_MIN_DEV_BUY");
+const COOLDOWN_SEC = numOr(process.env.SNIPER_COOLDOWN_SEC, 10, "SNIPER_COOLDOWN_SEC");
 // Holder gate: buy only after N distinct wallets hold tokens (0 = buy at create, old behaviour)
-const MIN_HOLDERS = Number(process.env.SNIPER_MIN_HOLDERS || 4);
-const HOLDER_WAIT_SEC = Number(process.env.SNIPER_HOLDER_WAIT_SEC || 45);
+const MIN_HOLDERS = numOr(process.env.SNIPER_MIN_HOLDERS, 4, "SNIPER_MIN_HOLDERS");
+const HOLDER_WAIT_SEC = numOr(process.env.SNIPER_HOLDER_WAIT_SEC, 45, "SNIPER_HOLDER_WAIT_SEC");
 // Organic crowd: distinct slots and a minimum delay after the create (1 / 0 = old behaviour).
 // The research lab is what decides whether these should be > 1 / > 0 for real money.
-const MIN_SLOTS = Number(process.env.SNIPER_MIN_SLOTS || 1);
-const MIN_DELAY_MS = Number(process.env.SNIPER_MIN_DELAY_MS || 0);
+const MIN_SLOTS = numOr(process.env.SNIPER_MIN_SLOTS, 1, "SNIPER_MIN_SLOTS");
+const MIN_DELAY_MS = numOr(process.env.SNIPER_MIN_DELAY_MS, 0, "SNIPER_MIN_DELAY_MS");
 // Journal: after a sell, keep sampling the price for N seconds to see what was left on the table.
-const POST_EXIT_SEC = Number(process.env.SNIPER_POST_EXIT_SEC ?? 300);
+const POST_EXIT_SEC = numOr(process.env.SNIPER_POST_EXIT_SEC, 300, "SNIPER_POST_EXIT_SEC");
 const POLL_MS = 2000;
 
 let totalPnl = 0;
@@ -158,17 +159,39 @@ function processAlive(pid) {
 function acquireInstanceLock() {
   try {
     fs.mkdirSync(journal.dir, { recursive: true });
-    const existing = fs.readFileSync(LOCK_PATH, "utf8").trim();
-    if (existing) {
-      const pid = Number(existing);
-      if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && processAlive(pid)) {
-        log(`FATAL: another sniper instance is already running (PID ${pid}, lock ${LOCK_PATH}). Refusing to start to avoid duplicate trades.`);
-        process.exit(1);
-      }
+  } catch { /* dir exists */ }
+  // Atomic capture: "wx" fails if another instance created the lock first — the TOCTOU window
+  // between "read" and "write" is gone for the common case.
+  try {
+    const fd = fs.openSync(LOCK_PATH, "wx");
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+    return;
+  } catch (e) {
+    if (e.code !== "EEXIST") {
+      log(`warning: could not create instance lock: ${e.message}`);
+      return;
     }
-  } catch { /* no lock file yet */ }
-  try { fs.writeFileSync(LOCK_PATH, String(process.pid)); }
-  catch (err) { log(`warning: could not write instance lock: ${err.message}`); }
+  }
+  // The lock exists: only a dead PID may be replaced.
+  const existing = fs.readFileSync(LOCK_PATH, "utf8").trim();
+  const pid = Number(existing);
+  if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && processAlive(pid)) {
+    log(`FATAL: another sniper instance is already running (PID ${pid}, lock ${LOCK_PATH}). Refusing to start to avoid duplicate trades.`);
+    process.exit(1);
+  }
+  try {
+    fs.writeFileSync(LOCK_PATH, String(process.pid));
+    // Re-read: if a simultaneous starter raced us and its PID is alive, we must not run twice.
+    const reread = fs.readFileSync(LOCK_PATH, "utf8").trim();
+    const other = Number(reread);
+    if (Number.isInteger(other) && other !== process.pid && processAlive(other)) {
+      log(`FATAL: another sniper instance is already running (PID ${other}, lock ${LOCK_PATH}). Refusing to start to avoid duplicate trades.`);
+      process.exit(1);
+    }
+  } catch (err) {
+    log(`warning: could not write instance lock: ${err.message}`);
+  }
 }
 function releaseInstanceLock() {
   try {
@@ -582,8 +605,8 @@ function recordExit(mint, pos, { exitPrice, ratio, pnlSol, holdSec, reason, cost
     sellAt: sellAt.toISOString(),
     buyAtBrussels: brusselsIso(buyAt),
     sellAtBrussels: brusselsIso(sellAt),
-    buyHour: hourInZone(buyAt, BRUSSELS_TZ),
-    buyWeekday: weekdayInZone(buyAt, BRUSSELS_TZ),
+    buyHour: hourInZone(buyAt, MSK_TZ),
+    buyWeekday: weekdayInZone(buyAt, MSK_TZ),
     exitReason: reason,
     holdersAtEntry: pos.holdersAtEntry ?? null,
     devBuySol: pos.devBuySol ?? null,
@@ -811,6 +834,23 @@ async function closePositionAtStop(mint, { unconfirmed = false } = {}) {
     manualStopCloses += 1;
     return;
   }
+  // LIVE with no curve account: the position was NOT sold. Never record it as a confirmed sale
+  // or credit the session ledger with money that was never received — the tokens stay in the
+  // wallet (scripts/rescue-sell.mjs can find them).
+  if (!DRY_RUN) {
+    log(`  [stop] ${mint.slice(0, 8)} curve unavailable — NOT sold (STUCK: tokens remain in wallet)`);
+    journal.write({
+      type: "stuck",
+      sessionId: SESSION_ID,
+      paramsHash: PARAMS_HASH,
+      gitSha: GIT_SHA,
+      mint,
+      reason: "stop: curve unavailable, not sold",
+    });
+    session.drop(`${mint.slice(0, 8)}: unsold at stop (curve unavailable)`);
+    positions.delete(mint);
+    return;
+  }
   const price = lastKnownPrice(mint) ?? pos.entryPrice;
   const ratio = price / pos.entryPrice;
   const holdSec = Math.round((Date.now() - pos.entryTime) / 1000);
@@ -848,10 +888,14 @@ async function closeOpenPositions() {
 
 // Idempotent: print the SESSION SUMMARY exactly once, write type:"session_summary" to the journal
 // and a readable copy to data/journal/summary-<sessionId>.txt.
-function writeSessionSummary(reason, { endSol = null, rpc = null, audit = null } = {}) {
+function writeSessionSummary(reason, { endSol = null, rpc = null, audit = null, openAtStop = null } = {}) {
   if (summaryWritten) return;
   summaryWritten = true;
-  const summary = session.report({ reason, openPositions: positions.size, endSol, openSpentSol: positions.size * BUY_SOL });
+  // B11: open positions are counted from the snapshot taken at stop time (before closeOpenPositions
+  // deleted them), so the summary reflects reality instead of a hard-coded zero.
+  const openPositions = openAtStop ? openAtStop.length : positions.size;
+  const openSpentSol = openAtStop ? openAtStop.reduce((a, p) => a + p.spentSol, 0) : positions.size * BUY_SOL;
+  const summary = session.report({ reason, openPositions, endSol, openSpentSol });
   const payload = {
     sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, reason,
     ...summary, bestSol: session.bestSol, worstSol: session.worstSol,
@@ -899,6 +943,9 @@ async function finish(reason = stopReason || "stopped") {
   clearInterval(holderTrajTimer);
   if (holderTimer) clearInterval(holderTimer);
   holders.clear(); // cancel every watched mint: no new entries after the stop signal
+  // B11: capture the open-at-stop state BEFORE any deletion — the summary must show the real
+  // position count/spend, not zeros.
+  const openAtStop = [...positions.keys()].map((mint) => ({ mint, spentSol: BUY_SOL }));
   await closeOpenPositions(); // close ALL open positions first (exitReason "manual stop")
   // Flush the post-exit window of trades that were still being sampled.
   for (const [mint, rec] of [...postExit]) {
@@ -945,7 +992,7 @@ async function finish(reason = stopReason || "stopped") {
 
   // SESSION SUMMARY printed BEFORE any tick drain, then drain the tick windows (bounded by
   // SNIPER_DRAIN_MAX_SEC, default 10s) with a countdown.
-  writeSessionSummary(reason, { endSol, rpc: rs, audit: { ...audit } });
+  writeSessionSummary(reason, { endSol, rpc: rs, audit: { ...audit }, openAtStop });
   const drainSec = Number(process.env.SNIPER_DRAIN_MAX_SEC ?? 10);
   if (drainSec > 0 && ticks.size > 0) {
     log(`[ticks] ${ticks.size} window(s) open - draining up to ${drainSec}s (Ctrl+C again to exit now)`);
@@ -975,7 +1022,7 @@ if (MIN_DEV_BUY) log(`Filter: dev buy >= ${MIN_DEV_BUY} SOL`);
 if (MIN_HOLDERS) log(`Filter: >= ${MIN_HOLDERS} holders within ${HOLDER_WAIT_SEC}s (no instant buy at create)`);
 const startupSolUsd = await getSolUsd();
 log(`SOL/USD: ${fmtUsd(startupSolUsd)}${startupSolUsd ? "" : " (unknown — dollar values print n/a)"}`);
-log(`Journal: data/journal/${new Date().toISOString().slice(0, 10)}.jsonl, post-exit window ${POST_EXIT_SEC}s`);
+log(`Journal: data/journal/${mskDateKey()}.jsonl, post-exit window ${POST_EXIT_SEC}s`);
 log(`Session: ${SESSION_ID} | params ${PARAMS_HASH} | git ${GIT_SHA || "n/a"}`);
 
 const ws = new SolanaWs();

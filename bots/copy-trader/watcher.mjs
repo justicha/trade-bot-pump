@@ -333,3 +333,7 @@ log("\nListening for target wallet trades...\n");
 process.on("SIGINT", () => {
   void finish("manual stop (Ctrl+C)");
 });
+process.on("SIGTERM", () => {
+  // Process managers send SIGTERM: run the same graceful shutdown.
+  if (!exited) void finish("SIGTERM");
+});
