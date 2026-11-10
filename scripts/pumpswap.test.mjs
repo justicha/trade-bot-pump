@@ -1,6 +1,7 @@
 // Unit test (multi-hop fixture): two events for the SAME user on DIFFERENT pools/mints must
 // group separately; a different user on the same mint must not mix; unresolved -> null (no pool).
-import { parsePumpSwapEvent, resolvePswapMint } from "../lib/pumpswap.mjs";
+import { parsePumpSwapEvent, resolvePswapMint, decodeGlobalConfig, pickProtocolFeeRecipient } from "../lib/pumpswap.mjs";
+import { PublicKey } from "@solana/web3.js";
 
 function mk(side, base, quote, poolByte, userByte, ubaseByte) {
   const b = Buffer.alloc(216);
@@ -40,5 +41,34 @@ asrt(resolvePswapMint(e1, {}) === null, "unresolved -> null (no pool fallback)")
 asrt(resolvePswapMint(e1, {}, { [e1.user]: ["MINT_A"] }) === "MINT_A", "owner-mint fallback (ubase not in balances)");
 asrt(resolvePswapMint(e1, {}, { [e1.user]: ["A", "B"] }) === null, "ambiguous owner mints -> null");
 
-console.log(JSON.stringify({ groups: keys, unresolvedNull: true }));
-console.log("PASS: multihop grouped by user+mint (not mixed); unresolved -> null");
+// --- decodeGlobalConfig + pickProtocolFeeRecipient (official pump-amm IDL offsets) ---
+// GlobalConfig is borsh WITH the 8-byte discriminator: lp@40, protocol@48, recipients[8]@57,
+// coin_creator@313, reserved_fee_recipient@385, reserved_fee_recipients[8]@418.
+function mkGlobalConfig({ normal0, reserved, reserved0 } = {}) {
+  const b = Buffer.alloc(931);
+  b.writeBigUInt64LE(25n, 40);   // lp_fee_basis_points
+  b.writeBigUInt64LE(5n, 48);    // protocol_fee_basis_points
+  b.writeBigUInt64LE(100n, 313); // coin_creator_fee_basis_points
+  if (normal0) normal0.copy(b, 57);
+  if (reserved) reserved.copy(b, 385);
+  if (reserved0) reserved0.copy(b, 418);
+  return b;
+}
+const n0 = Buffer.alloc(32, 0x11);
+const r0 = Buffer.alloc(32, 0x22);
+const r1 = Buffer.alloc(32, 0x33);
+const g = decodeGlobalConfig(mkGlobalConfig({ normal0: n0, reserved: r0, reserved0: r1 }));
+asrt(g.lpFeeBps === 25 && g.protocolFeeBps === 5 && g.coinCreatorFeeBps === 100, "global config numeric fields");
+asrt(g.protocolFeeRecipients[0].toBase58() === new PublicKey(n0).toBase58(), "protocol_fee_recipients[0] decoded");
+asrt(g.protocolFeeRecipients[1].toBase58() === PublicKey.default.toBase58(), "unset recipient decodes as the zero key");
+asrt(g.reservedFeeRecipient.toBase58() === new PublicKey(r0).toBase58(), "reserved_fee_recipient decoded");
+asrt(g.reservedFeeRecipients[0].toBase58() === new PublicKey(r1).toBase58(), "reserved_fee_recipients[0] decoded");
+asrt(pickProtocolFeeRecipient(g, false).toBase58() === new PublicKey(n0).toBase58(), "non-mayhem picks from the normal list");
+const may = pickProtocolFeeRecipient(g, true).toBase58();
+asrt(may === new PublicKey(r0).toBase58() || may === new PublicKey(r1).toBase58(), "mayhem picks from the reserved list");
+let threw = false;
+try { pickProtocolFeeRecipient({ protocolFeeRecipients: [], reservedFeeRecipient: null, reservedFeeRecipients: [] }, false); } catch { threw = true; }
+asrt(threw, "empty recipient list throws (fail closed)");
+
+console.log(JSON.stringify({ groups: keys, unresolvedNull: true, globalConfigOk: true }));
+console.log("PASS: multihop grouped by user+mint (not mixed); unresolved -> null; global config + fee recipient per IDL");

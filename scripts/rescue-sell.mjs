@@ -133,14 +133,28 @@ function decodePool(d) {
   };
 }
 
-// GlobalConfig: admin(32) lp_fee_bps(u64) protocol_fee_bps(u64) disable(u8) recipients[8](256) ...
+// GlobalConfig (borsh WITH the 8-byte discriminator). Offsets from the official pump-amm IDL type
+// `GlobalConfig`: protocol_fee_recipients[8]@57, reserved_fee_recipient@385,
+// reserved_fee_recipients[8]@418 (see lib/pumpswap.mjs decodeGlobalConfig for the full map).
 function decodeGlobalConfig(d) {
+  const pk = (o) => new PublicKey(d.subarray(o, o + 32));
   return {
     lpFeeBps: Number(d.readBigUInt64LE(40)),
     protocolFeeBps: Number(d.readBigUInt64LE(48)),
-    protocolFeeRecipient: new PublicKey(d.subarray(57, 89)),
+    protocolFeeRecipients: Array.from({ length: 8 }, (_, i) => pk(57 + i * 32)),
     coinCreatorFeeBps: Number(d.readBigUInt64LE(313)),
+    reservedFeeRecipient: pk(385),
+    reservedFeeRecipients: Array.from({ length: 8 }, (_, i) => pk(418 + i * 32)),
+    buybackFeeRecipients: Array.from({ length: 8 }, (_, i) => pk(675 + i * 32)),
   };
+}
+
+// Same selection rule as lib/pumpswap.mjs pickProtocolFeeRecipient (and pump-sdk swap/fees.ts).
+function pickProtocolFeeRecipient(g, isMayhem) {
+  const list = isMayhem ? [g.reservedFeeRecipient, ...g.reservedFeeRecipients] : g.protocolFeeRecipients;
+  const live = list.filter((p) => p && !p.equals(PublicKey.default));
+  if (live.length === 0) throw new Error("AMM global config has no fee recipient");
+  return live[Math.floor(Math.random() * live.length)];
 }
 
 async function quoteVenue(mintStr, raw) {
@@ -184,7 +198,7 @@ async function quoteVenue(mintStr, raw) {
   const gc = await connection.getAccountInfo(AMM_GLOBAL_CONFIG);
   const g = gc
     ? decodeGlobalConfig(gc.data)
-    : { lpFeeBps: 20, protocolFeeBps: 5, coinCreatorFeeBps: 5, protocolFeeRecipient: null };
+    : { lpFeeBps: 20, protocolFeeBps: 5, coinCreatorFeeBps: 5, protocolFeeRecipients: [], reservedFeeRecipient: null, reservedFeeRecipients: [], buybackFeeRecipients: [] };
   const feeBps = g.lpFeeBps + g.protocolFeeBps + (p.creatorFeeBps > 0n ? Number(p.creatorFeeBps) : g.coinCreatorFeeBps);
   const net = (out * BigInt(10000 - feeBps)) / 10000n;
   return {
@@ -200,7 +214,7 @@ async function quoteVenue(mintStr, raw) {
 
 // PumpSwap (AMM) sell — 21 accounts per the official IDL. UNVERIFIED until one live rescue works.
 function ammSellIx(user, baseMint, pool, p, g, baseAmountIn, minQuoteOut) {
-  if (!g.protocolFeeRecipient) throw new Error("AMM global config has no protocol fee recipient");
+  const feeRecipient = pickProtocolFeeRecipient(g, p.isMayhem);
   const creatorAuth = PublicKey.findProgramAddressSync(
     [Buffer.from("creator_vault"), p.coinCreator.toBuffer()],
     PUMPSWAP_PROGRAM,
@@ -216,8 +230,8 @@ function ammSellIx(user, baseMint, pool, p, g, baseAmountIn, minQuoteOut) {
     { pubkey: getAssociatedTokenAddressSync(p.quoteMint, user, false, TOKEN_PROGRAM), isSigner: false, isWritable: true },
     { pubkey: p.baseVault, isSigner: false, isWritable: true },
     { pubkey: p.quoteVault, isSigner: false, isWritable: true },
-    { pubkey: g.protocolFeeRecipient, isSigner: false, isWritable: true },
-    { pubkey: getAssociatedTokenAddressSync(p.quoteMint, g.protocolFeeRecipient, false, TOKEN_PROGRAM), isSigner: false, isWritable: true },
+    { pubkey: feeRecipient, isSigner: false, isWritable: true },
+    { pubkey: getAssociatedTokenAddressSync(p.quoteMint, feeRecipient, false, TOKEN_PROGRAM), isSigner: false, isWritable: true },
     { pubkey: TOKEN_2022_PROGRAM, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM, isSigner: false, isWritable: false },
     { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
