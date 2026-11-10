@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="240" viewBox="0 0 1200 240" role="img" aria-labelledby="ft fd">
+  <title id="ft">How the bot works, in five steps</title>
+  <desc id="fd">Five boxes left to right: watch new tokens, check filters and limits, dry-run or live buy, take profit or stop loss or timeout, journal and summary. The buy step is highlighted in amber.</desc>
+  <rect width="1200" height="240" fill="#0b1220"/>
+  <g stroke="#1a2b45" stroke-width="1">
+    <path d="M0 80h1200M0 160h1200"/>
+    <path d="M200 0v240M400 0v240M600 0v240M800 0v240M1000 0v240"/>
+  </g>
+
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+    <text x="40" y="46" font-size="22" font-weight="700" fill="#e6f1ff">How it works</text>
+    <text x="40" y="70" font-size="14" fill="#9fb3c8">five steps, repeated for every token</text>
+  </g>
+
+  <!-- 1 -->
+  <g>
+    <rect x="40" y="96" width="192" height="96" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="2"/>
+    <circle cx="62" cy="118" r="11" fill="none" stroke="#2dd4bf" stroke-width="2"/>
+    <text x="62" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#2dd4bf">1</text>
+    <text x="136" y="142" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">Watch new</text>
+    <text x="136" y="164" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">tokens</text>
+  </g>
+  <!-- 2 -->
+  <g>
+    <rect x="272" y="96" width="192" height="96" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="2"/>
+    <circle cx="294" cy="118" r="11" fill="none" stroke="#2dd4bf" stroke-width="2"/>
+    <text x="294" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#2dd4bf">2</text>
+    <text x="368" y="142" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">Check filters</text>
+    <text x="368" y="164" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">&amp; limits</text>
+  </g>
+  <!-- 3 (the money step) -->
+  <g>
+    <rect x="504" y="96" width="192" height="96" rx="14" fill="#1a1508" stroke="#fbbf24" stroke-width="2"/>
+    <circle cx="526" cy="118" r="11" fill="none" stroke="#fbbf24" stroke-width="2"/>
+    <text x="526" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#fbbf24">3</text>
+    <text x="600" y="142" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#fbbf24">Dry-run or</text>
+    <text x="600" y="164" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#fbbf24">live buy</text>
+  </g>
+  <!-- 4 -->
+  <g>
+    <rect x="736" y="96" width="192" height="96" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="2"/>
+    <circle cx="758" cy="118" r="11" fill="none" stroke="#2dd4bf" stroke-width="2"/>
+    <text x="758" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#2dd4bf">4</text>
+    <text x="832" y="134" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="15" fill="#e6f1ff">Take profit /</text>
+    <text x="832" y="154" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="15" fill="#e6f1ff">stop loss /</text>
+    <text x="832" y="174" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="15" fill="#e6f1ff">timeout</text>
+  </g>
+  <!-- 5 -->
+  <g>
+    <rect x="968" y="96" width="192" height="96" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="2"/>
+    <circle cx="990" cy="118" r="11" fill="none" stroke="#2dd4bf" stroke-width="2"/>
+    <text x="990" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#2dd4bf">5</text>
+    <text x="1064" y="142" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">Journal &amp;</text>
+    <text x="1064" y="164" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">summary</text>
+  </g>
+
+  <!-- arrows -->
+  <g stroke="#2dd4bf" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M238 144h22"/>
+    <path d="M470 144h22"/>
+    <path d="M702 144h22"/>
+    <path d="M934 144h22"/>
+  </g>
+  <g fill="#2dd4bf">
+    <path d="M262 144l-9 -6v12z"/>
+    <path d="M494 144l-9 -6v12z"/>
+    <path d="M726 144l-9 -6v12z"/>
+    <path d="M958 144l-9 -6v12z"/>
+  </g>
+</svg>

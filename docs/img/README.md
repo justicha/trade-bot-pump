@@ -7,11 +7,12 @@ light and dark GitHub themes. Each file carries a `<title>` and a `<desc>` for s
 | File | Used by | Purpose |
 |---|---|---|
 | `banner.svg` | `README.md` | Title banner: deep navy, teal bonding-curve line, amber accent |
-| `architecture.svg` | `README.md`, `docs/architecture.md` | Module map: RPC/WS → parser → bots → tx builder → send → journal |
-| `modes.svg` | `README.md`, `docs/getting-started.md` | DRY RUN vs LIVE lane by lane |
+| `flow.svg` | `README.md` | The five-step loop, left to right: watch → filter → buy → exit → journal |
+| `architecture.svg` | `docs/architecture.md` | Module map: RPC/WS → parser → bots → tx builder → send → journal |
+| `modes.svg` | `docs/getting-started.md` | DRY RUN vs LIVE lane by lane |
 | `sniper-flow.svg` | `docs/bots.md` | `bots/sniper/sniper.mjs` decision flow with env names |
 | `graduation-flow.svg` | `docs/bots.md` | `bots/graduation-sniper/graduation.mjs` decision flow |
-| `wallet-flow.svg` | `README.md`, `docs/wallet-and-keys.md` | Wallet creation, funding, dry run, optional live |
+| `wallet-flow.svg` | `docs/wallet-and-keys.md` | Wallet creation, funding, dry run, optional live |
 
 ## Text prompts for raster versions (optional)
 

@@ -2,7 +2,7 @@
 
 ## pump.fun program error codes
 
-Codes and names are copied from the official pump.fun IDL into `lib/pump-errors.mjs` (111 entries
+Codes and names are copied from the official pump.fun IDL into `lib/pump-errors.mjs` (48 entries
 there; the table lists the ones a trader will actually meet). `describeTxError()` turns a raw
 `{InstructionError:[ix,{Custom:n}]}` into `instruction <ix>: <code> <name>` in the logs and the journal.
 

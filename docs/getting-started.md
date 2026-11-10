@@ -162,4 +162,4 @@ listed in the summary instead of being silently dropped.
 - All bot parameters and their defaults: [configuration.md](configuration.md).
 - Per-bot behaviour, exits and limitations: [bots.md](bots.md).
 - Errors you will meet (429, compute budget, 6002/6024): [errors-and-troubleshooting.md](errors-and-troubleshooting.md).
-- Only after a long dry-run and a review of the code: [Modes](../README.md#modes-dry-run-and-live).
+- Only after a long dry-run and a review of the code: [Modes](../README.md#dry-run-vs-live).
