@@ -28,6 +28,7 @@ import { TradeJournal } from "../../lib/journal.mjs";
 import { newSessionId, paramsHash, gitSha } from "../../lib/runmeta.mjs";
 import { describeTxError, isCurveCompleteError } from "../../lib/pump-errors.mjs";
 import { previewExit, readExecution, simulateTx } from "../../lib/exec.mjs";
+import { checkBuyGate } from "../../lib/buy-gate.mjs";
 import { planSellParts } from "../../lib/sell-plan.mjs";
 import { ammSellOnce, chooseSellVenue, isDrySell } from "../../lib/amm-sell.mjs";
 import { curvePrice, gradFillPct } from "../../lib/curve.mjs";
@@ -98,6 +99,8 @@ const PARAMS_HASH = paramsHash({
 const GIT_SHA = gitSha();
 // A mint is bought at most once per session; a completed curve is blacklisted for good.
 const attempted = new Set();
+// Mints whose live buy was refused by the buy gate — logged and journaled once, not on every event.
+const buyBlockedNotified = new Set();
 const blacklistPath = path.join(journal.dir, "graduation-blacklist.json");
 const blacklist = new Set(
   (() => {
@@ -252,6 +255,21 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     top10Share: null, // нет данных: в потоке нет балансов токенов
     spotSolPerToken: quotePrice,
   };
+
+  // A live entry must not open a position the bot may be unable to close: the PumpSwap exit is
+  // still unverified (LIVE_CONFIRM_AMM, AUDIT_SELL.md V7), so live buys stay blocked until the
+  // operator confirms the AMM path. Dry run is untouched (it sends nothing).
+  const buyGate = checkBuyGate({ live: LIVE, confirmAmm: process.env.LIVE_CONFIRM_AMM });
+  if (!buyGate.ok) {
+    // Once per mint: the handler runs on every event, the blocking reason will not change.
+    if (!buyBlockedNotified.has(mint)) {
+      buyBlockedNotified.add(mint);
+      const reason = `buy blocked: ${buyGate.reason}`;
+      log(`  ${reason}`);
+      journal.write({ ...candidate, action: "skip", reason });
+    }
+    return; // no position is opened, nothing is signed or sent
+  }
 
   // Holder gate: the count grows over time, so a miss does NOT mark the mint as attempted.
   if (MIN_HOLDERS > 0 && (holders ?? 0) < MIN_HOLDERS) {
