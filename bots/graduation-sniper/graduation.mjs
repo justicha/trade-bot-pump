@@ -31,6 +31,7 @@ import { previewExit, readExecution, simulateTx } from "../../lib/exec.mjs";
 import { checkBuyGate } from "../../lib/buy-gate.mjs";
 import { exitDepth } from "../../lib/buy-checks.mjs";
 import { checkMintExtensions, mayhemReason } from "../../lib/token-safety.mjs";
+import { simulateCurveSell } from "../../lib/prebuy-sim.mjs";
 import { BUY_SKIP_REASON } from "../../lib/buy-skip-reasons.mjs";
 import { planSellParts } from "../../lib/sell-plan.mjs";
 import { ammSellOnce, chooseSellVenue, isDrySell } from "../../lib/amm-sell.mjs";
@@ -375,6 +376,27 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
       return;
     }
     journal.write({ ...candidate, action: "enter", exitRatio, reason: null });
+
+    // Before spending anything, prove the exit: sell the whole would-be position on the curve in a
+    // simulation. A curve that cannot pay the sell now will not pay it after the buy either.
+    const wouldBuyTokens = calcBuyTokens(state, BUY_SOL);
+    const preSell = await simulateCurveSell({ wallet, mintPk, state, tokens: wouldBuyTokens });
+    if (!preSell.ok) {
+      skipBuy(candidate, `${BUY_SKIP_REASON.curveSellSimulation}: ${preSell.reason}`, {
+        tokens: wouldBuyTokens.toString(),
+        expectedExitSol: preSell.quote != null ? Number(preSell.quote) / 1e9 : null,
+        logs: preSell.logs,
+        unitsConsumed: preSell.units ?? null,
+        sent: false,
+      });
+      guard.release(BUY_SOL);
+      attempted.add(mint);
+      log(`  skip: curve sell simulation failed: ${preSell.reason}`);
+      for (const line of preSell.logs) log(`    ${line}`);
+      return;
+    }
+    log(`  exit simulation ok: ${(Number(preSell.quote) / 1e9).toFixed(6)} SOL for ${wouldBuyTokens.toString()} tokens`);
+
 
 
     log(`*** PRE-GRADUATION BUY ***`);

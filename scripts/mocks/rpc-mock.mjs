@@ -52,6 +52,10 @@ export const connection = {
   async getLatestBlockhash() {
     return { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 1 };
   },
+  // buildVersionedTx() needs a block height (it recomputes the expiry from it).
+  async getBlockHeight() {
+    return 466_900_000;
+  },
   async getSlot() {
     return 466_900_000;
   },
