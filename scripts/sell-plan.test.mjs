@@ -48,6 +48,17 @@ const none = planSellParts(zero, BALANCE, { capRatio: 0.95 });
 assert.equal(none.parts.length, 0);
 assert.match(none.reason, /cannot pay/);
 
+// (6) M5: rescue-sell now sends EVERY part. Each part's minSol is its own quote × (1 - SLIP), so a
+// multi-part plan produces several independently payable sell transactions.
+{
+  const SLIP = 1000;
+  for (const p of plan.parts) {
+    const minSol = (p.quoteOut * BigInt(10000 - SLIP)) / 10000n;
+    assert.ok(minSol > 0n && minSol < p.quoteOut, "per-part minSol is positive and below the part quote");
+  }
+  assert.equal(plan.parts.length > 1, true, "multi-part plan produces several sell txs");
+}
+
 console.log(
   JSON.stringify({
     fullNetSol: Number(full.net) / 1e9,

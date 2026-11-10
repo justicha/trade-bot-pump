@@ -117,6 +117,17 @@ asrt(sum2.worstCaseSol === -0.019, "worst case (open = 0) must be received - spe
   asrt(sc2.costsSol === 0, "a costs object without costSol cannot be summed (regression guard)");
 }
 
+// ---- H9: partial-sell proceeds must not be mistaken for profit -----------------
+{
+  const sp = new SessionLedger({ label: "PARTIAL", mode: "LIVE" });
+  sp.buy(0.1); // full entry
+  sp.sell(0.05, 0.0); // a partial sell returns 0.05 of the 0.1 entry (closed share = 0.05)
+  // openSpentSol must be the REMAINING entry (0.05), not the full 0.1.
+  const sm = sp.report({ reason: "stopped", openPositions: 1, openSpentSol: 0.05 });
+  asrt(sm.netSol === 0, `partial-sell proceeds are not profit: net must be 0, got ${sm.netSol}`);
+  asrt(sm.openSpentSol === 0.05, `openSpentSol must be the remaining entry, got ${sm.openSpentSol}`);
+}
+
 // ---- hard safety gates must fail fast before any network -------------------
 {
   const { spawnSync } = await import("node:child_process");

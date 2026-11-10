@@ -11,16 +11,14 @@
 
 import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { SLIPPAGE_BPS, DRY_RUN, LIVE } from "../../lib/config.mjs";
+import { SLIPPAGE_BPS, DRY_RUN, LIVE, numOr } from "../../lib/config.mjs";
 import { TradeGuard } from "../../lib/guards.mjs";
 import { log as logger } from "../../lib/logger.mjs";
 import {
   PUMP_PROGRAM,
   TOKEN_2022_PROGRAM,
-  TRADE_EVENT_PREFIX,
-  BUY_INSTRUCTIONS,
-  SELL_INSTRUCTIONS,
 } from "../../lib/constants.mjs";
+import { parseLogEvents } from "../../lib/events.mjs";
 import {
   buyIx,
   calcBuyTokens,
@@ -34,15 +32,19 @@ import {
 } from "../../lib/pumpfun.mjs";
 import { connection, getSOLBalance, sendTxWithRetry } from "../../lib/rpc.mjs";
 import { simulateThenSend } from "../../lib/send.mjs";
+import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
-import { SessionLedger } from "../../lib/session.mjs";
+import { SessionLedger, splitEntryForSell } from "../../lib/session.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
 
-const BUY_SOL = Number(process.env.COPY_BUY_SOL || 0.05);
-const SELL_PCT = Number(process.env.COPY_SELL_PCT || 100);
-const MAX_POSITIONS = Number(process.env.COPY_MAX_POSITIONS || 5);
+// Numeric config via numOr: an invalid value (e.g. COPY_MAX_POSITIONS=abc) must fail loudly with
+// the variable name, never silently become NaN. A NaN MAX_POSITIONS used to make the position-cap
+// check `positions.size + opening.size >= NaN` always false — i.e. the cap was silently disabled.
+const BUY_SOL = numOr(process.env.COPY_BUY_SOL, 0.05, "COPY_BUY_SOL");
+const SELL_PCT = numOr(process.env.COPY_SELL_PCT, 100, "COPY_SELL_PCT");
+const MAX_POSITIONS = numOr(process.env.COPY_MAX_POSITIONS, 5, "COPY_MAX_POSITIONS");
 const TARGETS = (process.env.COPY_TARGETS || "").split(",").filter(Boolean);
 
 let totalPnl = 0;
@@ -88,39 +90,6 @@ function requestStop(reason) {
   setImmediate(() => { void finish(reason); });
 }
 
-function parseV3TradeEvent(data) {
-  if (data.length < 89) return null;
-  const mint = new PublicKey(data.subarray(8, 40)).toBase58();
-  const solAmount = Number(data.readBigUInt64LE(40)) / 1e9;
-  const tokenAmount = Number(data.readBigUInt64LE(48)) / 1e6;
-  const user = new PublicKey(data.subarray(57, 89)).toBase58();
-  return { mint, solAmount, tokenAmount, user };
-}
-
-function parseTradeEvents(logs) {
-  let isBuy = false, isSell = false;
-  for (const line of logs) {
-    const m = line.match(/Instruction: (\w+)/);
-    if (!m) continue;
-    if (BUY_INSTRUCTIONS.has(m[1])) isBuy = true;
-    if (SELL_INSTRUCTIONS.has(m[1])) isSell = true;
-  }
-
-  const events = [];
-  for (const line of logs) {
-    if (!line.startsWith("Program data: ")) continue;
-    const raw = Buffer.from(line.slice(14), "base64");
-    if (raw.length < 8 || !raw.subarray(0, 8).equals(TRADE_EVENT_PREFIX)) continue;
-
-    try {
-      const parsed = parseV3TradeEvent(raw);
-      if (!parsed) continue;
-      events.push({ ...parsed, isBuy: isBuy && !isSell });
-    } catch { /* malformed Program data payload: skip this line, keep parsing the rest */ }
-  }
-  return events;
-}
-
 // Mints with a buy in flight. Counted in the position-cap check so concurrent WS callbacks
 // (several targets, several trades per notification) can't overshoot MAX_POSITIONS or buy the
 // same mint twice (check → await → set race). Same fix as bots/sniper/sniper.mjs.
@@ -162,7 +131,7 @@ async function copyBuyUnlocked(mint, copiedFrom) {
   guard.reserve(BUY_SOL); // synchronous reservation closes the concurrent-event race
 
   if (DRY_RUN) {
-    positions.set(mint, { entryPrice, entryTime: Date.now(), copiedFrom });
+    positions.set(mint, { entryPrice, entrySolSol: BUY_SOL, entryTime: Date.now(), copiedFrom });
     session.buy(BUY_SOL);
     log(`  [DRY RUN] tracked`);
     return;
@@ -180,11 +149,28 @@ async function copyBuyUnlocked(mint, copiedFrom) {
       }),
     ];
     const tx = await buildVersionedTx(wallet, ixs);
-    await simulateThenSend(tx);
-    positions.set(mint, { entryPrice, entryTime: Date.now(), copiedFrom });
-    session.buy(BUY_SOL);
-    log(`  copied`);
+    const sig = await simulateThenSend(tx);
+    // C5: entry from ACTUAL execution (tokens that arrived / SOL that left), falling back to the
+    // quote if the transaction meta is not available yet.
+    const ex = await readExecution(sig, wallet.publicKey, mintPk);
+    const spent = ex.found && ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+    const actualEntry = ex.found && ex.tokensReceived > 0n ? spent / (Number(ex.tokensReceived) / 1e6) : entryPrice;
+    positions.set(mint, { entryPrice: actualEntry, entrySolSol: spent, entryTime: Date.now(), copiedFrom });
+    session.buy(spent);
+    log(`  copied${ex.found ? "" : " (quote-fallback)"}`);
   } catch (err) {
+    // C2: the buy may have landed even though confirmTransaction failed. If the chain shows the
+    // tokens arrived, record the position instead of releasing the reserve (the money was spent).
+    if (err.sig) {
+      const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
+      if (ex && ex.found && ex.tokensReceived > 0n) {
+        const spent = ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+        positions.set(mint, { entryPrice: entryPrice, entrySolSol: spent, entryTime: Date.now(), copiedFrom });
+        session.buy(spent);
+        log(`  copied (reconciled after confirm error, ${ex.tokensReceived} tokens)`);
+        return;
+      }
+    }
     guard.release(BUY_SOL);
     log(`  copy buy failed: ${err.message}`);
   }
@@ -244,21 +230,44 @@ async function copySell(mint, copiedFrom) {
       }),
     ];
     const tx = await buildVersionedTx(wallet, ixs);
-    await simulateThenSend(tx);
+    const sig = await simulateThenSend(tx);
+    // C5: received SOL from the chain (fee excluded), falling back to the quote if meta lags.
+    const ex = await readExecution(sig, wallet.publicKey, mintPk);
 
     const sellPrice = getPrice(state);
     const ratio = sellPrice / pos.entryPrice;
     const pnlPct = ((sellPrice / pos.entryPrice) - 1) * 100;
-    const pnlSol = Number(expectedSol) / 1e9 - BUY_SOL;
-    const costs = roundTripCosts({ buySol: BUY_SOL, ratio, pumpFeeBps: 0 });
+    const receivedSol = ex.found && ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(expectedSol) / 1e9;
+    // H4: PnL against the SOLD share of the entry (a SELL_PCT<100 partial sell used to subtract
+    // the full entry again each time).
+    const split = splitEntryForSell(pos.entrySolSol ?? BUY_SOL, sellAmount, total);
+    const pnlSol = receivedSol - split.shareEntry;
+    const costs = roundTripCosts({ buySol: split.shareEntry, ratio, pumpFeeBps: 0 });
     recordResult(pnlSol);
-    session.sell(Number(expectedSol) / 1e9, pnlSol, costs);
+    session.sell(receivedSol, pnlSol, costs);
     totalPnl += pnlSol;
     totalTrades++;
     log(`  sold: ${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(1)}% (${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL)`);
     log(`  session: ${totalTrades} trades, PnL: ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(4)} SOL`);
     if (SELL_PCT >= 100) positions.delete(mint);
+    else pos.entrySolSol = split.remainderEntry;
   } catch (err) {
+    // C2: the sell may have landed even though confirmTransaction failed. If the chain shows the
+    // tokens left the wallet, record the sale instead of leaving the position open to be re-sold.
+    if (err.sig) {
+      const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
+      if (ex && ex.found && ex.tokensSold > 0n) {
+        const receivedSol = ex.solReceivedSol > 0 ? ex.solReceivedSol : BUY_SOL;
+        const pnlSol = receivedSol - (pos.entrySolSol ?? BUY_SOL);
+        recordResult(pnlSol);
+        session.sell(receivedSol, pnlSol, null);
+        totalPnl += pnlSol;
+        totalTrades++;
+        log(`  sold (reconciled after confirm error): ${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL`);
+        if (SELL_PCT >= 100) positions.delete(mint);
+        return;
+      }
+    }
     log(`  copy sell failed: ${err.message}`);
   }
 }
@@ -281,7 +290,9 @@ async function finish(reason = stopReason || "stopped") {
   }
   for (const [mint] of [...positions]) session.drop(`${mint.slice(0, 8)}: still open at stop`);
   const endSol = LIVE ? await getSOLBalance(wallet.publicKey).catch(() => null) : null;
-  session.report({ reason, openPositions: positions.size, endSol, openSpentSol: positions.size * BUY_SOL });
+  // H9: openSpentSol = sum of REMAINING entry shares (partial sells reduce pos.entrySolSol), so
+  // the session NET (received - closedSpent) does not mix partial-sell proceeds with open spend.
+  session.report({ reason, openPositions: positions.size, endSol, openSpentSol: [...positions.values()].reduce((a, p) => a + (p.entrySolSol ?? BUY_SOL), 0) });
   process.exit(0);
 }
 
@@ -316,12 +327,16 @@ for (const target of TARGETS) {
       for (let i = 0; i < 5000; i++) recentTxs.delete(iter.next().value);
     }
 
-    const trades = parseTradeEvents(value.logs);
-    for (const trade of trades) {
-      if (trade.isBuy) {
-        await copyBuy(trade.mint, target);
+    const events = parseLogEvents(value.logs);
+    for (const ev of events) {
+      if (ev.type !== "trade") continue;
+      // H1: only the subscribed target's OWN trades. A tx that merely mentions the target (e.g. as a
+      // fee recipient) carries trades of other wallets — copying those was the bug.
+      if (ev.user !== target) continue;
+      if (ev.isBuy) {
+        await copyBuy(ev.mint, target);
       } else {
-        await copySell(trade.mint, target);
+        await copySell(ev.mint, target);
       }
     }
   });

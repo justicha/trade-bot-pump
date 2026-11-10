@@ -29,6 +29,10 @@ const near = (a, b, tol = 1e-9) => Math.abs(a - b) <= tol * Math.max(1, Math.abs
   asrt(RAW_TO_WHOLE === 1e-3, "the raw->whole factor is 1e-3");
   const m = metricsOf(launch);
   asrt(near(m.tokensPerSol, 1.073e9 / 30, 1e-9), `tokensPerSol = 1.073e9/30, got ${m.tokensPerSol}`);
+  // H5: basic-trader showPrice uses metricsOf — market cap in WHOLE tokens, not the 1000x raw price.
+  const supply = 1_000_000_000_000_000n; // 1e15 raw = 1e9 whole tokens
+  const mcap = m.price * Number(supply) / 1e6;
+  asrt(near(mcap, 27.96, 1e-2), `market cap at launch ~27.96 SOL, got ${mcap}`);
 }
 
 // ---- what the filter accepts and refuses -------------------------------------

@@ -9,3 +9,4 @@ keys/
 ._*
 __pycache__/
 *.pyc
+.vscode/

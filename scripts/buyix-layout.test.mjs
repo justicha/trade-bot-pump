@@ -20,5 +20,10 @@ assert.equal(ix.data[24], 1, "track_volume = Some(true)");
 assert.equal(ix.data[25], 0, "partial_fill = Some(false)");
 assert.ok(ix.keys.length >= 17, `16 IDL accounts + bonding-curve-v2 (got ${ix.keys.length})`);
 
+// M1: the default max_sol_cost uses solToLamports (round), not Math.floor — for values that don't
+// represent exactly in a double (0.07 * 1e9 = 69999999.99999999) floor() would be 1 lamport short.
+const def = buyIx(user, mint, 0.07, 123_456_789n, { creator });
+assert.equal(def.data.readBigUInt64LE(16), 70_000_000n, "default max_sol_cost = solToLamports(0.07) = 70_000_000 lamports");
+
 console.log(JSON.stringify({ dataLen: ix.data.length, keys: ix.keys.length, discriminator: "66063d1201daebea" }));
 console.log("PASS: buy instruction byte layout pinned (no transaction built or sent)");

@@ -10,12 +10,12 @@ FIXED only when a confirming test exists (or, for removals, a repository-wide re
 |---|-------|---------|--------------|
 | 01 | `.env` inline comments become part of values (`KEY=92 # c` → NaN) | CONFIRMED | FIXED — `lib/config.mjs` strips inline comments (quoted values preserved); bots validate numeric env via `numOr` (loud error with the variable name). Test: `scripts/env-inline.test.mjs` |
 | 02 | `InstructionError` structure lost when wrapping tx errors | CONFIRMED | FIXED — wrappers keep the raw payload (`e.err`); `parseInstructionError` decodes stringified payloads from messages. Test: `scripts/pump-errors.test.mjs` |
-| 03 | `--live --dry-run` conflict in rescue-sell | FALSE POSITIVE | not changed (single source of truth in lib/config.mjs) |
+| 03 | `--live --dry-run` conflict in rescue-sell | CONFIRMED (was wrongly "FALSE POSITIVE") | FIXED — rescue-sell now reads LIVE/DRY_RUN from lib/config.mjs (no local `args.includes("--live")`), so `--live --dry-run` never sends and the banner says DRY RUN. Test: `scripts/rescue-gate.test.mjs` |
 | 04 | Position recorded as sold at stop without a confirmed sale (sniper) | PARTIALLY CONFIRMED | FIXED — in LIVE the unconfirmed branch now writes `type:"stuck"` + `session.drop` instead of fake PnL. DRY-RUN branch unchanged (covered by `shutdown.test.mjs`); the LIVE branch is code-reviewed (cannot be automated without a live environment) |
 | 05 | Partial sell double-counts the full entry cost in PnL (graduation) | CONFIRMED | DEFERRED — out of the approved ACT scope |
 | 06 | Positions deleted before the final report (`openPositions` always 0) | PARTIALLY CONFIRMED | FIXED — both bots snapshot `openAtStop` before deletion and report real counts/spend. Test: `scripts/shutdown.test.mjs` |
 | 07 | `wallet.mjs generate` overwrites keys without asking; name escapes `keys/` | CONFIRMED | FIXED — refuses to overwrite without `--force`, name alphabet `[A-Za-z0-9_-]+`, atomic temp+rename write. Test: `scripts/wallet-gen.test.mjs` |
-| 08 | `buyIx` writes a token count into the SOL `amount` field | CONFIRMED | NOT CHANGED (instruction code frozen per instructions) — documented in `lib/pumpfun.mjs` and pinned by `scripts/buyix-layout.test.mjs` (bytes only, no transactions) |
+| 08 | `buyIx` writes a token count into the SOL `amount` field | NEEDS VERIFICATION | awaiting C6-VERIFY — the official IDL says `amount` = token amount (not SOL), which would make the current layout correct and the old "inert slippage guard" conclusion wrong. Re-verify with `scripts/verify-buy-semantics.mjs` (read-only simulations) before any instruction change. Layout still pinned by `scripts/buyix-layout.test.mjs` |
 | 09 | ATA rent mixed into `readExecution` SOL deltas | CONFIRMED | DEFERRED — out of the approved ACT scope |
 | 10 | Sniper retries a failing sell every 2 s forever; copy-trader never retries | CONFIRMED | DEFERRED — out of the approved ACT scope |
 | 11 | Copy-trader copies foreign trades from any tx mentioning the target | CONFIRMED | DEFERRED — out of the approved ACT scope |
@@ -28,7 +28,7 @@ FIXED only when a confirming test exists (or, for removals, a repository-wide re
 | 18 | paramsHash missing MAX_FILL_PCT / MIN_HOLDERS / MAX_TOP10_SHARE | CONFIRMED | FIXED — all three added. Test: `scripts/paramshash.test.mjs` |
 | 19 | Floating-point drift in guard session cap | NOT CONFIRMED | not changed |
 | 20 | rescue-sell uses virtual-reserve fill + duplicates AMM helpers | CONFIRMED | DEFERRED — out of the approved ACT scope |
-| 21 | Analytics `topBuyers` includes sells | FALSE POSITIVE | not changed |
+| 21 | Analytics `topBuyers` includes sells | CONFIRMED (was wrongly "FALSE POSITIVE") | FIXED — the topBuyers block now sits inside `if (ev.isBuy)`. Test: `scripts/analytics-events.test.mjs` |
 | 22 | Lab variants E and F50 are identical | CONFIRMED (cosmetic) | DOCUMENTED — comment added in `lib/strategy.mjs` (no parameter changes) |
 | 23 | `delayMs` documented as affecting PnL but it does not | PARTIALLY CONFIRMED | FIXED — comment corrected in `lib/pessimistic.mjs` (no PnL changes) |
 | 24 | buyHour/buyWeekday in Brussels + UTC journal name in log | CONFIRMED | FIXED — both are MSK now (`MSK_TZ`, `mskDateKey`). Test: `scripts/tz-boundary.test.mjs` |

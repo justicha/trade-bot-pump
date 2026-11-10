@@ -35,6 +35,7 @@ import { previewExit, readExecution, simulateTx } from "../../lib/exec.mjs";
 import { planSellParts } from "../../lib/sell-plan.mjs";
 import { ammSellIx, ammSellQuote, TOKEN_PROGRAM } from "../../lib/pumpswap.mjs";
 import { curvePrice, gradFillPct } from "../../lib/curve.mjs";
+import { canEnterMint } from "../../lib/entry-gate.mjs";
 import { SLIPPAGE_BPS, DRY_RUN, LIVE, numOr } from "../../lib/config.mjs";
 import { TradeGuard } from "../../lib/guards.mjs";
 import { log as logger } from "../../lib/logger.mjs";
@@ -42,11 +43,8 @@ import {
   PUMP_PROGRAM,
   TOKEN_2022_PROGRAM,
   WSOL,
-  TRADE_EVENT_PREFIX,
-  BUY_INSTRUCTIONS,
-  SELL_INSTRUCTIONS,
-  CREATE_INSTRUCTIONS,
 } from "../../lib/constants.mjs";
+import { parseLogEvents } from "../../lib/events.mjs";
 import {
   buyIx,
   calcBuyTokens,
@@ -56,11 +54,12 @@ import {
   getPrice,
   refreshGlobalFeeState,
   sellIx,
+  solToLamports,
   userAtaIx,
 } from "../../lib/pumpfun.mjs";
 import { connection, getSOLBalance, sendTxWithRetry, rpcStats } from "../../lib/rpc.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
-import { SessionLedger, roundSol } from "../../lib/session.mjs";
+import { SessionLedger, roundSol, splitEntryForSell } from "../../lib/session.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -218,23 +217,6 @@ function requestStop(reason) {
 // buyToken() must NOT re-check `opening.has(mint)` — it would always see itself and never buy.
 const opening = new Set();
 
-function parseV3TradeEvent(data) {
-  if (data.length < 129) return null;
-  const mint = new PublicKey(data.subarray(8, 40)).toBase58();
-  const solAmount = Number(data.readBigUInt64LE(40)) / 1e9;
-  const tokenAmount = Number(data.readBigUInt64LE(48)) / 1e6;
-  const user = new PublicKey(data.subarray(57, 89)).toBase58();
-  const virtualSolReserves = data.readBigUInt64LE(97);
-  const virtualTokenReserves = data.readBigUInt64LE(105);
-  const realSolReserves = data.readBigUInt64LE(113);
-  const realTokenReserves = data.readBigUInt64LE(121);
-  return {
-    mint, solAmount, tokenAmount, user,
-    virtualSolReserves, virtualTokenReserves,
-    realSolReserves, realTokenReserves,
-  };
-}
-
 // Fill of the curve, in percent of the 85 SOL graduation threshold.
 //
 // The old formula used virtualSolReserves / 85. That is wrong: on a normal curve the invariant is
@@ -346,7 +328,7 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     const expectedTokens = calcBuyTokens(state, BUY_SOL);
     const minTokens = (expectedTokens * BigInt(10000 - BUY_SLIPPAGE_BPS)) / 10000n;
     // Slippage headroom on max_sol_cost: without it any upward tick means Custom 6002.
-    const maxSolCost = BigInt(Math.floor(BUY_SOL * 1e9 * (1 + BUY_SLIPPAGE_BPS / 10000)));
+    const maxSolCost = solToLamports(BUY_SOL * (1 + BUY_SLIPPAGE_BPS / 10000));
     // Never send a live buy with a stale fee recipient: retry the global read right here.
     await ensureGlobalFeeState().catch((e) => log(`  fee state refresh failed: ${e.message}`));
     const ixs = [
@@ -404,6 +386,34 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     });
     log(`  bought! entry ${entryPrice.toExponential(3)} SOL/token (${ex.found ? "actual" : "quote"})`);
   } catch (err) {
+    // C2: sendTxWithRetry can throw AFTER the tx was sent (network error in confirmTransaction)
+    // even though it landed. If the chain shows the tokens arrived, record the position instead of
+    // releasing the reserve and dropping the position — the money WAS spent.
+    if (err.sig) {
+      const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
+      if (ex && ex.found && ex.tokensReceived > 0n) {
+        const entrySol = ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+        const entryPrice = Number(ex.tokensReceived) > 0 ? entrySol / (Number(ex.tokensReceived) / 1e6) : quotePrice;
+        positions.set(mint, {
+          tokens: ex.tokensReceived,
+          entrySolSol: entrySol,
+          entryPrice,
+          entryTime: Date.now(),
+          fillAtEntry: fillPct,
+          attempts: 0,
+        });
+        lastBuyTime = Date.now();
+        attempted.add(mint);
+        session.buy(entrySol);
+        journal.trade({
+          sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, side: "buy", sig: err.sig,
+          solSpent: entrySol, tokens: ex.tokensReceived.toString(), entryPrice, fillPct,
+          exitRatioPreview: exitRatio, priceSource: "chain-meta", simulationResult: "ok", unitsConsumed: null,
+        });
+        log(`  bought! (reconciled after confirm error) entry ${entryPrice.toExponential(3)} SOL/token`);
+        return;
+      }
+    }
     guard.release(BUY_SOL);
     attempted.add(mint);
     if (isCurveCompleteError(err)) {
@@ -594,9 +604,12 @@ async function sellPosition(mint, mintPk, pos, ratio) {
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
     const receivedSol = ex.found && ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(quote) / 1e9;
     const entrySol = pos.entrySolSol ?? BUY_SOL;
-    const pnlActual = roundSol(receivedSol - entrySol);
+    // H4: measure PnL against the SOLD share of the entry, not the full entry (a partial sell used
+    // to subtract the whole entry again on every part).
+    const split = splitEntryForSell(entrySol, amountRaw, total);
+    const pnlActual = roundSol(receivedSol - split.shareEntry);
     recordResult(pnlActual);
-    session.sell(receivedSol, pnlActual, roundTripCosts({ buySol: entrySol, ratio: receivedSol / entrySol, pumpFeeBps: 0 }));
+    session.sell(receivedSol, pnlActual, roundTripCosts({ buySol: split.shareEntry, ratio: split.shareEntry > 0 ? receivedSol / split.shareEntry : 1, pumpFeeBps: 0 }));
     totalTrades++;
     totalPnl += pnlActual;
     if (pnlActual > 0) wins++;
@@ -622,8 +635,10 @@ async function sellPosition(mint, mintPk, pos, ratio) {
     });
     log(`  sold on ${venue}: ${pnlActual >= 0 ? "+" : ""}${pnlActual.toFixed(4)} SOL (${ex.found ? "actual" : "quote"}, slip ${slip} bps)`);
     if (amountRaw < total) {
-      // Partial fill: keep the position with what is left; the next cycle re-reads the curve.
+      // Partial fill: keep the position with what is left (tokens AND the remaining entry share);
+      // the next cycle re-reads the curve.
       pos.tokens = total - amountRaw;
+      pos.entrySolSol = split.remainderEntry;
       pos.attempts = 0;
       pos.nextSellAt = 0;
       log(`  remaining ${(Number(pos.tokens) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens kept for the next cycle`);
@@ -631,6 +646,44 @@ async function sellPosition(mint, mintPk, pos, ratio) {
       positions.delete(mint);
     }
   } catch (err) {
+    // C2: the sell may have landed even though confirmTransaction failed. If the chain shows the
+    // tokens left the wallet, record the sale (proportional entry) instead of retrying a sell that
+    // already happened (a retry would sell the remaining tokens or fail).
+    if (err.sig) {
+      const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
+      if (ex && ex.found && ex.tokensSold > 0n) {
+        const receivedSol = ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(quote) / 1e9;
+        const entrySol = pos.entrySolSol ?? BUY_SOL;
+        const soldRaw = ex.tokensSold;
+        const totalRaw = (pos.tokens ?? 0n) + soldRaw; // balance before this sell
+        const share = totalRaw > 0n ? Number(soldRaw) / Number(totalRaw) : 1;
+        const shareEntry = roundSol(entrySol * share);
+        const pnlActual = roundSol(receivedSol - shareEntry);
+        recordResult(pnlActual);
+        session.sell(receivedSol, pnlActual, roundTripCosts({ buySol: shareEntry, ratio: shareEntry > 0 ? receivedSol / shareEntry : 1, pumpFeeBps: 0 }));
+        totalTrades++;
+        totalPnl += pnlActual;
+        if (pnlActual > 0) wins++;
+        journal.trade({
+          sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, side: "sell", sig: err.sig, venue,
+          solReceived: receivedSol, pnlSol: pnlActual, amountRaw: soldRaw.toString(), balanceRaw: totalRaw.toString(),
+          quoteOut: Number(quote) / 1e9, realSolReserves: null, attempts: attempt, slippageBps: slip,
+          simulationResult: "ok", unitsConsumed: null, priceSource: "chain-meta",
+        });
+        log(`  sold (reconciled after confirm error): ${pnlActual >= 0 ? "+" : ""}${pnlActual.toFixed(4)} SOL`);
+        const remaining = totalRaw - soldRaw;
+        if (remaining > 0n) {
+          pos.tokens = remaining;
+          pos.entrySolSol = roundSol(entrySol - shareEntry);
+          pos.attempts = 0;
+          pos.nextSellAt = 0;
+          log(`  remaining ${(Number(remaining) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens kept for the next cycle`);
+        } else {
+          positions.delete(mint);
+        }
+        return;
+      }
+    }
     pos.attempts = attempt;
     const why = describeTxError(err);
     journal.write({
@@ -759,22 +812,16 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), async (result) => {
   const lastLog = value.logs[value.logs.length - 1] || "";
   if (!lastLog.includes("success")) return;
 
-  let isBuy = false;
-  for (const l of value.logs) {
-    const m = l.match(/Instruction: (\w+)/);
-    if (m && BUY_INSTRUCTIONS.has(m[1])) { isBuy = true; break; }
-  }
-  if (!isBuy) return;
-
-  for (const l of value.logs) {
-    if (!l.startsWith("Program data: ")) continue;
-    const data = Buffer.from(l.slice(14), "base64");
-    if (data.length < 129 || !data.subarray(0, 8).equals(TRADE_EVENT_PREFIX)) continue;
+  let events;
+  try { events = parseLogEvents(value.logs); } catch { return; }
+  for (const ev of events) {
+    if (ev.type !== "trade") continue;
+    // C4: per-event direction from the payload byte; a sell in a mixed tx must not drive the entry.
+    if (!ev.isBuy) continue;
+    // The reserve snapshot is required to price the fill; short payloads have it undefined.
+    if (ev.realSolReserves == null || ev.realSolReserves === 0n) continue;
 
     try {
-      const ev = parseV3TradeEvent(data);
-      if (!ev) continue;
-
       // Distinct buyers since the mint was first sighted (lower bound, see holdersSeen).
       let buyerSet = holdersSeen.get(ev.mint);
       if (!buyerSet) {
@@ -809,31 +856,31 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), async (result) => {
           );
         }
 
-        const inFlight = opening.has(ev.mint);
-        const full = positions.size + opening.size >= MAX_POSITIONS;
-        if (!positions.has(ev.mint) && !inFlight && !full) {
+        const gate = canEnterMint({ positions, opening, attempted, mint: ev.mint, maxPositions: MAX_POSITIONS });
+        if (gate.ok) {
           opening.add(ev.mint);
-          openingSince.set(ev.mint, Date.now());
+          openingSince.set(ev.mint, { since: Date.now(), running: true });
           try {
             await buyToken(ev.mint, fillPct, ev.virtualSolReserves, ev.virtualTokenReserves, { holders });
           } finally {
             opening.delete(ev.mint);
             openingSince.delete(ev.mint);
           }
-        } else if (!inFlight && full) {
+        } else if (gate.reason === "full") {
           // Say it out loud. With GRAD_MAX_POSITIONS=1 a single open position used to silence the
           // bot completely: every new candidate was dropped without a log line or a journal record.
           warnSlot(
             `no free slot (${positions.size} open, ${opening.size} opening) — ${ev.mint.slice(0, 8)} ignored at fill=${fillPct.toFixed(1)}%`,
           );
-        } else if (inFlight) {
+        } else if (gate.reason === "in-flight") {
           warnSlot(
-            `entry already in flight for ${ev.mint.slice(0, 8)} (${Math.round((Date.now() - (openingSince.get(ev.mint) || Date.now())) / 1000)}s)`,
+            `entry already in flight for ${ev.mint.slice(0, 8)} (${Math.round((Date.now() - (openingSince.get(ev.mint)?.since || Date.now())) / 1000)}s)`,
           );
         }
       }
     } catch { /* malformed Program data payload: skip this line, keep the subscription alive */ }
-    break;
+    // H2: no `break` — process EVERY trade event in the tx (routers emit several; the last one
+    // carries the latest reserves and drives the highest fill).
   }
 });
 
@@ -846,13 +893,20 @@ const cleanupTimer = setInterval(() => {
     if (now - info.ts > 600_000) watchlist.delete(mint);
   }
   // Watchdog: an entry whose RPC call never settled used to hold the `opening` slot forever, so
-  // with GRAD_MAX_POSITIONS=1 every later candidate was dropped silently. Release it and say so.
-  for (const [mint, since] of openingSince) {
-    if (now - since > OPENING_STALE_SEC * 1000) {
+  // with GRAD_MAX_POSITIONS=1 every later candidate was dropped silently. Release it and say so —
+  // but NEVER release a slot whose buyToken is still running (H3: that allowed a duplicate buy).
+  for (const [mint, rec] of openingSince) {
+    if (now - rec.since > OPENING_STALE_SEC * 1000) {
+      if (rec.running) {
+        log(
+          `ALERT: entry for ${mint.slice(0, 8)} still in flight after ${Math.round((now - rec.since) / 1000)}s — slot kept (running buy)`,
+        );
+        continue;
+      }
       opening.delete(mint);
       openingSince.delete(mint);
       log(
-        `ALERT: entry for ${mint.slice(0, 8)} did not settle in ${Math.round((now - since) / 1000)}s — slot released`,
+        `ALERT: entry for ${mint.slice(0, 8)} did not settle in ${Math.round((now - rec.since) / 1000)}s — slot released`,
       );
     }
   }

@@ -17,11 +17,11 @@ import {
   calcSellSol,
   ensureGlobalFeeState,
   getBondingCurveState,
-  getPrice,
   refreshGlobalFeeState,
   sellIx,
   userAtaIx,
 } from "../../lib/pumpfun.mjs";
+import { metricsOf } from "../../lib/curve.mjs";
 import { connection, getSOLBalance, sendTxWithRetry } from "../../lib/rpc.mjs";
 import { simulateThenSend } from "../../lib/send.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
@@ -57,12 +57,15 @@ async function showPrice() {
     console.log("Bonding curve complete — token migrated to PumpSwap AMM");
     return;
   }
-  const price = getPrice(state);
-  const mcap = price * Number(state.tokenTotalSupply) / 1e6;
-  console.log(`Price: ${price.toFixed(12)} SOL/token`);
+  // H5: getPrice() is SOL per RAW unit (1000x a whole-token price). Price the token and the market
+  // cap in WHOLE tokens via metricsOf.
+  const m = metricsOf(state);
+  const price = m ? m.price : null;
+  const mcap = price != null ? price * Number(state.tokenTotalSupply) / 1e6 : null;
+  console.log(`Price: ${price != null ? price.toFixed(12) : "n/a"} SOL/token`);
   console.log(`Virtual SOL: ${(Number(state.virtualSolReserves) / 1e9).toFixed(4)} SOL`);
   console.log(`Virtual Tokens: ${(Number(state.virtualTokenReserves) / 1e6).toFixed(0)}`);
-  console.log(`Market cap: ~${mcap.toFixed(2)} SOL`);
+  console.log(`Market cap: ${mcap != null ? "~" + mcap.toFixed(2) : "n/a"} SOL`);
 }
 
 async function showBalance() {
@@ -84,6 +87,10 @@ async function showWallet() {
 }
 
 async function buy(solAmount) {
+  if (!Number.isFinite(solAmount) || solAmount <= 0) {
+    console.error(`buy: invalid SOL amount "${amountStr}" (must be a positive number)`);
+    process.exit(1);
+  }
   const sol = await getSOLBalance(wallet.publicKey);
   if (sol < solAmount + 0.01) {
     console.log(`Insufficient SOL: have ${sol.toFixed(4)}, need ${(solAmount + 0.01).toFixed(4)} (+ fees)`);
@@ -128,6 +135,10 @@ async function buy(solAmount) {
 }
 
 async function sell(pct) {
+  if (!Number.isInteger(pct) || pct <= 0 || pct > 100) {
+    console.error(`sell: invalid percent "${amountStr}" (must be an integer 1..100, or "all")`);
+    process.exit(1);
+  }
   const ata = getAssociatedTokenAddressSync(mint, wallet.publicKey, false, TOKEN_2022_PROGRAM);
   const info = await connection.getTokenAccountBalance(ata);
   const totalTokens = BigInt(info.value.amount);

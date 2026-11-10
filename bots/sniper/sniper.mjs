@@ -23,11 +23,8 @@ import { log as logger } from "../../lib/logger.mjs";
 import {
   PUMP_PROGRAM,
   TOKEN_2022_PROGRAM,
-  TRADE_EVENT_PREFIX,
-  BUY_INSTRUCTIONS,
-  SELL_INSTRUCTIONS,
-  CREATE_INSTRUCTIONS,
 } from "../../lib/constants.mjs";
+import { parseLogEvents } from "../../lib/events.mjs";
 import {
   buyIx,
   calcBuyTokens,
@@ -46,6 +43,7 @@ import { HolderTracker } from "../../lib/holders.mjs";
 import { getSolUsd, fmtUsd, solPerTokenToUsd } from "../../lib/solprice.mjs";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { checkCurve, metricsOf, rawSolPerTokenToWhole } from "../../lib/curve.mjs";
+import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
@@ -232,7 +230,7 @@ const mintStats = new Map(); // mint -> { buys, sells, buyers:Set }
 // sampler. This is what removes the RPC flood (the account is read once for the token type, not on
 // every tick).
 const curveStream = new Map(); // mint -> { vSol: BigInt, vTok: BigInt, ts: number }
-const STALE_MS = Number(process.env.SNIPER_STALE_MS || 2000);
+const STALE_MS = numOr(process.env.SNIPER_STALE_MS, 2000, "SNIPER_STALE_MS");
 function streamPrice(mint) {
   const s = curveStream.get(mint);
   if (!s || !s.vTok) return null;
@@ -292,49 +290,6 @@ if (TICKS_ENABLED) {
       ...statsOf(mint),
     };
   });
-}
-
-function parseV3TradeEvent(data) {
-  if (data.length < 89) return null;
-  const mint = new PublicKey(data.subarray(8, 40)).toBase58();
-  const solAmount = Number(data.readBigUInt64LE(40)) / 1e9;
-  const tokenAmount = Number(data.readBigUInt64LE(48)) / 1e6;
-  const user = new PublicKey(data.subarray(57, 89)).toBase58();
-  let virtualSolReserves, virtualTokenReserves;
-  if (data.length >= 113) {
-    virtualSolReserves = data.readBigUInt64LE(97);
-    virtualTokenReserves = data.readBigUInt64LE(105);
-  }
-  return { mint, solAmount, tokenAmount, user, virtualSolReserves, virtualTokenReserves };
-}
-
-function parseLogEvents(logs) {
-  let isBuy = false, isCreate = false;
-  for (const line of logs) {
-    const m = line.match(/Instruction: (\w+)/);
-    if (!m) continue;
-    if (BUY_INSTRUCTIONS.has(m[1])) isBuy = true;
-    if (CREATE_INSTRUCTIONS.has(m[1])) isCreate = true;
-  }
-
-  const events = [];
-  for (const line of logs) {
-    if (!line.startsWith("Program data: ")) continue;
-    const raw = Buffer.from(line.slice(14), "base64");
-    if (raw.length < 8 || !raw.subarray(0, 8).equals(TRADE_EVENT_PREFIX)) continue;
-
-    try {
-      const parsed = parseV3TradeEvent(raw);
-      if (!parsed) continue;
-
-      if (isCreate) {
-        events.push({ type: "create", mint: parsed.mint, creator: parsed.user });
-      }
-      // Both directions: buys open a holder, sells close it (holder gate below).
-      events.push({ type: "trade", isBuy, ...parsed });
-    } catch {} // malformed Program data payload: skip this line, keep parsing the rest
-  }
-  return events;
 }
 
 async function executeBuy(mint) {
@@ -436,13 +391,43 @@ async function executeBuy(mint) {
 
   try {
     const tx = await buildVersionedTx(wallet, ixs);
-    await simulateThenSend(tx);
-    positions.set(mint, posRec);
-    lastBuyTime = Date.now();
-    session.buy(BUY_SOL);
-    ticks.track(mint, { phase: "hold", entryPrice });
-    log(`  position opened`);
+    const sig = await simulateThenSend(tx);
+    // C5: entry from ACTUAL execution (tokens that arrived / SOL that left), not the quote.
+    const ex = await readExecution(sig, wallet.publicKey, mintPk);
+    if (ex.found && ex.tokensReceived > 0n) {
+      const spent = ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+      posRec.tokens = ex.tokensReceived;
+      posRec.entryPrice = Number(ex.tokensReceived) > 0 ? spent / (Number(ex.tokensReceived) / 1e6) : entryPrice;
+      positions.set(mint, posRec);
+      lastBuyTime = Date.now();
+      session.buy(spent);
+      ticks.track(mint, { phase: "hold", entryPrice: posRec.entryPrice });
+      log(`  position opened (actual ${ex.tokensReceived} tokens)`);
+    } else {
+      positions.set(mint, posRec);
+      lastBuyTime = Date.now();
+      session.buy(BUY_SOL);
+      ticks.track(mint, { phase: "hold", entryPrice });
+      log(`  position opened (quote-fallback)`);
+    }
   } catch (err) {
+    // C2: the tx may have been sent and confirmed even though confirmTransaction failed. If the
+    // chain shows the tokens arrived, record the position instead of releasing the reserve and
+    // dropping it — the money WAS spent.
+    if (err.sig) {
+      const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
+      if (ex && ex.found && ex.tokensReceived > 0n) {
+        posRec.tokens = ex.tokensReceived;
+        const spent = ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+        posRec.entryPrice = Number(ex.tokensReceived) > 0 ? spent / (Number(ex.tokensReceived) / 1e6) : posRec.entryPrice;
+        positions.set(mint, posRec);
+        lastBuyTime = Date.now();
+        session.buy(spent);
+        ticks.track(mint, { phase: "hold", entryPrice: posRec.entryPrice });
+        log(`  buy confirmed on-chain despite confirm error (${ex.tokensReceived} tokens) — position opened`);
+        return;
+      }
+    }
     guard.release(BUY_SOL);
     log(`  buy failed: ${err.message}`);
   }
@@ -532,11 +517,13 @@ async function executeSell(mint, reason, exitInfo = null) {
     ];
 
     const tx = await buildVersionedTx(wallet, ixs);
-    await simulateThenSend(tx);
+    const sig = await simulateThenSend(tx);
+    // C5: received SOL from the chain (fee excluded), falling back to the quote if meta lags.
+    const ex = await readExecution(sig, wallet.publicKey, mintPk);
 
     const sellPrice = getPrice(state);
     const ratio = sellPrice / pos.entryPrice;
-    const receivedSol = Number(expectedSol) / 1e9;
+    const receivedSol = ex.found && ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(expectedSol) / 1e9;
     const holdSec = ((Date.now() - pos.entryTime) / 1000).toFixed(0);
     const buyAt = new Date(pos.entryTime);
     const sellAt = new Date();
@@ -554,7 +541,7 @@ async function executeSell(mint, reason, exitInfo = null) {
       costs,
       exitVSol: state.virtualSolReserves,
       exitRSol: state.realSolReserves,
-      priceSource: "account",
+      priceSource: ex.found ? "chain-meta" : "quote-fallback",
       priceAgeMs: streamAgeMs(mint),
     });
     recordResult(pnlSol);
@@ -566,6 +553,40 @@ async function executeSell(mint, reason, exitInfo = null) {
     log(`  session: ${totalTrades} trades, ${wins}W/${totalTrades - wins}L, PnL: ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(4)} SOL`);
     positions.delete(mint);
   } catch (err) {
+    // C2: the sell may have landed even though confirmTransaction failed. If the chain shows the
+    // tokens left the wallet, record the exit instead of leaving the position open to be re-sold.
+    if (err.sig) {
+      const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
+      if (ex && ex.found && ex.tokensSold > 0n) {
+        const st = await getBondingCurveState(mintPk, 0, 0).catch(() => null);
+        const sellPrice = st ? getPrice(st) : pos.entryPrice;
+        const ratio = sellPrice / pos.entryPrice;
+        const receivedSol = ex.solReceivedSol > 0 ? ex.solReceivedSol : BUY_SOL;
+        const holdSec = ((Date.now() - pos.entryTime) / 1000).toFixed(0);
+        const costs = roundTripCosts({ buySol: BUY_SOL, ratio, pumpFeeBps: 0 });
+        const pnlSol = receivedSol - BUY_SOL - costs.txSol - costs.slipSol;
+        recordExit(mint, pos, {
+          exitPrice: sellPrice,
+          ratio,
+          pnlSol,
+          holdSec: Number(holdSec),
+          reason: `${reason} (reconciled)`,
+          costs,
+          exitVSol: st ? st.virtualSolReserves : null,
+          exitRSol: st ? st.realSolReserves : null,
+          priceSource: "chain-meta",
+          priceAgeMs: streamAgeMs(mint),
+        });
+        recordResult(pnlSol);
+        session.sell(receivedSol, receivedSol - BUY_SOL, costs);
+        totalPnl += pnlSol;
+        totalTrades++;
+        if (pnlSol > 0) wins++;
+        positions.delete(mint);
+        log(`  sold (reconciled after confirm error): ${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL`);
+        return;
+      }
+    }
     log(`  sell failed: ${err.message}`);
   }
 }
@@ -831,7 +852,9 @@ async function closePositionAtStop(mint, { unconfirmed = false } = {}) {
   if (state) {
     const price = getPrice(state);
     await executeSell(mint, "manual stop", { price, ratio: price / pos.entryPrice, source: "account", ageMs: null, state });
-    manualStopCloses += 1;
+    // M2: count a manual stop only when the position was actually closed (executeSell can fail in
+    // LIVE and leave the position open; the fallback pass below then closes it unconfirmed).
+    if (!positions.has(mint)) manualStopCloses += 1;
     return;
   }
   // LIVE with no curve account: the position was NOT sold. Never record it as a confirmed sale
@@ -1215,7 +1238,7 @@ const holderTrajTimer = setInterval(() => {
 
 // Opt-in auto-stop for bounded runs and the smoke test: SNIPER_MAX_SEC=12 stops the session after
 // 12 s and prints the normal session summary. Unset (the default) = run until Ctrl+C.
-const MAX_SEC = Number(process.env.SNIPER_MAX_SEC || 0);
+const MAX_SEC = numOr(process.env.SNIPER_MAX_SEC, 0, "SNIPER_MAX_SEC");
 if (MAX_SEC > 0) setTimeout(() => void finish(`max runtime reached (${MAX_SEC}s)`), MAX_SEC * 1000);
 
 // Expire watched mints that never gathered enough holders (scam / dud tokens).

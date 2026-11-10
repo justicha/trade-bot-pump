@@ -6,7 +6,8 @@
 // route. This tool finds the right venue and prices the exit.
 //
 // DRY-RUN by default: reads the chain and prints what an exit would yield.
-// LIVE requires BOTH an explicit --mint and LIVE_CONFIRM=yes (lib/config.mjs enforces the gate).
+// LIVE is read from lib/config.mjs: --live AND NOT --dry-run, with LIVE_CONFIRM=yes enforced there.
+// --dry-run always wins over --live and never sends a transaction.
 //
 //   node scripts/rescue-sell.mjs                          # list every holding + expected exit
 //   node scripts/rescue-sell.mjs --mint <mint>[,<mint>]   # explain specific mints
@@ -20,7 +21,7 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
 } from "@solana/spl-token";
-import { DRY_RUN } from "../lib/config.mjs";
+import { DRY_RUN, LIVE, numOr } from "../lib/config.mjs";
 import {
   ATA_PROGRAM,
   PUMP_PROGRAM,
@@ -53,12 +54,14 @@ const AMM_FEE_CONFIG = PublicKey.findProgramAddressSync(
 const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
 const args = process.argv.slice(2);
-const LIVE = args.includes("--live");
+// Single source of truth: LIVE/DRY_RUN come from lib/config.mjs (--live AND NOT --dry-run,
+// LIVE_CONFIRM=yes enforced there). A local `args.includes("--live")` used to let
+// `--live --dry-run` send real sells while the banner printed DRY RUN.
 const mintArg = (() => {
   const i = args.indexOf("--mint");
   return i >= 0 && args[i + 1] ? args[i + 1].split(",").map((s) => s.trim()).filter(Boolean) : [];
 })();
-const SLIP = Number(process.env.SELL_SLIPPAGE_BPS || 1000); // 10% — a rescue wants out
+const SLIP = numOr(process.env.SELL_SLIPPAGE_BPS, 1000, "SELL_SLIPPAGE_BPS"); // 10% — a rescue wants out
 
 if (LIVE && mintArg.length === 0) {
   console.error("[rescue] --live requires an explicit --mint <mint> (no blind sweeping).");
@@ -281,34 +284,50 @@ for (const h of targets) {
     continue;
   }
   try {
-    const ixs = [...computeBudgetIxs()];
-    let amountRaw = h.raw;
-    let quoteOut = BigInt(Math.floor(q.expectedSol * 1e9));
     if (q.venue === "curve") {
-      const part = q.plan.parts[0];
-      amountRaw = part.amountRaw;
-      quoteOut = part.quoteOut;
-      ixs.push(
-        sellIx(wallet.publicKey, new PublicKey(h.mint), amountRaw, (quoteOut * BigInt(10000 - SLIP)) / 10000n, {
-          creator: q.state.creator ? new PublicKey(q.state.creator) : undefined,
-          isMayhem: !!q.state.isMayhemMode,
-        }),
-      );
+      // M5: a curve sell is planned in parts (each part's payout fits 0.95 × realSolReserves);
+      // sell EVERY part in order, not just the first. Each part steps the curve, so simulate and
+      // send each one separately.
+      const parts = q.plan.parts;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const minSol = (part.quoteOut * BigInt(10000 - SLIP)) / 10000n;
+        const ixs = [
+          ...computeBudgetIxs(),
+          sellIx(wallet.publicKey, new PublicKey(h.mint), part.amountRaw, minSol, {
+            creator: q.state.creator ? new PublicKey(q.state.creator) : undefined,
+            isMayhem: !!q.state.isMayhemMode,
+          }),
+        ];
+        const tx = await buildVersionedTx(wallet, ixs);
+        const sim = await simulateTx(tx);
+        if (!sim.ok) {
+          console.log(`  part ${i + 1}/${parts.length} simulation failed: ${describeTxError(sim.err)} — not sending`);
+          continue;
+        }
+        await sendTxWithRetry(tx, { skipPreflight: true });
+        console.log(`  sold part ${i + 1}/${parts.length}: ${(Number(part.amountRaw) / 1e6).toFixed(0)} tokens.`);
+      }
     } else {
+      const amountRaw = h.raw;
+      const quoteOut = BigInt(Math.floor(q.expectedSol * 1e9));
       const userWsol = getAssociatedTokenAddressSync(WSOL, wallet.publicKey, false, TOKEN_PROGRAM);
-      ixs.push(createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, userWsol, wallet.publicKey, WSOL, TOKEN_PROGRAM));
-      ixs.push(ammSellIx(wallet.publicKey, new PublicKey(h.mint), q.pool, q.p, q.g, amountRaw, (quoteOut * BigInt(10000 - SLIP)) / 10000n));
-      ixs.push(createCloseAccountInstruction(userWsol, wallet.publicKey, wallet.publicKey, [], TOKEN_PROGRAM));
+      const ixs = [
+        ...computeBudgetIxs(),
+        createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, userWsol, wallet.publicKey, WSOL, TOKEN_PROGRAM),
+        ammSellIx(wallet.publicKey, new PublicKey(h.mint), q.pool, q.p, q.g, amountRaw, (quoteOut * BigInt(10000 - SLIP)) / 10000n),
+        createCloseAccountInstruction(userWsol, wallet.publicKey, wallet.publicKey, [], TOKEN_PROGRAM),
+      ];
       console.log("  NOTE: AMM sell layout is UNVERIFIED — the first live rescue is its test.");
+      const tx = await buildVersionedTx(wallet, ixs);
+      const sim = await simulateTx(tx);
+      if (!sim.ok) {
+        console.log(`  simulation failed: ${describeTxError(sim.err)} — not sending`);
+        continue;
+      }
+      await sendTxWithRetry(tx, { skipPreflight: true });
+      console.log(`  sold ${(Number(amountRaw) / 1e6).toFixed(0)} tokens.`);
     }
-    const tx = await buildVersionedTx(wallet, ixs);
-    const sim = await simulateTx(tx);
-    if (!sim.ok) {
-      console.log(`  simulation failed: ${describeTxError(sim.err)} — not sending`);
-      continue;
-    }
-    await sendTxWithRetry(tx, { skipPreflight: true });
-    console.log(`  sold ${(Number(amountRaw) / 1e6).toFixed(0)} tokens.`);
   } catch (e) {
     console.log(`  sell failed: ${describeTxError(e)}`);
   }

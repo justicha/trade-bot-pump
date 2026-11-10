@@ -9,13 +9,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PublicKey } from "@solana/web3.js";
-import {
-  PUMP_PROGRAM,
-  TRADE_EVENT_PREFIX,
-  BUY_INSTRUCTIONS,
-  SELL_INSTRUCTIONS,
-  CREATE_INSTRUCTIONS,
-} from "../../lib/constants.mjs";
+import { PUMP_PROGRAM } from "../../lib/constants.mjs";
+import { parseLogEvents } from "../../lib/events.mjs";
+import { applyEvent } from "../../lib/analytics-stats.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
 import { log as logger } from "../../lib/logger.mjs";
 
@@ -56,95 +52,8 @@ function flushMinute() {
 }
 setInterval(flushMinute, 60_000);
 
-function parseV3TradeEvent(data) {
-  if (data.length < 89) return null;
-  const mint = new PublicKey(data.subarray(8, 40)).toBase58();
-  const solAmount = Number(data.readBigUInt64LE(40)) / 1e9;
-  const tokenAmount = Number(data.readBigUInt64LE(48)) / 1e6;
-  const user = new PublicKey(data.subarray(57, 89)).toBase58();
-  return { mint, solAmount, tokenAmount, user };
-}
-
-function parseLogEvents(logs) {
-  let isBuy = false, isSell = false, isCreate = false;
-  for (const line of logs) {
-    const m = line.match(/Instruction: (\w+)/);
-    if (!m) continue;
-    if (BUY_INSTRUCTIONS.has(m[1])) isBuy = true;
-    if (SELL_INSTRUCTIONS.has(m[1])) isSell = true;
-    if (CREATE_INSTRUCTIONS.has(m[1])) isCreate = true;
-  }
-
-  const events = [];
-  for (const line of logs) {
-    if (!line.startsWith("Program data: ")) continue;
-    const raw = Buffer.from(line.slice(14), "base64");
-    if (raw.length < 8 || !raw.subarray(0, 8).equals(TRADE_EVENT_PREFIX)) continue;
-
-    try {
-      const parsed = parseV3TradeEvent(raw);
-      if (!parsed) continue;
-
-      if (isCreate) {
-        events.push({ type: "create", mint: parsed.mint, creator: parsed.user, ts: Date.now() });
-      }
-      events.push({
-        type: "trade",
-        mint: parsed.mint,
-        solAmount: parsed.solAmount,
-        isBuy: isBuy && !isSell,
-        user: parsed.user,
-      });
-    } catch { /* malformed Program data payload: skip this line, keep parsing the rest */ }
-  }
-  return events;
-}
-
 function processEvents(events) {
-  for (const ev of events) {
-    if (ev.type === "create") {
-      stats.totalCreates++;
-      currentMinute.creates++;
-      stats.recentTokens.unshift({
-        name: ev.mint.slice(0, 8),
-        symbol: "?",
-        mint: ev.mint,
-        creator: ev.creator,
-        ts: ev.ts,
-      });
-      if (stats.recentTokens.length > 50) stats.recentTokens.pop();
-    } else if (ev.type === "trade") {
-      stats.totalTrades++;
-      stats.totalVolumeSol += ev.solAmount;
-      currentMinute.volume += ev.solAmount;
-
-      if (ev.isBuy) {
-        stats.totalBuys++;
-        currentMinute.buys++;
-      } else {
-        stats.totalSells++;
-        currentMinute.sells++;
-      }
-
-      const buyer = stats.topBuyers.get(ev.user) || { count: 0, volume: 0 };
-      buyer.count++;
-      buyer.volume += ev.solAmount;
-      stats.topBuyers.set(ev.user, buyer);
-      if (stats.topBuyers.size > 5000) {
-        const sorted = [...stats.topBuyers.entries()].sort((a, b) => b[1].volume - a[1].volume);
-        stats.topBuyers.clear();
-        for (const [k, v] of sorted.slice(0, 1000)) stats.topBuyers.set(k, v);
-      }
-
-      const tv = stats.tokenVolume.get(ev.mint) || 0;
-      stats.tokenVolume.set(ev.mint, tv + ev.solAmount);
-      if (stats.tokenVolume.size > 5000) {
-        const sorted = [...stats.tokenVolume.entries()].sort((a, b) => b[1] - a[1]);
-        stats.tokenVolume.clear();
-        for (const [k, v] of sorted.slice(0, 1000)) stats.tokenVolume.set(k, v);
-      }
-    }
-  }
+  for (const ev of events) applyEvent(stats, currentMinute, ev);
 }
 
 // WebSocket listener

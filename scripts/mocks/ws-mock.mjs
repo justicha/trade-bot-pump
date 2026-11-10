@@ -80,6 +80,38 @@ function tradePayload({ mint, user, sol, token, isBuy, ts, vSol, vTok }) {
   return buf;
 }
 
+// CreateV2 payload (prefix 1b72a94ddeeb6376), parsed by lib/events.mjs parseCreate. The create
+// event now comes from THIS payload's creator field (C1), not from the first trade's user.
+function createPayload(mintB58, creatorB58, userB58) {
+  const enc = (s) => {
+    const b = Buffer.from(s, "utf8");
+    const len = Buffer.alloc(4);
+    len.writeUInt32LE(b.length, 0);
+    return Buffer.concat([len, b]);
+  };
+  const u64 = (v) => {
+    const b = Buffer.alloc(8);
+    b.writeBigUInt64LE(BigInt(v), 0);
+    return b;
+  };
+  return Buffer.concat([
+    Buffer.from("1b72a94ddeeb6376", "hex"),
+    enc("Test Token"),
+    enc("TST"),
+    enc("https://example.invalid/meta.json"),
+    decodeB58(mintB58), // mint
+    decodeB58(mintB58), // bonding_curve
+    decodeB58(userB58), // user
+    decodeB58(creatorB58), // creator
+    u64(Math.floor(Date.now() / 1000)),
+    u64(1_073_000_000_000_000n), // vTok
+    u64(30_000_000_000n), // vSol
+    u64(793_100_000_000_000n), // rTok
+    u64(1_000_000_000_000_000n), // supply
+    Buffer.from([1, 0]),
+  ]);
+}
+
 const OK = (signature, logs) => ({ context: { slot: 0 }, value: { signature, err: null, logs } });
 const DATA = (p) => `Program data: ${p.toString("base64")}`;
 
@@ -96,7 +128,7 @@ export function buildNotifications({ mints = 3, buysPerMint = 5, startTs = Date.
       payload: OK(`sig-create-${m}`, [
         `Program ${PUMP} invoke [1]`,
         "Program log: Instruction: Create",
-        DATA(tradePayload({ mint, user: fakeKey(m, 1), sol: 0, token: 0, isBuy: true, ts, vSol, vTok })),
+        DATA(createPayload(mint, fakeKey(m, 1), fakeKey(m, 1))),
         `Program ${PUMP} success`,
       ]),
     });
