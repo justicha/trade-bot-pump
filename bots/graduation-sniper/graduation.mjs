@@ -32,6 +32,9 @@ import { checkBuyGate } from "../../lib/buy-gate.mjs";
 import { exitDepth } from "../../lib/buy-checks.mjs";
 import { checkMintExtensions, mayhemReason } from "../../lib/token-safety.mjs";
 import { simulateCurveSell } from "../../lib/prebuy-sim.mjs";
+import { DEFAULT_DAILY_LOSS_LIMIT_SOL, dailyLossBlocked, netSolForDay } from "../../lib/daily-loss.mjs";
+import { mskDateKey } from "../../lib/time.mjs";
+import { readJournal } from "../../lib/journal.mjs";
 import { BUY_SKIP_REASON } from "../../lib/buy-skip-reasons.mjs";
 import { planSellParts } from "../../lib/sell-plan.mjs";
 import { ammSellOnce, chooseSellVenue, isDrySell } from "../../lib/amm-sell.mjs";
@@ -90,6 +93,9 @@ const DRY_SELL = isDrySell();
 // An entry that never settles (a hung RPC call used to hang forever) must not block every other
 // mint: after this long the slot is released and an ALERT is printed.
 const OPENING_STALE_SEC = numOr(process.env.OPENING_STALE_SEC, 120, "OPENING_STALE_SEC");
+// Daily loss limit (task 5): realised PnL for the current Moscow day, summed from the journal. Once
+// the net reaches -DAILY_LOSS_LIMIT_SOL new buys stop; open positions keep being managed and sold.
+const DAILY_LOSS_LIMIT_SOL = numOr(process.env.DAILY_LOSS_LIMIT_SOL, DEFAULT_DAILY_LOSS_LIMIT_SOL, "DAILY_LOSS_LIMIT_SOL");
 
 const VIRTUAL_SOL_AT_GRADUATION = 85_000_000_000n;
 
@@ -176,6 +182,11 @@ function warnSlot(msg) {
 }
 let lastBuyTime = 0;
 let totalPnl = 0;
+// Realised PnL of the current Moscow day (seeded from the journal below, kept in step by
+// recordResult). Only new BUYS look at it — sells must always be allowed.
+let dayNetSol = 0;
+// Seeded from the journal so a restart on the same day does not reset the limit.
+dayNetSol = netSolForDay(readJournal(journal.dir), mskDateKey());
 let totalTrades = 0;
 let wins = 0;
 
@@ -207,6 +218,8 @@ let stopReason = "";
 
 function recordResult(pnlSol) {
   guard.recordResult(pnlSol);
+  // Track today's realised PnL for the daily loss limit (buy gate only, never a sell gate).
+  dayNetSol = Math.round((dayNetSol + (Number(pnlSol) || 0)) * 1e9) / 1e9;
   if (guard.halted) requestStop(guard.haltReason || "loss limit reached");
 }
 
@@ -290,6 +303,17 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
       journal.write({ ...candidate, action: "skip", reason });
     }
     return; // no position is opened, nothing is signed or sent
+  }
+
+  // Daily loss limit: a bad day stops new buys, never the management of open positions.
+  const dailyLoss = dailyLossBlocked({ netSol: dayNetSol, limitSol: DAILY_LOSS_LIMIT_SOL });
+  if (dailyLoss.blocked) {
+    if (!buyBlockedNotified.has(`loss:${mint}`)) {
+      buyBlockedNotified.add(`loss:${mint}`);
+      skipBuy(candidate, dailyLoss.reason, { netSolToday: dailyLoss.netSol, limitSol: dailyLoss.limitSol });
+      log(`  skip: ${dailyLoss.reason} (today ${dailyLoss.netSol.toFixed(4)} SOL, limit ${dailyLoss.limitSol})`);
+    }
+    return;
   }
 
   // Holder gate: the count grows over time, so a miss does NOT mark the mint as attempted.
