@@ -33,6 +33,7 @@ import { exitDepth } from "../../lib/buy-checks.mjs";
 import { checkMintExtensions, mayhemReason } from "../../lib/token-safety.mjs";
 import { simulateCurveSell } from "../../lib/prebuy-sim.mjs";
 import { DEFAULT_DAILY_LOSS_LIMIT_SOL, dailyLossBlocked, netSolForDay } from "../../lib/daily-loss.mjs";
+import { exitDecision, positionsToSell } from "../../lib/exit-plan.mjs";
 import { mskDateKey } from "../../lib/time.mjs";
 import { readJournal } from "../../lib/journal.mjs";
 import { BUY_SKIP_REASON } from "../../lib/buy-skip-reasons.mjs";
@@ -96,6 +97,13 @@ const OPENING_STALE_SEC = numOr(process.env.OPENING_STALE_SEC, 120, "OPENING_STA
 // Daily loss limit (task 5): realised PnL for the current Moscow day, summed from the journal. Once
 // the net reaches -DAILY_LOSS_LIMIT_SOL new buys stop; open positions keep being managed and sold.
 const DAILY_LOSS_LIMIT_SOL = numOr(process.env.DAILY_LOSS_LIMIT_SOL, DEFAULT_DAILY_LOSS_LIMIT_SOL, "DAILY_LOSS_LIMIT_SOL");
+// Exit behaviour (task 6). SELL_ON_EXIT=yes + --live: sell the session's own positions on SIGINT.
+// Without it the bot only reports what is open. The whole exit is bounded by EXIT_TIMEOUT_SEC.
+const SELL_ON_EXIT = /^(1|yes|true)$/i.test(String(process.env.SELL_ON_EXIT ?? "").trim());
+const EXIT_TIMEOUT_MS = numOr(process.env.EXIT_TIMEOUT_SEC, 60, "EXIT_TIMEOUT_SEC") * 1000;
+// Test hook, same idea as SNIPER_MAX_SEC: GRAD_MAX_SEC>0 stops the bot through the same finish()
+// path the SIGINT handler uses (a real Ctrl+C cannot be delivered to a child on Windows).
+const GRAD_MAX_SEC = numOr(process.env.GRAD_MAX_SEC, 0, "GRAD_MAX_SEC");
 
 const VIRTUAL_SOL_AT_GRADUATION = 85_000_000_000n;
 
@@ -167,6 +175,9 @@ const wallet = loadKeypair();
 // Live fee/buyback recipients from pump's `global` account (pump.fun rotates them; buy needs them).
 await refreshGlobalFeeState().catch((e) => console.warn(`[fee-state] ${e.message}`));
 const positions = new Map();
+// Mints THIS session bought and journaled. The exit path may only sell these — never a token that
+// merely sits in the wallet (bought by hand or by another bot).
+const boughtMints = new Set();
 const watchlist = new Map();
 // Entry bookkeeping: `opening` blocks concurrent buys of the same mint, `openingSince` lets the
 // watchdog release a slot whose RPC call never came back, `aboveBand` makes "fill > MAX_FILL" loud.
@@ -428,6 +439,13 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     log(`  fill: ${fillPct.toFixed(1)}% | spot ${quotePrice.toExponential(3)} | exit preview ${(exitRatio * 100).toFixed(1)}%`);
     log(`  buying ${BUY_SOL} SOL`);
 
+    // A stop that arrived while we were planning must win: nothing is signed after Ctrl+C.
+    if (stopping) {
+      guard.release(BUY_SOL);
+      log("  stop requested while planning the buy — not sending");
+      return;
+    }
+
     if (DRY_RUN) {
       positions.set(mint, {
         tokens: prev.tokensOut,
@@ -437,6 +455,7 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
         fillAtEntry: fillPct,
         attempts: 0,
       });
+      boughtMints.add(mint);
       lastBuyTime = Date.now();
       session.buy(BUY_SOL);
       attempted.add(mint);
@@ -459,6 +478,12 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
         maxSolCost,
       }),
     ];
+    // Last check before the signature: a stop during the RPC round trip above wins.
+    if (stopping) {
+      guard.release(BUY_SOL);
+      log("  stop requested before signing the buy — not sending");
+      return;
+    }
     const tx = await buildVersionedTx(wallet, ixs);
     // Same pre-send simulation as the sell: a doomed buy must not be broadcast (it would pay the fee).
     const sim = await simulateTx(tx);
@@ -486,6 +511,7 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     });
     lastBuyTime = Date.now();
     attempted.add(mint);
+    boughtMints.add(mint); // this session's own position: the only kind the exit path may sell
     session.buy(entrySol);
     journal.trade({
       sessionId: SESSION_ID,
@@ -523,6 +549,7 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
         });
         lastBuyTime = Date.now();
         attempted.add(mint);
+    boughtMints.add(mint); // this session's own position: the only kind the exit path may sell
         session.buy(entrySol);
         journal.trade({
           sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, side: "buy", sig: err.sig,
@@ -965,20 +992,46 @@ async function finish(reason = stopReason || "stopped") {
   // there is nothing on-chain, but we still simulate the close (sellPosition has a DRY_RUN
   // branch) so the session report shows a complete PnL instead of "still open at stop".
   if (positions.size > 0) {
-    log(`  closing ${positions.size} open position(s) before exit${DRY_RUN ? " [DRY RUN: simulated]" : ""}...`);
-    // Short drain: the exit must not hang on a slow/graduated mint. Whatever is left afterwards
-    // is reported as STUCK (listed separately in the summary), never silently dropped.
-    const deadline = Date.now() + 8000;
-    for (const [mint, pos] of [...positions]) {
+    // Only the session's OWN buys are touched (boughtMints): a token that merely sits in the wallet
+    // is never sold by the bot, no matter what happens at shutdown.
+    const mine = positionsToSell({ positions, boughtMints });
+    log(`  ${mine.length} open position(s) from this session${DRY_RUN ? " [DRY RUN: simulated]" : ""}...`);
+    // Live exits are bounded by EXIT_TIMEOUT_SEC (60s default); a dry run keeps the short drain.
+    const deadline = Date.now() + (LIVE && SELL_ON_EXIT ? EXIT_TIMEOUT_MS : 8000);
+    for (const { mint, pos } of mine) {
       if (Date.now() > deadline) break;
       try {
         const mintPk = new PublicKey(mint);
         const state = await getBondingCurveState(mintPk, 0);
+        const venue = chooseSellVenue(state);
+        const decision = exitDecision({
+          live: LIVE,
+          sellOnExit: SELL_ON_EXIT,
+          venue,
+          confirmAmm: process.env.LIVE_CONFIRM_AMM,
+        });
         const entryLamports = BigInt(Math.floor((pos.entrySolSol ?? BUY_SOL) * 1e9));
         const ratio =
           state && !state.complete && pos.tokens
             ? Number(calcSellSol(state, pos.tokens)) / Number(entryLamports)
             : null;
+        if (!decision.sell) {
+          // Not "stuck": a deliberate refusal, journaled with the reason so the summary explains it.
+          log(`  ${mint.slice(0, 12)}: NOT selling (${decision.reason}), venue=${venue}`);
+          journal.write({
+            type: "exit_skipped",
+            sessionId: SESSION_ID,
+            paramsHash: PARAMS_HASH,
+            gitSha: GIT_SHA,
+            mint,
+            venue,
+            reason: decision.reason,
+            tokens: (pos.tokens ?? 0n).toString(),
+            entrySolSol: pos.entrySolSol ?? BUY_SOL,
+            lastRatio: ratio,
+          });
+          continue;
+        }
         if (DRY_RUN && ratio == null) {
           if (pos.lastPrice == null) {
             log(`  ${mint.slice(0, 12)}: no price at stop, dropping`);
@@ -994,6 +1047,23 @@ async function finish(reason = stopReason || "stopped") {
       } catch (err) {
         log(`  close failed ${mint.slice(0, 8)}: ${describeTxError(err)}`);
       }
+    }
+    // Whatever is still open (exit timeout, skipped venue, failed simulation) is listed here and
+    // then reported by the B11 block below — never silently dropped.
+    const leftOpen = [...positions.keys()];
+    if (leftOpen.length > 0) {
+      log(`  exit finished with ${leftOpen.length} position(s) still open: ${leftOpen.map((m) => m.slice(0, 8)).join(", ")}`);
+      journal.write({
+        type: "exit_report",
+        sessionId: SESSION_ID,
+        paramsHash: PARAMS_HASH,
+        gitSha: GIT_SHA,
+        live: LIVE,
+        sellOnExit: SELL_ON_EXIT,
+        reason,
+        remaining: leftOpen,
+        sessionPositions: [...boughtMints],
+      });
     }
   }
   // B11: capture the open-at-stop state BEFORE any deletion — the summary must show the real
@@ -1036,6 +1106,13 @@ log(`Session: ${SESSION_ID} | params ${PARAMS_HASH} | git ${GIT_SHA || "n/a"} | 
 
 const ws = new SolanaWs();
 await ws.connect();
+
+// Test hook (same idea as SNIPER_MAX_SEC): stop through the very path SIGINT uses, so the exit
+// behaviour can be tested on a platform where a child cannot receive a real Ctrl+C.
+if (GRAD_MAX_SEC > 0) {
+  log(`Test hook: stopping after ${GRAD_MAX_SEC}s (GRAD_MAX_SEC)`);
+  setTimeout(() => requestStop(`max seconds (${GRAD_MAX_SEC}s)`), GRAD_MAX_SEC * 1000);
+}
 
 ws.subscribeLogs(PUMP_PROGRAM.toBase58(), async (result) => {
   if (stopping) return; // session stopped: ignore late events
@@ -1160,9 +1237,11 @@ const cleanupTimer = setInterval(() => {
 }, 60_000);
 
 process.on("SIGINT", () => {
-  // First Ctrl+C: close positions, print the summary, then exit (finish is idempotent).
+  // First Ctrl+C: stop buying IMMEDIATELY (buyToken checks `stopping` before it signs anything),
+  // then close this session's own positions and print the report (finish is idempotent).
   // Second Ctrl+C while the shutdown is running: leave immediately.
-  if (stopping) {
+  stopping = true;
+  if (exited) {
     log("\nsecond Ctrl+C — exiting now");
     process.exit(0);
   }

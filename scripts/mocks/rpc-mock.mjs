@@ -23,6 +23,9 @@ function curveAccount() {
   data.writeBigUInt64LE(vSol - 30_000_000_000n > 0n ? vSol - 30_000_000_000n : 0n, 32);
   data.writeBigUInt64LE(1_000_000_000_000_000n, 40);
   data[48] = 0; // not complete
+  // A real curve always has a creator (needed by sellIx). Fill it with a byte pattern so the
+  // derived base58 is a valid 32-byte key; an all-zero creator is not a valid PublicKey string.
+  data.fill(0x11, 49, 81);
   data[81] = 0; // is_mayhem_mode
   return data;
 }
@@ -42,6 +45,10 @@ export const connection = {
   // The bot simulates a curve sell before it buys; this fixture always says "would succeed".
   async simulateTransaction() {
     return { value: { err: null, logs: ["Program log: fixture simulation ok"], unitsConsumed: 1000 } };
+  },
+  // Any test that reaches this has sent a transaction — which none of them may do.
+  async sendRawTransaction() {
+    throw new Error("sendRawTransaction must not be called in this test");
   },
   async getBalance() {
     return 2_000_000_000; // 2 SOL, enough for the session caps used by the test
