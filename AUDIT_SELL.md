@@ -280,12 +280,14 @@ net    = out * (10000 - feeBps) / 10000                      (:137)
 
 | # | Что | Как проверить |
 |---|---|---|
-| V1 | Раскладка `sell` (21 аккаунт) соответствует развёрнутой программе | Одна `simulateTransaction` (не отправка) на реальном выпустившемся mint, либо добавление `pump_amm.json` |
-| V2 | Нужны ли `global_volume_accumulator` + `user_volume_accumulator` в `sell` (BUG 13) | То же; реальный buy в кэше их содержит |
-| V3 | `canonicalPool()` даёт верный адрес для pump-mint | `getAccountInfo(canonicalPool(mint))` для известно-выпустившегося `…pump` |
-| V4 | Формула `ammSellQuote` совпадает с программой (fee split, virtual reserves) | Сравнить `net` с `simulateTransaction` логами / реальной sell-tx |
+| V1 | Раскладка `sell` (21 аккаунт) соответствует развёрнутой программе | ~~Одна `simulateTransaction`~~ — **начала проходить**: симуляция `HbZM3fVa…pump` дошла до последней проверки программы (см. §12), все CPI до неё прошли |
+| V2 | Нужны ли `global_volume_accumulator` + `user_volume_accumulator` в `sell` (BUG 13) | Пока **нет**: программа не пожаловалась на их отсутствие (падение позже, на `pool_v2`). Требуется успешная симуляция целиком |
+| V3 | `canonicalPool()` даёт верный адрес для pump-mint | **Подтверждено** симуляцией: `canonicalPool(HbZM3fVa…pump) = 86rSR66f…xqS7`, аккаунт существует и раскодировался (§12) |
+| V4 | Формула `ammSellQuote` совпадает с программой (fee split, virtual reserves) | Сравнить `net` с логами успешной sell-симуляции / реальной sell-tx |
 | V5 | `createCloseAccount` не завышает PnL (аренда ATA) | Вычесть аренду из `solReceivedSol` и подтвердить арифметику на реальной tx |
-| V6 | Порядок 11/12 (`base_token_program`, `quote_token_program`) у `sell` | Только реальная sell-транзакция или IDL |
+| V6 | Порядок 11/12 (`base_token_program`, `quote_token_program`) у `sell` | **Подтверждено**: `TransferChecked` Token-2022 (аккаунт 11) и SPL Token (12) прошли в симуляции |
+| V7 | `pool_v2` — какой аккаунт и по каким сидам | **Открыт**: программа требует его как remaining account (`Custom 6062`). В кэше его нет, `["pool-v2", mint]` с хвостом не совпал (§12) |
+
 
 ---
 
@@ -394,6 +396,106 @@ $env:LIVE_CONFIRM="yes"; $env:LIVE_CONFIRM_AMM="yes"; $env:DRY_SELL="yes"; npm r
 
 Пока этих файлов нет, все утверждения о раскладке `sell` остаются `TODO(verify)` и в коде
 помечены именно так: `lib/pumpswap-sell.mjs`, `lib/amm-sell.mjs`, `lib/exec.mjs`.
+
+---
+
+## 12. Хвост аккаунтов 23–29 в кэше и `pool_v2` (Custom 6062)
+
+Повод: симуляция продажи упала с `Custom 6062` —
+`AnchorError … sell.rs:520. Error Code: InvalidPoolV2. Error Message: pool_v2 remaining account is missing or invalid.`
+Ниже — офлайн-разбор `data/txcache` (сеть не использовалась).
+
+### 12.1 Что есть в кэше
+
+45 файлов, **8** инструкций pump-amm: 4 top-level `buy_exact_quote_in`
+(`c62e1552b4d9e870`) и 4 inner с `e445a52e51cb9a1d`. **Ни одной `sell`** (`33e685a4017f83ad`).
+
+Четыре транзакции покупки (по 30 аккаунтов), хвост 23–29:
+
+| # | `2J7G…` mint `CsXAT9bd…bonk` | `w3wr…` тот же mint | `4g5e…` mint `BWRfm9hQ…BAGS` | `XYqs…` тот же mint |
+|---|---|---|---|---|
+| 23 | `A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW` | `A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW` | `A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW` | `A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW` |
+| 24 | `4Kj7f6xDK7fY5FTRg54Fv54Fbr8kU6WopqbPpbyTBNaG` | `4Kj7f6xDK7fY5FTRg54Fv54Fbr8kU6WopqbPpbyTBNaG` | `2fvib34wVq9o9r7Lh2859qMXQN8J7F1csu4fKNwESVe4` | `2fvib34wVq9o9r7Lh2859qMXQN8J7F1csu4fKNwESVe4` |
+| 25 | `DGKJQb7jFBW2LyoMkXeiP3sTwtPdk1v12EPo2Chn8rLC` | `2F7TtCdYFWf2byGcmWtHxiGTQB16UtB8QEcrH8y68Xxm` | `4Kt1FyUddPhUnDQ8jPMB36Wh6QMdkiRYvBRp1gMLe6SA` | `2h48vurxfTuQJenpmu2NQTtqxRDGza3q5DiRfz14nxSG` |
+| 26 | `QSSe7JvehvPVHpXM5qcCoRAKKLFXXzYDoWYBfX2XDwe` | `4rVk3JEomWFbcHCBj8NAjPRiPvsyY17cJ5QZSQfpAiBP` | `4X23ff48xTc4ndGfwAbaUnRNbUMmidee9f2F9VNF5KQg` | `ANGGw4Gpjyw1tjEkv9ppw8zsqbbMR6akzqqsFjeDYhDz` |
+| 27 | `2F7TtCdYFWf2byGcmWtHxiGTQB16UtB8QEcrH8y68Xxm` | `QSSe7JvehvPVHpXM5qcCoRAKKLFXXzYDoWYBfX2XDwe` | `AS8UtAqa2GupxGtSxq1qoXZzpUtj2Xf2FSPpHthKdUYY` | `2F7TtCdYFWf2byGcmWtHxiGTQB16UtB8QEcrH8y68Xxm` |
+| 28 | `AS8UtAqa2GupxGtSxq1qoXZzpUtj2Xf2FSPpHthKdUYY` | `Dmk8Tjf7xbELmeg4j3v8sCmx7tYNLeNwCxbeBqfia4Py` | `CuTAMm6heSx6SmEJxfxGbRdtkBQmHgYXjDtyQWQQUT9Z` | `DGKJQb7jFBW2LyoMkXeiP3sTwtPdk1v12EPo2Chn8rLC` |
+| 29 | `CuPNrTwAqj3iew3LwWDNxp6GdJcQcQSDjTDf7ZqkYGeJ` | `HbPR3bpDR8WxsqgBu6QUAZcEXhUJrdChvBt7UWyz8M82` | `2F7TtCdYFWf2byGcmWtHxiGTQB16UtB8QEcrH8y68Xxm` | `8DQ7vtN8frGsv7jpH2sUsrdUfXJLTnKcPabjiURhUsYC` |
+
+### 12.2 Сверка с `PDA["pool-v2", baseMint]`
+
+| mint | PDA `["pool-v2", baseMint]` (программа `pAMM…`) | Есть в tx? |
+|---|---|---|
+| `CsXAT9bdaopT4o6SwJXm195LxGGwS1x8JhBht5WVbonk` | `5qLmRndbmBL8P2N3BJy4tarzoyuq34gjvk1KrL8YyVtv` | **нет** (ни в `2J7G…`, ни в `w3wr…`) |
+| `BWRfm9hQQdqi3TNM3CoyNTWANd375qcrDduEW9cGBAGS` | `4CgJNST7r2cKWiFv7zcozWkvAFqhCahLY1zfbTxnBmLi` | **нет** (ни в `4g5e…`, ни в `XYqs…`) |
+
+Дополнительно проверены варианты сидов — ни один адрес не встречается среди 30 аккаунтов:
+`["pool_v2", mint]`, `["pool-v2", pool]`, `["pool-v2", mint, WSOL]`,
+`["pool-v2", poolAuthority, mint, WSOL]`, `["pool-v2", u16(0), poolAuthority, mint, WSOL]`,
+`["pool-v2", pool, mint]` — в программах `pAMM…` и `6EF8…`.
+
+**Результат: не совпало.** `pool_v2` в `ammSellIx` не добавлен: подставлять неподтверждённый
+адрес нельзя (это был бы выдуманный аккаунт).
+
+### 12.3 Почему этот хвост в принципе не может быть эталоном
+
+* Две транзакции с **одним и тем же** mint (`CsXAT9bd…`) совпадают только в [23] и [24];
+  [25]–[29] — разные адреса и разный набор, а не перестановка. Раскладка программы так себя
+  вести не может.
+* `A7hAgCzF…` встречается в **9 из 45** файлов кэша, `2F7TtCdY…` — в **17 из 45**: это общие
+  (роутерные) аккаунты вызывающей стороны, а не per-pool.
+* Вывод: 23–29 — `remaining_accounts`, которые передаёт вызывающая сторона; v1-инструкция
+  `buy_exact_quote_in` их не валидирует. Для `sell` (v2-путь) программа их читает и требует
+  `pool_v2` — но в покупках его нет вообще, поэтому кэш не может подтвердить ни адрес, ни сиды.
+
+### 12.4 Что из хвоста всё-таки объяснено (вопрос из §3.4)
+
+| # | Значение | Что это (проверено выводом PDA) |
+|---|---|---|
+| 15 | `GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR` | `PDA["__event_authority"]` в `pAMM…` — совпало |
+| 19 | `C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw` | `PDA["global_volume_accumulator"]` **в `pAMM…`** (не в pump.fun!) — совпало |
+| 20 | `3AK4sQmR…` / `8SyMEec…` / `8zfC5PV…` / `BnSd4t8L…` | `PDA["user_volume_accumulator", user]` в `pAMM…` — свой в каждой tx, совпало |
+| 21 | `5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx` | `PDA["fee_config", pAMM…]` в программе `pfee…` — совпало |
+| 23 | `A7hAgCzFw14…` | ни один проверенный сид не даёт этот адрес; 9/45 файлов → общий аккаунт вызывающей стороны |
+| 24 | `4Kj7f6xDK7…` / `2fvib34wVq…` | стабилен для одного mint (две tx) → mint-scoped, но **не** `pool_v2` ни в одном варианте сидов |
+| 25–29 | … | меняются между двумя tx одного mint → не часть раскладки программы |
+
+Уточнение к §3.4: тогда было написано «`global_volume_accumulator` и `user_volume_accumulator`
+совпали» — теперь видно, что они выводятся **под программой `pAMM…`**, а не под `6EF8…`.
+
+### 12.5 Что дала сама симуляция (`data/probe/sell-sim-HbZM3fVa-…json`)
+
+| Поле | Значение |
+|---|---|
+| mint | `HbZM3fVa7XWGbLPzvdZykDX1mtjPJw9UUE8fVg3Wpump` |
+| pool (`canonicalPool`) | `86rSR66fVQX8K6pqWuPLXjvUNWFXfdyEiA5LzyUpxqS7` — аккаунт существует, `PoolState` раскодировался |
+| creator | `xgzHcG76hChWvMungAAjMS41t5AvN1ktVtJghB8C8yp`, `creatorFeeBps=0`, `isMayhem=false`, `isCashback=false` |
+| результат | `InstructionError[3, Custom 6062]`, 68 929 CU |
+| прошли успешно | `pfee GetFeesWithQuoteMint`, `Token-2022 TransferChecked` (базовый mint), два вызова SPL Token |
+
+Порядок логов важен: программа успела списать токены по нашим аккаунтам и **только в конце**
+(`sell.rs:520`) потребовала `pool_v2`. Значит:
+
+* **V1/V3/V6 закрыты положительно** — 21 аккаунт и их порядок (включая 11 = Token-2022,
+  12 = SPL Token) приняты, пул найден верно;
+* **V2 пока в пользу «не нужны»** — на отсутствие volume-accumulator программа не пожаловалась;
+* остаётся **V7**: `pool_v2` как remaining account.
+
+### 12.6 Что нужно, чтобы закрыть V7 (без гадания)
+
+1. `data/idl/pump_amm.json` → тип/структура `PoolV2` и её seeds. Это единственный offline-путь.
+2. Либо одна **read-only** проверка адресов-кандидатов: `getAccountInfo` для
+   `PDA(["pool-v2", mint])` и родственных вариантов на реальном pool — существование аккаунта
+   с owner `pAMM…` подтвердит сиды (сеть, но без отправки транзакций).
+3. Либо одна реальная `sell`-транзакция из сети: в кэше их **нет**, поэтому сверить нечего.
+
+До этого `pool_v2` в `ammSellIx` **не добавляется**: раскладка остаётся 21 аккаунт, а ошибка 6062
+честно журналируется (`sell_attempt` с полными логами), позиция не теряется благодаря `deferSell`.
+
+Тест на совпадение `pool_v2` с хвостом (пункт 4 задания) не добавлен — он был бы проверкой
+заведомо ложного утверждения: совпадения нет. Вместо него факты зафиксированы здесь и в §8 (V7).
+
+
 
 
 
