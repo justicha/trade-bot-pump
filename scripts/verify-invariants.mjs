@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Internal consistency check of the parsed events вЂ” no RPC, no wallet, read-only.
+// Internal consistency check of the parsed events — no RPC, no wallet, read-only.
 //
 //   node scripts/verify-invariants.mjs          # 90s of stream
 //   SECONDS=60 MINTS=200 node scripts/verify-invariants.mjs
