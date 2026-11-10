@@ -99,7 +99,10 @@ One JSON object per line in `data/journal/YYYY-MM-DD.jsonl`. Every line has `ts`
 (entry/exit price, `solSpent`/`solReceived`, `tokens`, `pnlSol`, `priceSource`, `venue`, attempts,
 slippage). Session records add `sessionId`, `paramsHash`, `gitSha` and the RPC snapshot. Tick lines add
 `ageMs` and `stale`. The graduation shadow lab writes `gshadow_candidate`, `gshadow_open` and
-`gshadow_trade` (with `netPct`, `reason`, `holdSec`, `slipBps`, `delayMs`).
+`gshadow_trade` (with `netPct`, `reason`, `holdSec`, `slipBps`, `delayMs`, `costsScheme`). The
+`costsScheme` stamp separates accounting epochs: `v3-single-slip` charges the buy slippage once,
+while lines without the field are the older model that charged it twice, so the analyzer reports
+them as separate tables.
 
 Rotation: ticks rotate by size and are drained at stop (`SNIPER_DRAIN_MAX_SEC`); raw captures rotate
 hourly by local hour (`data/raw/YYYY-MM-DD-HH.jsonl.gz`).

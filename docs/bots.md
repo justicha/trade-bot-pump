@@ -440,9 +440,18 @@ node scripts/analyze-graduation.mjs
 ```
 
 **Parameters.** `MIN_FILL` (`92`), `SHADOW_BUY_SOL` (`0.02`), `SHADOW_SL` (`0.7`),
-`SHADOW_HOLD_SEC` (`300`), `SHADOW_MAX_SEC` (unset = until Ctrl+C).
+`SHADOW_HOLD_SEC` (`300`), `SHADOW_MAX_SEC` (unset = until Ctrl+C), `SHADOW_MAX_MINTS` (`20000`, a
+memory bound, never a trade filter).
 
-**Output and files.** `data/journal/YYYY-MM-DD.jsonl` with the `gshadow_*` records.
+**How to stop.** Ctrl+C / SIGTERM / `SHADOW_MAX_SEC` all run the same `finishShadow()`: every open
+position is closed at the last known price and journaled as `manual stop` (SIGTERM: `shutdown`) with
+`unconfirmed: true` if no price is known, then the stop summary prints and the process exits. A
+second signal during the shutdown is ignored, so a position is never written twice.
+
+**Output and files.** `data/journal/YYYY-MM-DD.jsonl` with the `gshadow_*` records. `gshadow_open`
+and `gshadow_trade` carry `costsScheme` (`v3-single-slip…`), and `scripts/analyze-graduation.mjs`
+reports each scheme as a separate table — lines without the field are the older "legacy" model,
+which charged the buy slippage twice.
 
 **Limitations and risks.** Variant `I` needs an AMM price source the stream does not carry, so it
 reports "no data". A run with no candidates produces "no data", which is not evidence of anything.

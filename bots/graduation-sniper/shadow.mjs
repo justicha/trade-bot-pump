@@ -10,6 +10,11 @@
 //   node bots/graduation-sniper/shadow.mjs               # until Ctrl+C
 //   $env:SHADOW_MAX_SEC='60'; node bots/graduation-sniper/shadow.mjs
 //
+// A stop (Ctrl+C, SIGTERM or SHADOW_MAX_SEC) closes every open position and journals it, so a run
+// never loses the trades that were live when it ended. Each (variant, mint) pair is opened at most
+// once per session, and journaled lines carry `costsScheme` so the report can keep accounting
+// epochs apart.
+//
 // Variant I (enter after migration) needs an AMM price source this stream does not carry, so it
 // reports "no data" instead of inventing a price.
 import { PublicKey } from "@solana/web3.js";
@@ -18,7 +23,7 @@ import { PUMP_PROGRAM, TRADE_EVENT_PREFIX, BUY_INSTRUCTIONS } from "../../lib/co
 import { gradFillPct } from "../../lib/curve.mjs";
 import { previewExit } from "../../lib/exec.mjs";
 import { getBondingCurveState } from "../../lib/pumpfun.mjs";
-import { pessimisticRoundTrip, sizeSlippageBps } from "../../lib/pessimistic.mjs";
+import { pessimisticRoundTrip, sizeSlippageBps, SHADOW_COSTS_SCHEME } from "../../lib/pessimistic.mjs";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
 
@@ -32,6 +37,9 @@ const BUY_SOL = Number(process.env.SHADOW_BUY_SOL || 0.02);
 const SL = Number(process.env.SHADOW_SL || 0.7);
 const HOLD_MS = Number(process.env.SHADOW_HOLD_SEC || 300) * 1000;
 const MAX_SEC = Number(process.env.SHADOW_MAX_SEC || 0);
+// Upper bound on remembered mints. Reaching it must never cost us a live position or a trade —
+// see the prune block in the tick timer.
+const MAX_MINTS = Number(process.env.SHADOW_MAX_MINTS || 20_000);
 const journal = new TradeJournal({ bot: "graduation-shadow" });
 
 const VARIANTS = {
@@ -48,6 +56,11 @@ const VARIANTS = {
 
 const mintState = new Map(); // mint -> { buyers:Set, entered:Set, fill, rSol, price, vsol, vtok }
 const open = new Map(); // `${variant}:${mint}` -> position
+// Every (variant, mint) pair opened at least once this session. mintState is bounded and a mint can
+// be evicted and then reappear; `entered`, which lives ON that state, dies with it, so without this
+// session-wide set the mint would be opened a second time and counted twice in the report.
+const openedKeys = new Set();
+const ACTIVE_VARIANTS = Object.keys(VARIANTS).filter((id) => !VARIANTS[id].postMigration);
 
 function parseEvent(data) {
   if (data.length < 129) return null;
@@ -69,15 +82,19 @@ const log0 = (m) => console.log(`[shadow] ${m}`);
 
 function enter(variantId, v, mint, s) {
   const key = `${variantId}:${mint}`;
-  if (open.has(key) || s.entered.has(variantId)) return;
+  if (openedKeys.has(key) || open.has(key) || s.entered.has(variantId)) return;
   const slipBps = 50 + sizeSlippageBps(BUY_SOL);
   const spot = priceOf(s);
   if (!(spot > 0)) return;
+  openedKeys.add(key);
   s.entered.add(variantId);
-  const pos = { variant: variantId, mint, entryPrice: spot * (1 + slipBps / 10000), at: Date.now(), spot };
+  // Entry is the curve spot. The buy slippage is charged ONCE, inside pessimisticRoundTrip at the
+  // exit; moving this price up by slipBps as well charged it twice (see SHADOW_COSTS_SCHEME).
+  const pos = { variant: variantId, mint, entryPrice: spot, at: Date.now(), spot };
   open.set(key, pos);
   journal.write({
     type: "gshadow_open",
+    costsScheme: SHADOW_COSTS_SCHEME,
     variant: variantId,
     label: v.label,
     mint,
@@ -92,7 +109,9 @@ function enter(variantId, v, mint, s) {
 
 function tryEnter(variantId, v, mint, s) {
   const key = `${variantId}:${mint}`;
-  if (open.has(key) || s.entered.has(variantId)) return;
+  // `openedKeys` first: an already-opened (variant, mint) must not even start the exit-check RPC
+  // when a long-evicted mint reappears in the stream.
+  if (openedKeys.has(key) || open.has(key) || s.entered.has(variantId)) return;
   if (s.buyers.size < v.minHolders) return;
   if (s.fill > v.maxFill) return;
   if (!v.exitCheck) {
@@ -110,11 +129,14 @@ function tryEnter(variantId, v, mint, s) {
     .catch(() => {});
 }
 
-function closePos(key, pos, reason, price) {
+// `extra` carries per-exit flags (currently only `unconfirmed: true` when the stop had no price).
+// It is merged LAST and must never overwrite the accounting fields above it.
+function closePos(key, pos, reason, price, extra) {
   const ratio = price / pos.entryPrice;
   const rt = pessimisticRoundTrip({ buySol: BUY_SOL, ratio });
   journal.write({
     type: "gshadow_trade",
+    costsScheme: SHADOW_COSTS_SCHEME,
     variant: pos.variant,
     mint: pos.mint,
     entryPrice: pos.entryPrice,
@@ -127,6 +149,7 @@ function closePos(key, pos, reason, price) {
     slipBps: rt.slipBps,
     delayMs: rt.delayMs,
     buySol: BUY_SOL,
+    ...extra,
   });
   open.delete(key);
 }
@@ -172,6 +195,20 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
 
 log0("Listening for candidates in the shadow lab...");
 
+// Rate-limited (once a minute): the tick runs every second, and a run that sits permanently at the
+// cap would otherwise flood the log. Never throttled into silence about a prune, though — that is
+// the interesting event.
+let capLogAt = 0;
+function capLog(pruned) {
+  const now = Date.now();
+  if (now - capLogAt < 60_000) return;
+  capLogAt = now;
+  log0(
+    `mintState cap ${MAX_MINTS}: pruned ${pruned} spent mint(s), ${mintState.size} held` +
+      (mintState.size > MAX_MINTS ? " — nothing else is prunable, active entries are never dropped" : ""),
+  );
+}
+
 const timer = setInterval(() => {
   const now = Date.now();
   for (const [key, pos] of [...open]) {
@@ -183,27 +220,65 @@ const timer = setInterval(() => {
     else if (ratio <= SL) closePos(key, pos, "sl", price);
     else if (now - pos.at >= HOLD_MS) closePos(key, pos, "timeout", price);
   }
-  if (mintState.size > 20_000) {
+  // Keep mintState bounded WITHOUT ever dropping something that can still trade. A mint is only
+  // evicted when nothing can reference it any more: no open position AND every pre-migration
+  // variant has already opened it. Evicting on size alone resurrected a closed mint and produced a
+  // duplicate `gshadow_open` (one mint was opened 5 times in a 3h run). If the cap is still
+  // exceeded after pruning, memory is allowed to grow and the condition is logged — never solved by
+  // deleting an active entry.
+  if (mintState.size > MAX_MINTS) {
     const live = new Set([...open.values()].map((p) => p.mint));
-    for (const m of mintState.keys()) if (!live.has(m)) mintState.delete(m);
+    let pruned = 0;
+    for (const mint of [...mintState.keys()]) {
+      if (live.has(mint)) continue;
+      if (!ACTIVE_VARIANTS.every((id) => openedKeys.has(`${id}:${mint}`))) continue;
+      mintState.delete(mint);
+      pruned += 1;
+    }
+    if (pruned > 0 || mintState.size > MAX_MINTS) capLog(pruned);
   }
 }, 1000);
 
-if (MAX_SEC > 0) {
-  setTimeout(async () => {
-    clearInterval(timer);
-    for (const [key, pos] of [...open]) {
-      const s = mintState.get(pos.mint);
-      closePos(key, pos, s?.price ? "timeout" : "no_data", s?.price || pos.entryPrice);
-    }
-    await ws.close().catch(() => {});
-    log0(`stopped after ${MAX_SEC}s; journal ${journal.file()}`);
-    process.exit(0);
-  }, MAX_SEC * 1000);
+// ---- stop path ------------------------------------------------------------------------------
+// A stop must journal what it closes. The old handler called process.exit(0) with positions still
+// in `open`, so every trade that was live when the operator hit Ctrl+C silently disappeared from
+// the report (one real run ended with 8 opens and 0 closes for the same mint). All three stop
+// paths — SIGINT, SIGTERM and SHADOW_MAX_SEC — go through this single function, and it is
+// idempotent: a second signal arriving while the socket is closing must not write the same
+// positions twice.
+let stopping = false;
+
+// A position whose mint no longer carries a usable price is STILL journaled, with
+// `unconfirmed: true` and its entry price as the exit, because a missing trade is worse than an
+// imperfect one: the report would silently lose the position.
+function closeAllAtStop(stopReason) {
+  let closed = 0;
+  let unconfirmed = 0;
+  for (const [key, pos] of [...open]) {
+    const s = mintState.get(pos.mint);
+    const price = s?.price;
+    const priced = Number(price) > 0;
+    closePos(key, pos, stopReason, priced ? price : pos.entryPrice, priced ? undefined : { unconfirmed: true });
+    closed += 1;
+    if (!priced) unconfirmed += 1;
+  }
+  return { closed, unconfirmed };
 }
 
-process.on("SIGINT", async () => {
+async function finishShadow(reason) {
+  if (stopping) return;
+  stopping = true;
   clearInterval(timer);
+  const stopReason = reason === "sigterm" ? "shutdown" : "manual stop";
+  const { closed, unconfirmed } = closeAllAtStop(stopReason);
+  log0(`=== SHADOW STOP (${reason}) ===`);
+  log0(`open at stop: ${closed} position(s) closed as "${stopReason}"${unconfirmed ? `, ${unconfirmed} unconfirmed (no price)` : ""}`);
+  log0(`journal: ${journal.file()}`);
   await ws.close().catch(() => {});
   process.exit(0);
-});
+}
+
+if (MAX_SEC > 0) setTimeout(() => finishShadow("max-sec"), MAX_SEC * 1000);
+
+process.on("SIGINT", () => finishShadow("sigint"));
+process.on("SIGTERM", () => finishShadow("sigterm"));

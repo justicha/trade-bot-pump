@@ -3,14 +3,25 @@
 //
 //   node scripts/analyze-graduation.mjs [journal.jsonl]
 //
-// Reads every `gshadow_trade` line, splits each variant by TIME into a fit half and a hold-out
-// half, and prints n / win% / mean / median / PF / maxDD / exit mix. A 95% bootstrap CI is given
-// only for n >= 30. Rows with n < 200 are marked "no conclusion" — the acceptance rule is the
-// lower CI bound > 0 on the SECOND half; the honest possible verdict is "no positive expectancy".
+// Reads every `gshadow_trade` line and reports them GROUPED BY `costsScheme`: netPct produced by
+// different accounting models (v2 charged the buy slippage twice, v3-single-slip charges it once)
+// is not the same quantity, so the epochs are never averaged together. Lines written before the
+// field existed are reported as "legacy".
+//
+// Inside a group each variant is split by TIME into a fit half and a hold-out half, and
+// n / win% / mean / median / PF / maxDD / exit mix are printed. A 95% bootstrap CI is given only
+// for n >= 30; rows with n < 200 are marked "no conclusion" — the acceptance rule is the lower CI
+// bound > 0 on the SECOND half; the honest possible verdict is "no positive expectancy".
+//
+// The sample block exists because the variants trade the SAME mints: 66 trades once turned out to
+// be 8 distinct mints, so "trades per variant" overstates the independent evidence by an order of
+// magnitude. Below 30 distinct mints the report refuses to read as a verdict at all.
 import fs from "node:fs";
 import path from "node:path";
 import { summarize } from "../lib/gradstats.mjs";
 import { ROOT } from "../lib/config.mjs";
+
+const MIN_INDEPENDENT_MINTS = 30;
 
 const arg = process.argv[2];
 const dir = path.join(ROOT, "data", "journal");
@@ -36,54 +47,91 @@ if (!trades.length) {
   process.exit(0);
 }
 
-// sort by time, then split each variant's own series in half (fit = first, hold-out = second)
-trades.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-const byVariant = new Map();
+// ---- epoch split: one table per accounting scheme -----------------------------------------
+const LEGACY = "legacy (no costsScheme)";
+const schemeOf = (t) => (typeof t.costsScheme === "string" && t.costsScheme.trim() ? t.costsScheme : LEGACY);
+const byScheme = new Map();
 for (const t of trades) {
-  if (!byVariant.has(t.variant)) byVariant.set(t.variant, []);
-  byVariant.get(t.variant).push(t);
-}
-
-const rows = [];
-for (const [variant, list] of [...byVariant].sort()) {
-  const nets = list.map((t) => Number(t.netPct));
-  const reasons = list.map((t) => String(t.reason || "unknown"));
-  const mid = Math.floor(list.length / 2);
-  const fit = list.slice(0, mid);
-  const hold = list.slice(mid);
-  rows.push({
-    variant,
-    all: summarize(nets, { reasons }),
-    fit: summarize(fit.map((t) => Number(t.netPct)), { reasons: fit.map((t) => String(t.reason)) }),
-    hold: summarize(hold.map((t) => Number(t.netPct)), { reasons: hold.map((t) => String(t.reason)) }),
-  });
+  const key = schemeOf(t);
+  if (!byScheme.has(key)) byScheme.set(key, []);
+  byScheme.get(key).push(t);
 }
 
 const pct = (x) => (x == null ? "n/a" : `${x.toFixed(2)}%`);
 const ci = (c) => (c ? `[${c.lo.toFixed(2)}; ${c.hi.toFixed(2)}]` : "n/a");
 const pf = (x) => (x == null ? "n/a" : x === Infinity ? "inf" : x.toFixed(2));
 
-console.log(`candidates seen: ${candidates.size} | trades: ${trades.length}`);
-console.log("\nvariant  n     win%    mean     median   PF    maxDD    TP/SL/TO       ci95(mean)        verdict(hold-out)");
-for (const r of rows) {
-  const a = r.all;
-  const h = r.hold;
-  const verdict = h.n === 0
-    ? "no data"
-    : h.ci95 == null
-      ? `n=${h.n} < 30: no CI`
-      : h.ci95.lo > 0
-        ? "positive lower bound (still n<200: no conclusion)"
-        : "no positive expectancy";
-  console.log(
-    `${r.variant.padEnd(8)} ${String(a.n).padEnd(5)} ${String(a.winPct ?? "n/a").padEnd(6)} ${pct(a.meanPct).padEnd(8)} ${pct(a.medianPct).padEnd(8)} ${pf(a.profitFactor).padEnd(5)} ${pct(a.maxDdPct).padEnd(8)} ${`${a.tpPct ?? 0}/${a.slPct ?? 0}/${a.timeoutPct ?? 0}`.padEnd(13)} ${ci(a.ci95).padEnd(18)} ${verdict}`,
-  );
+console.log(`graduation shadow: ${trades.length} trade(s) from ${files.length} file(s) | candidates seen: ${candidates.size}`);
+if (byScheme.size > 1) {
+  console.log(`смешаны версии учёта (${byScheme.size}): ${[...byScheme].map(([k, v]) => `${k}=${v.length}`).join(" | ")}`);
+  console.log("таблицы ниже разделены по схеме; общая таблица НЕ выводится — netPct разных схем несравнимы");
 }
 
-const anyHoldCi = rows.some((r) => r.hold.ci95 && r.hold.ci95.lo > 0);
-const allSmall = rows.every((r) => r.all.n < 200);
-console.log(
-  `\nVERDICT: ${anyHoldCi ? "positive lower CI on the hold-out half for at least one variant" : "положительного ожидания нет ни в одном варианте"}` +
-    (allSmall ? " (n<200 everywhere: not a profitability conclusion, only a screening result)" : ""),
-);
-console.log(`variant I (enter after migration): нет данных — the trade stream carries no AMM price.`);
+// ---- one table per epoch -----------------------------------------------------------------
+function reportGroup(scheme, list) {
+  // split each variant's own series in half by TIME (fit = first, hold-out = second)
+  list.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  const mints = new Set(list.map((t) => t.mint));
+  const per = new Map();
+  for (const t of list) per.set(t.variant, (per.get(t.variant) || 0) + 1);
+
+  console.log(`\n=== costsScheme: ${scheme} — ${list.length} trade(s) ===`);
+  console.log(
+    `samples: unique mints ${mints.size} | candidates ${candidates.size} | per variant: ${[...per].sort().map(([v, n]) => `${v}=${n}`).join(" ")}`,
+  );
+  if (mints.size < MIN_INDEPENDENT_MINTS) {
+    console.log(`WARNING: уникальных mints ${mints.size} < ${MIN_INDEPENDENT_MINTS} — наблюдения сильно коррелированы, вердикт не делать`);
+  }
+
+  const byVariant = new Map();
+  for (const t of list) {
+    if (!byVariant.has(t.variant)) byVariant.set(t.variant, []);
+    byVariant.get(t.variant).push(t);
+  }
+
+  const rows = [];
+  for (const [variant, vl] of [...byVariant].sort()) {
+    const nets = vl.map((t) => Number(t.netPct));
+    const reasons = vl.map((t) => String(t.reason || "unknown"));
+    const mid = Math.floor(vl.length / 2);
+    const fit = vl.slice(0, mid);
+    const hold = vl.slice(mid);
+    rows.push({
+      variant,
+      all: summarize(nets, { reasons }),
+      fit: summarize(fit.map((t) => Number(t.netPct)), { reasons: fit.map((t) => String(t.reason)) }),
+      hold: summarize(hold.map((t) => Number(t.netPct)), { reasons: hold.map((t) => String(t.reason)) }),
+    });
+  }
+  console.log("\nvariant  n     win%    mean     median   PF    maxDD    TP/SL/TO       ci95(mean)        verdict(hold-out)");
+  for (const r of rows) {
+    const a = r.all;
+    const h = r.hold;
+    const verdict = h.n === 0
+      ? "no data"
+      : h.ci95 == null
+        ? `n=${h.n} < 30: no CI`
+        : h.ci95.lo > 0
+          ? "positive lower bound (still n<200: no conclusion)"
+          : "no positive expectancy";
+    console.log(
+      `${r.variant.padEnd(8)} ${String(a.n).padEnd(5)} ${String(a.winPct ?? "n/a").padEnd(6)} ${pct(a.meanPct).padEnd(8)} ${pct(a.medianPct).padEnd(8)} ${pf(a.profitFactor).padEnd(5)} ${pct(a.maxDdPct).padEnd(8)} ${`${a.tpPct ?? 0}/${a.slPct ?? 0}/${a.timeoutPct ?? 0}`.padEnd(13)} ${ci(a.ci95).padEnd(18)} ${verdict}`,
+    );
+  }
+
+  const anyHoldCi = rows.some((r) => r.hold.ci95 && r.hold.ci95.lo > 0);
+  const allSmall = rows.every((r) => r.all.n < 200);
+  const verdict =
+    anyHoldCi ? "positive lower CI on the hold-out half for at least one variant" : "no positive expectancy in any variant";
+  console.log(`VERDICT (${scheme}): ${verdict}${allSmall ? " (n<200 everywhere: a screening result, not a profitability conclusion)" : ""}`);
+  if (mints.size < MIN_INDEPENDENT_MINTS) {
+    console.log(`VERDICT (${scheme}): withheld — ${mints.size} distinct mints < ${MIN_INDEPENDENT_MINTS}, the trades are not independent.`);
+  }
+}
+
+// One table per accounting epoch, biggest first. A combined table is deliberately NOT printed when
+// more than one scheme is present (see the header): averaging v2 and v3 netPct would be a lie.
+for (const [scheme, list] of [...byScheme].sort((a, b) => b[1].length - a[1].length)) reportGroup(scheme, list);
+
+console.log(`\nvariant I (enter after migration): нет данных — the trade stream carries no AMM price.`);
+
