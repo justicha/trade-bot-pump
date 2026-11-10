@@ -286,7 +286,7 @@ net    = out * (10000 - feeBps) / 10000                      (:137)
 | V4 | Формула `ammSellQuote` совпадает с программой (fee split, virtual reserves) | Сравнить `net` с логами успешной sell-симуляции / реальной sell-tx |
 | V5 | `createCloseAccount` не завышает PnL (аренда ATA) | Вычесть аренду из `solReceivedSol` и подтвердить арифметику на реальной tx |
 | V6 | Порядок 11/12 (`base_token_program`, `quote_token_program`) у `sell` | **Подтверждено**: `TransferChecked` Token-2022 (аккаунт 11) и SPL Token (12) прошли в симуляции |
-| V7 | `pool_v2` — какой аккаунт и по каким сидам | **Открыт**: программа требует его как remaining account (`Custom 6062`). В кэше его нет, `["pool-v2", mint]` с хвостом не совпал (§12) |
+| V7 | `pool_v2` — какой аккаунт и по каким сидам | **Сиды подтверждены официальным SDK** `@pump-fun/pump-sdk@4.3.1`: `PDA(["pool-v2", baseMint])`, передаётся как remaining account продажи (см. §13). Осталось подтвердить симуляцией |
 
 
 ---
@@ -494,6 +494,143 @@ $env:LIVE_CONFIRM="yes"; $env:LIVE_CONFIRM_AMM="yes"; $env:DRY_SELL="yes"; npm r
 
 Тест на совпадение `pool_v2` с хвостом (пункт 4 задания) не добавлен — он был бы проверкой
 заведомо ложного утверждения: совпадения нет. Вместо него факты зафиксированы здесь и в §8 (V7).
+
+---
+
+## 13. Официальный SDK: sell / pool_v2
+
+Источник — `@pump-fun/pump-sdk@4.3.1`, установленный **вне репозитория**
+(`C:\Users\HUAWEI\Downloads\pump-sdk-ref`, `npm ls @pump-fun/pump-sdk` → `4.3.1`). Код бота не
+менялся: это справка, а не патч.
+
+### 13.1 Что нашлось по запросам
+
+| Запрос | Где | Что |
+|---|---|---|
+| `pool-v2` | `src/swap/pda.ts:191` | сид PDA |
+| `poolV2` | `src/swap/pda.ts`, `src/swap/offlinePumpAmm.ts:797`, `:1047` | функция `poolV2Pda` и два места, где она попадает в remaining accounts |
+| `pool_v2` | `src/idl/pump_amm.json` | ошибка `InvalidPoolV2` в таблице ошибок IDL |
+| `remainingAccounts` | `src/swap/offlinePumpAmm.ts` (buy/sell/multi-hop), `src/swap/*.ts` | 37 вхождений: все trade-инструкции собирают их явно |
+
+### 13.2 Сиды `pool_v2`
+
+```ts
+// src/swap/pda.ts:191
+export function poolV2Pda(baseMint: PublicKey): PublicKey {
+  return pumpAmmPda([Buffer.from("pool-v2"), baseMint.toBuffer()]);
+}
+```
+
+То есть `PDA(["pool-v2", baseMint], pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA)` — **ровно то,
+что было выведено в §12.2** (`5qLmRndb…` для `CsXAT9bd…bonk`, `4CgJNST7…` для `BWRfm9hQ…BAGS`).
+Расхождения нет; в покупках его не было потому, что это **remaining account продажи**, а не
+покупки — §12.3 остаётся в силе, кэш его подтвердить не мог.
+
+### 13.3 Аккаунты `sell` (21) — IDL, `src/idl/pump_amm.json`
+
+Дискриминатор IDL: байты `[51,230,133,164,1,127,131,173]` = `33e685a4017f83ad` — совпадает с нашим.
+
+| # | Аккаунт | writable | signer | В `lib/pumpswap-sell.mjs` |
+|---|---|---|---|---|
+| 0 | `pool` | да | — | совпадает |
+| 1 | `user` | да | да | совпадает |
+| 2 | `global_config` | — | — | совпадает |
+| 3 | `base_mint` | — | — | совпадает |
+| 4 | `quote_mint` | — | — | совпадает |
+| 5 | `user_base_token_account` | да | — | совпадает |
+| 6 | `user_quote_token_account` | да | — | совпадает |
+| 7 | `pool_base_token_account` | да | — | совпадает |
+| 8 | `pool_quote_token_account` | да | — | совпадает |
+| 9 | `protocol_fee_recipient` | **—** | — | **у нас `isWritable: true`** — расхождение |
+| 10 | `protocol_fee_recipient_token_account` | да | — | совпадает |
+| 11 | `base_token_program` | — | — | совпадает (Token-2022) |
+| 12 | `quote_token_program` | — | — | совпадает (SPL Token) |
+| 13 | `system_program` | — | — | совпадает |
+| 14 | `associated_token_program` | — | — | совпадает |
+| 15 | `event_authority` | — | — | совпадает |
+| 16 | `program` | — | — | совпадает |
+| 17 | `coin_creator_vault_ata` | да | — | совпадает |
+| 18 | `coin_creator_vault_authority` | — | — | совпадает |
+| 19 | `fee_config` | — | — | совпадает |
+| 20 | `fee_program` | — | — | совпадает |
+
+Итог: **порядок и состав 21 аккаунта верны** (V1/V6 подтверждены ещё и IDL). Единственное
+отличие — флаг writable у `protocol_fee_recipient`; передать read-only аккаунт writable runtime
+обычно разрешает, а `isMut` у программы здесь `false`, так что это косметика, но фиксируется.
+
+### 13.4 Remaining accounts `sell` — вот чего не хватало
+
+`src/swap/offlinePumpAmm.ts`, `sellInstructionsNoPool()` (строки 1039-1104):
+
+```ts
+const poolV2PdaKey = poolV2Pda(pool.baseMint);
+const remainingAccounts = [];
+if (pool.isCashbackCoin) {
+  remainingAccounts.push(
+    { pubkey: ATA(quoteMint, userVolumeAccumulatorPda(user), true, quoteTokenProgram), isWritable: true, isSigner: false },
+    { pubkey: userVolumeAccumulatorPda(user),                                       isWritable: true, isSigner: false },
+  );
+}
+if (!pool.coinCreator.equals(PublicKey.default)) {
+  remainingAccounts.push({ pubkey: poolV2PdaKey, isWritable: false, isSigner: false });
+}
+remainingAccounts.push(
+  { pubkey: buybackFeeRecipient,             isWritable: false, isSigner: false },
+  { pubkey: buybackFeeRecipientTokenAccount, isWritable: true,  isSigner: false },
+);
+```
+
+| # | Аккаунт | Когда | writable |
+|---|---|---|---|
+| r0 | `ATA(quote_mint, user_volume_accumulator)` | только `pool.isCashbackCoin` | да |
+| r1 | `PDA(["user_volume_accumulator", user])` | только `pool.isCashbackCoin` | да |
+| r2 | `PDA(["pool-v2", base_mint])` | `pool.coin_creator != 0` | нет |
+| r3 | `buybackFeeRecipient` (случайный из `globalConfig.buybackFeeRecipients`, `src/swap/fees.ts:202`) | всегда | нет |
+| r4 | его ATA по `quote_mint` (`allowOwnerOffCurve = true`) | всегда | да |
+
+Наш `ammSellIx` не передаёт **ни одного** remaining account — отсюда `Custom 6062`
+(`sell.rs:520 InvalidPoolV2`): программа ищет `pool_v2` среди remaining accounts, не находит и
+падает уже после того, как списала токены. На пробе `HbZM3fVa…pump` `coinCreator = xgzHcG76…`
+(не `default`), `isCashback = false`, значит нужны были **r2, r3, r4**.
+
+### 13.5 `sell_v2` — альтернатива, которую SDK использует по флагу
+
+| | `sell` | `sell_v2` |
+|---|---|---|
+| Дискриминатор | `33e685a4017f83ad` | `5df6823ce7e940b2` (= `sha256("global:sell_v2")[0..8]`) |
+| Аккаунтов | 21 | 17 |
+| Отличия | `protocol_fee_recipient`, его ATA, `coin_creator_vault_*`, `fee_program` | вместо них — `user_volume_accumulator` и `buyback_fee_recipient` (его ATA); remaining accounts нет |
+| Когда SDK выбирает | по умолчанию | `{ v2: true }` **и** `supportsTradeV2(pool)` |
+
+`supportsTradeV2(pool) = !pool.isCashbackCoin` (`src/swap/util.ts:42`), т.е. для нашего пула
+(`isCashback = false`) доступны оба варианта. `sell_v2` не требует `pool_v2`, но требует
+`user_volume_accumulator` (writable) и **уже существующий** ATA получателя buyback.
+
+### 13.6 Прочее из SDK, что стоит знать
+
+* Перед sell SDK может вставить `extend_account`, если аккаунт пула короче
+  `POOL_ACCOUNT_NEW_SIZE = 300` байт (`offlinePumpAmm.ts:72`, `withFixPoolInstructions`). Наш
+  `decodePool` работает с порогом 287; если реальный пул короче 300, программе может понадобиться
+  `extend_account` до sell (в пробе этого не потребовалось — ошибка была позже).
+* ATA получателей комиссии SDK всегда выводит с `allowOwnerOffCurve = true` — совпадает с нашей
+  правкой через `ataFor()`.
+* `getFeeRecipient` (`src/swap/fees.ts:186`) совпадает с нашей логикой: mayhem → reserved-список,
+  иначе обычный, выбор случайный.
+
+### 13.7 Что это меняет в TODO(verify)
+
+| # | Было | Стало |
+|---|---|---|
+| V7 | «какой аккаунт и по каким сидам» | **Сиды подтверждены официальным SDK**: `["pool-v2", baseMint]`. Осталось подтвердить симуляцией, но вопрос «что за аккаунт» закрыт |
+| — | — | Новое: в `sell` нужны ещё **buybackFeeRecipient + его quote-ATA** (всегда) и cashback-пара для cashback-пулов. Это не volume-accumulator из BUG 13 |
+| V2 | «нужен ли volume-accumulator» | Для v1 `sell` — **нет** (его нет ни в IDL, ни в remaining accounts). Для `sell_v2` — да, как именованный аккаунт |
+
+**Код не менялся** (задача — только отчёт). Следующий шаг, отдельным заданием: добавить в
+`ammSellIx` remaining accounts `[pool_v2?, buybackFeeRecipient, buybackFeeRecipientAta]`
+(+ cashback-пара при `isCashback`), затем прогнать `scripts/probe-sell-sim.mjs` и убедиться, что
+6062 ушёл.
+
+
 
 
 
