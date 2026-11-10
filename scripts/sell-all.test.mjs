@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runSellAll } from "../lib/sell-all.mjs";
+import { TOKEN_2022_PROGRAM } from "../lib/constants.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const asrt = (c, m) => {
@@ -29,27 +30,33 @@ const CREATOR = pk(0x09);
 const BALANCE = 1_000_000_000_000n;
 const wallet = Keypair.generate();
 
-const tokenAccount = (mint, amount) => {
+const tokenAccount = (mint, amount, shape = "buffer") => {
   const d = Buffer.alloc(165);
   mint.toBuffer().copy(d, 0);
   wallet.publicKey.toBuffer().copy(d, 32);
   d.writeBigUInt64LE(amount, 64);
-  return { account: { data: [d.toString("base64"), "base64"] } };
+  // web3.js hands the repo a Buffer with encoding "base64"; some paths give the [b64, "base64"]
+  // tuple instead. Both shapes must be accepted, so the fixture mixes them.
+  const data = shape === "tuple" ? [d.toString("base64"), "base64"] : d;
+  return { account: { data } };
 };
 
 const connection = {
-  async getTokenAccountsByOwner() {
+  async getTokenAccountsByOwner(_owner, filter) {
+    // Token-2022 call returns Buffers, the SPL call returns the tuple shape (like newer clients).
+    const shape = filter.programId.equals(TOKEN_2022_PROGRAM) ? "buffer" : "tuple";
     return {
       value: [
-        tokenAccount(MINT_FAIL, BALANCE),
-        tokenAccount(MINT_CURVE, BALANCE),
-        tokenAccount(MINT_POOL, BALANCE),
-        tokenAccount(MINT_NONE, BALANCE),
-        tokenAccount(MINT_ZERO, 0n),
+        tokenAccount(MINT_FAIL, BALANCE, shape),
+        tokenAccount(MINT_CURVE, BALANCE, shape),
+        tokenAccount(MINT_POOL, BALANCE, shape),
+        tokenAccount(MINT_NONE, BALANCE, shape),
+        tokenAccount(MINT_ZERO, 0n, shape),
       ],
     };
   },
 };
+
 
 const curveState = {
   address: pk(0x11),
