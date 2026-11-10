@@ -23,17 +23,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PublicKey } from "@solana/web3.js";
-import {
-  getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountIdempotentInstruction,
-  createCloseAccountInstruction,
-} from "@solana/spl-token";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { newSessionId, paramsHash, gitSha } from "../../lib/runmeta.mjs";
 import { describeTxError, isCurveCompleteError } from "../../lib/pump-errors.mjs";
 import { previewExit, readExecution, simulateTx } from "../../lib/exec.mjs";
 import { planSellParts } from "../../lib/sell-plan.mjs";
-import { ammSellIx, ammSellQuote, TOKEN_PROGRAM } from "../../lib/pumpswap.mjs";
+import { ammSellOnce, chooseSellVenue, isDrySell } from "../../lib/amm-sell.mjs";
 import { curvePrice, gradFillPct } from "../../lib/curve.mjs";
 import { canEnterMint } from "../../lib/entry-gate.mjs";
 import { SLIPPAGE_BPS, DRY_RUN, LIVE, numOr } from "../../lib/config.mjs";
@@ -42,7 +38,6 @@ import { log as logger } from "../../lib/logger.mjs";
 import {
   PUMP_PROGRAM,
   TOKEN_2022_PROGRAM,
-  WSOL,
 } from "../../lib/constants.mjs";
 import { parseLogEvents } from "../../lib/events.mjs";
 import {
@@ -83,6 +78,10 @@ const EXIT_MIN_RATIO = numOr(process.env.EXIT_MIN_RATIO, 0.9, "EXIT_MIN_RATIO");
 const SELL_MAX_ATTEMPTS = numOr(process.env.SELL_MAX_ATTEMPTS, 3, "SELL_MAX_ATTEMPTS");
 const SELL_MAX_SLIPPAGE = numOr(process.env.SELL_MAX_SLIPPAGE, 2000, "SELL_MAX_SLIPPAGE"); // bps
 const BUY_SLIPPAGE_BPS = numOr(process.env.BUY_SLIPPAGE_BPS, SLIPPAGE_BPS, "BUY_SLIPPAGE_BPS");
+// DRY_SELL=yes (AUDIT_SELL.md §5): build + simulate + journal a PumpSwap sell but never send it.
+// This is NOT --dry-run: LIVE still applies, so BUYS ARE STILL REAL while sells are only simulated.
+// It exists to prove the live AMM path on a cheap position before allowing a real AMM exit.
+const DRY_SELL = isDrySell();
 // An entry that never settles (a hung RPC call used to hang forever) must not block every other
 // mint: after this long the slot is released and an ALERT is printed.
 const OPENING_STALE_SEC = numOr(process.env.OPENING_STALE_SEC, 120, "OPENING_STALE_SEC");
@@ -469,8 +468,11 @@ async function checkExit(mint) {
   }
 }
 
-function markStuck(mint, pos, reason) {
-  stuck.add(`${mint.slice(0, 12)}: ${reason}`);
+function markStuck(mint, pos, reason, extra = {}) {
+  const attempts = extra.attempts ?? pos.attempts ?? 0;
+  const venue = extra.venue ?? null;
+  const tag = [venue ? `venue=${venue}` : null, `attempts=${attempts}/${SELL_MAX_ATTEMPTS}`].filter(Boolean).join(" ");
+  stuck.add(`${mint.slice(0, 12)}: ${tag} — ${reason}`);
   session.drop(`${mint.slice(0, 12)}: STUCK ${reason}`);
   journal.write({
     type: "stuck",
@@ -478,12 +480,52 @@ function markStuck(mint, pos, reason) {
     paramsHash: PARAMS_HASH,
     gitSha: GIT_SHA,
     mint,
+    venue,
     reason,
-    attempts: pos.attempts || 0,
+    attempts,
+    maxAttempts: SELL_MAX_ATTEMPTS,
     tokens: (pos.tokens ?? 0n).toString(),
   });
-  log(`  ALERT: ${mint.slice(0, 12)} STUCK (${reason}) — retries stopped, use scripts/rescue-sell.mjs`);
+  // The reason and the attempt count are part of the message: "retries stopped" alone hid the fact
+  // that nothing had ever been retried (AUDIT_SELL.md §2).
+  const tail =
+    attempts >= SELL_MAX_ATTEMPTS
+      ? `retries stopped after ${attempts}/${SELL_MAX_ATTEMPTS} attempts`
+      : `no further automatic retry (${attempts}/${SELL_MAX_ATTEMPTS} attempts used)`;
+  log(`  ALERT: ${mint.slice(0, 12)} STUCK (${tag}): ${reason} — ${tail}, use scripts/rescue-sell.mjs`);
   positions.delete(mint);
+}
+
+// A venue that cannot be priced right now (AMM gate, missing pool) is NOT a failed sell attempt and
+// must not delete the position at attempts=0 — that was the "silent STUCK" of AUDIT_SELL.md §2. It
+// burns one of SELL_MAX_ATTEMPTS, backs off, stays in the book, and only becomes STUCK when the
+// budget is gone. The gate itself is untouched: nothing is sent while LIVE_CONFIRM_AMM !== "yes".
+function deferSell(mint, pos, venue, reason) {
+  const attempt = (pos.attempts || 0) + 1;
+  pos.attempts = attempt;
+  const backoffMs = 2000 * 2 ** (attempt - 1);
+  pos.nextSellAt = Date.now() + backoffMs;
+  journal.write({
+    type: "sell_deferred",
+    sessionId: SESSION_ID,
+    paramsHash: PARAMS_HASH,
+    gitSha: GIT_SHA,
+    mint,
+    venue,
+    reason,
+    attempt,
+    maxAttempts: SELL_MAX_ATTEMPTS,
+    nextRetryMs: backoffMs,
+    tokens: (pos.tokens ?? 0n).toString(),
+    sent: false,
+  });
+  if (attempt >= SELL_MAX_ATTEMPTS) {
+    markStuck(mint, pos, reason, { venue, attempts: attempt });
+    return;
+  }
+  log(
+    `  sell deferred (${venue}): ${reason} — attempt ${attempt}/${SELL_MAX_ATTEMPTS}, next try in ${Math.round(backoffMs / 1000)}s; position kept`,
+  );
 }
 
 async function sellPosition(mint, mintPk, pos, ratio) {
@@ -511,6 +553,9 @@ async function sellPosition(mint, mintPk, pos, ratio) {
   const slip = Math.min(SELL_MAX_SLIPPAGE, 500 * 2 ** (attempt - 1)); // 500 -> 1000 -> 2000 bps
   let venue = "curve";
   let quote = null;
+  let sig = null;
+  // Simulation result of THIS attempt; the AMM path returns its own (already journaled) one.
+  let sim = { ok: true, err: null, logs: [], units: null };
   try {
     const ata = getAssociatedTokenAddressSync(mintPk, wallet.publicKey, false, TOKEN_2022_PROGRAM);
     const info = await connection.getTokenAccountBalance(ata);
@@ -522,9 +567,10 @@ async function sellPosition(mint, mintPk, pos, ratio) {
     }
 
     const state = await getBondingCurveState(mintPk, 0);
-    let ixs;
+    venue = chooseSellVenue(state); // curve while the curve is live, PumpSwap once it is complete/gone
+    let ixs = null;
     let amountRaw = total;
-    if (state && !state.complete) {
+    if (venue === "curve") {
       // Never send a sell the curve cannot pay: plan parts so each payout fits realSolReserves.
       const plan = planSellParts(state, total, { capRatio: 0.95, minPartRaw: 1_000_000n });
       if (plan.parts.length === 0) {
@@ -548,58 +594,83 @@ async function sellPosition(mint, mintPk, pos, ratio) {
         );
       }
     } else {
-      venue = "pumpswap";
-      // The AMM layout is built from the IDL but has not landed on-chain yet: gated in live mode.
-      if (LIVE && process.env.LIVE_CONFIRM_AMM !== "yes") {
-        markStuck(mint, pos, "PumpSwap sell UNVERIFIED (set LIVE_CONFIRM_AMM=yes to try)");
-        return;
-      }
-      const q = await ammSellQuote(connection, mintPk, total);
-      if (!q) {
-        markStuck(mint, pos, "no venue (curve complete, no pool)");
-        return;
-      }
-      quote = q.solOut;
-      const minOut = (quote * BigInt(10000 - slip)) / 10000n;
-      const userWsol = getAssociatedTokenAddressSync(WSOL, wallet.publicKey, false, TOKEN_PROGRAM);
-      ixs = [
-        ...computeBudgetIxs(),
-        createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, userWsol, wallet.publicKey, WSOL, TOKEN_PROGRAM),
-        ammSellIx(wallet.publicKey, mintPk, q.pool, q.p, q.g, total, minOut),
-        createCloseAccountInstruction(userWsol, wallet.publicKey, wallet.publicKey, [], TOKEN_PROGRAM),
-      ];
-    }
-
-    const tx = await buildVersionedTx(wallet, ixs);
-    // Pre-send simulation: a doomed tx burns the fee and, for a sell, keeps the position hostage.
-    const sim = await simulateTx(tx);
-    if (!sim.ok) {
-      pos.attempts = attempt;
-      const why = describeTxError(sim.err);
-      journal.write({
-        type: "sell_attempt",
-        sessionId: SESSION_ID,
-        paramsHash: PARAMS_HASH,
-        gitSha: GIT_SHA,
+      // PumpSwap: the whole attempt (gate -> quote -> build -> simulate -> journal -> send) lives in
+      // lib/amm-sell.mjs so the simulation result and the expected SOL are journaled BEFORE the send
+      // and DRY_SELL can stop it at the last moment. Account list unchanged (V1/V2 unverified).
+      const amm = await ammSellOnce({
+        connection,
+        wallet,
         mint,
-        venue,
+        mintPk,
+        total,
         attempt,
-        slippageBps: slip,
-        amountRaw: amountRaw.toString(),
-        balanceRaw: total.toString(),
-        quoteOut: Number(quote) / 1e9,
-        realSolReserves: state ? Number(state.realSolReserves) / 1e9 : null,
-        simulationResult: "fail",
-        error: why,
-        sent: false,
+        slip,
+        live: LIVE,
+        confirmAmm: process.env.LIVE_CONFIRM_AMM,
+        drySell: DRY_SELL,
+        journal,
+        log,
+        meta: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, maxAttempts: SELL_MAX_ATTEMPTS },
       });
-      log(`  sell simulation failed (${venue}): ${why} — not sending`);
-      if (attempt >= SELL_MAX_ATTEMPTS) markStuck(mint, pos, `simulation: ${why}`);
-      else pos.nextSellAt = Date.now() + 2000 * 2 ** (attempt - 1);
-      return;
+      if (amm.status === "gate" || amm.status === "no_pool") {
+        // Not a failed sell: the position stays in the book, see deferSell.
+        deferSell(mint, pos, venue, amm.reason);
+        return;
+      }
+      if (amm.status === "sim_fail") {
+        pos.attempts = attempt;
+        if (attempt >= SELL_MAX_ATTEMPTS) markStuck(mint, pos, `simulation: ${amm.why}`, { venue, attempts: attempt });
+        else pos.nextSellAt = Date.now() + 2000 * 2 ** (attempt - 1);
+        return;
+      }
+      if (amm.status === "dry") {
+        // Nothing was sent: no sale to record, no PnL, position untouched. Back off so a DRY_SELL run
+        // does not journal the same simulation every poll.
+        pos.nextSellAt = Date.now() + 30_000;
+        return;
+      }
+      sig = amm.sig;
+      quote = amm.quote;
+      amountRaw = amm.amountRaw;
+      sim = amm.sim;
     }
 
-    const sig = await sendTxWithRetry(tx, { skipPreflight: true });
+    // Curve path: build + simulate + send here (the AMM path already sent inside ammSellOnce and
+    // journaled its simulation result before doing so).
+    if (venue === "curve") {
+      const tx = await buildVersionedTx(wallet, ixs);
+      // Pre-send simulation: a doomed tx burns the fee and, for a sell, keeps the position hostage.
+      sim = await simulateTx(tx);
+      if (!sim.ok) {
+        pos.attempts = attempt;
+        const why = describeTxError(sim.err);
+        journal.write({
+          type: "sell_attempt",
+          sessionId: SESSION_ID,
+          paramsHash: PARAMS_HASH,
+          gitSha: GIT_SHA,
+          mint,
+          venue,
+          attempt,
+          slippageBps: slip,
+          amountRaw: amountRaw.toString(),
+          balanceRaw: total.toString(),
+          quoteOut: Number(quote) / 1e9,
+          realSolReserves: state ? Number(state.realSolReserves) / 1e9 : null,
+          simulationResult: "fail",
+          error: why,
+          logs: sim.logs ?? [],
+          unitsConsumed: sim.units ?? null,
+          sent: false,
+        });
+        log(`  sell simulation failed (${venue}): ${why} — not sending`);
+        if (attempt >= SELL_MAX_ATTEMPTS) markStuck(mint, pos, `simulation: ${why}`, { venue, attempts: attempt });
+        else pos.nextSellAt = Date.now() + 2000 * 2 ** (attempt - 1);
+        return;
+      }
+      sig = await sendTxWithRetry(tx, { skipPreflight: true });
+    }
+
     // Received SOL from the chain (fee excluded), falling back to the quote if meta lags.
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
     const receivedSol = ex.found && ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(quote) / 1e9;
@@ -696,9 +767,10 @@ async function sellPosition(mint, mintPk, pos, ratio) {
       attempt,
       slippageBps: slip,
       error: why,
+      sig: err.sig ?? null,
     });
     log(`  sell attempt ${attempt}/${SELL_MAX_ATTEMPTS} failed (${venue}): ${why}`);
-    if (attempt >= SELL_MAX_ATTEMPTS) markStuck(mint, pos, why);
+    if (attempt >= SELL_MAX_ATTEMPTS) markStuck(mint, pos, why, { venue, attempts: attempt });
     else pos.nextSellAt = Date.now() + 2000 * 2 ** (attempt - 1);
   }
 }
@@ -799,6 +871,10 @@ log(`Filters: fill ${MIN_FILL_PCT}-${MAX_FILL_PCT}% (of 85 SOL REAL reserves), h
 log(`Max positions: ${MAX_POSITIONS}, cooldown: ${COOLDOWN_SEC}s`);
 if (LIVE) log("MODE: LIVE — real transactions will be sent");
 else log("MODE: DRY RUN (no real transactions) — pass --live to trade");
+if (DRY_SELL) {
+  log("SELLS: DRY_SELL=yes — PumpSwap sells are built, simulated and journaled but NEVER sent.");
+  if (LIVE) log("WARNING: LIVE is still on — BUYS ARE REAL while sells are only simulated.");
+}
 log(`Session: ${SESSION_ID} | params ${PARAMS_HASH} | git ${GIT_SHA || "n/a"} | journal ${journal.dir}`);
 
 const ws = new SolanaWs();
