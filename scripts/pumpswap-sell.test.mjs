@@ -17,6 +17,7 @@ import {
   canonicalPool,
 } from "../lib/pumpswap-sell.mjs";
 import { ATA_PROGRAM, PUMPSWAP_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, WSOL } from "../lib/constants.mjs";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 const asrt = (c, m) => {
   if (!c) {
@@ -118,6 +119,54 @@ asrt(
 asrt(canonicalPool(baseMint).equals(canonicalPool(baseMint)), "canonicalPool is deterministic");
 asrt(!canonicalPool(baseMint).equals(canonicalPool(pk(0x23))), "canonicalPool differs per mint");
 asrt(!canonicalPool(baseMint).equals(baseMint), "canonicalPool is not the mint");
+
+// --- PDA-owned ATAs must not throw TokenOwnerOffCurveError ---
+// The protocol fee recipient and the creator vault authority are PDAs (off the ed25519 curve):
+// deriving their ATA with allowOwnerOffCurve = false throws. The builder must pass true for them
+// and keep the wallet-owned (user) ATAs exactly as they were.
+const feeVault = PublicKey.findProgramAddressSync([Buffer.from("fee-recipient-vault")], PUMPSWAP_PROGRAM)[0];
+asrt(!PublicKey.isOnCurve(feeVault.toBytes()), "fixture: the fee vault is off-curve (PDA)");
+
+// Sanity: the OLD call really fails for this owner, so the assertion below is not vacuous.
+let offCurveThrew = false;
+try {
+  getAssociatedTokenAddressSync(WSOL, feeVault, false, TOKEN_PROGRAM);
+} catch (e) {
+  offCurveThrew = true;
+  asrt(
+    /offcurve/i.test(`${e?.name ?? ""} ${e?.message ?? ""}`),
+    `fixture: expected TokenOwnerOffCurveError, got ${e?.name}: ${e?.message}`,
+  );
+}
+asrt(offCurveThrew, "fixture: getAssociatedTokenAddressSync(owner=PDA, allowOwnerOffCurve=false) throws");
+
+const gPda = { ...g, protocolFeeRecipients: [feeVault] };
+let ixPda = null;
+try {
+  ixPda = ammSellIx(user, baseMint, pool, p, gPda, baseAmountIn, minQuoteOut);
+} catch (e) {
+  asrt(false, `ammSellIx must not throw for an off-curve fee recipient, got ${e?.name}: ${e?.message}`);
+}
+asrt(ixPda.keys.length === 21, `off-curve fee recipient: still 21 accounts, got ${ixPda.keys.length}`);
+asrt(ixPda.keys[9].pubkey.equals(feeVault), "off-curve fee recipient is still account[9]");
+asrt(
+  ixPda.keys[10].pubkey.equals(getAssociatedTokenAddressSync(WSOL, feeVault, true, TOKEN_PROGRAM)),
+  "account[10] is the PDA's ATA, derived with allowOwnerOffCurve = true",
+);
+asrt(
+  ixPda.keys[5].pubkey.equals(getAssociatedTokenAddressSync(baseMint, user, false, TOKEN_2022_PROGRAM)),
+  "account[5] user base ATA: still derived with allowOwnerOffCurve = false",
+);
+asrt(
+  ixPda.keys[6].pubkey.equals(getAssociatedTokenAddressSync(WSOL, user, false, TOKEN_PROGRAM)),
+  "account[6] user quote ATA: still derived with allowOwnerOffCurve = false",
+);
+asrt(
+  ixPda.keys[17].pubkey.equals(getAssociatedTokenAddressSync(WSOL, creatorAuth, true, TOKEN_PROGRAM)),
+  "account[17] creator vault ATA: derived with allowOwnerOffCurve = true",
+);
+asrt(ixPda.data.equals(ix.data), "the owner fix does not change the instruction data");
+asrt(ixPda.keys.length === ix.keys.length, "the owner fix does not change the account count");
 
 console.log(
   JSON.stringify({
