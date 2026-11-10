@@ -60,6 +60,11 @@ asrt(DEFAULT_DAILY_LOSS_LIMIT_SOL === 0.05, "the default limit is 0.05 SOL");
   asrt(send === -1 || check < send, "the check runs before the buy is sent");
   asrt(/dayNetSol = Math\.round\(\(dayNetSol \+/.test(src), "recordResult keeps the day's net up to date");
   asrt(/DAILY_LOSS_LIMIT_SOL/.test(src) && /netSolForDay\(readJournal\(journal\.dir\)/.test(src), "the limit is configurable and seeded from the journal");
+  // The limit gates buys only: the sell path must never look at it, or a bad day could not exit.
+  const sellFn = src.indexOf("async function sellPosition");
+  const sellBody = src.slice(sellFn, src.indexOf("async function monitorPositions"));
+  asrt(sellFn > 0 && sellBody.length > 0, "sellPosition found");
+  asrt(!/dailyLossBlocked|DAILY_LOSS_LIMIT_SOL/.test(sellBody), "the sell path never consults the daily loss limit");
 }
 
 console.log(JSON.stringify({ defaultLimitSol: DEFAULT_DAILY_LOSS_LIMIT_SOL, todayNet: netSolForDay([trade(-0.02), trade(-0.02), trade(0.01)]) }));
