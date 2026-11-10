@@ -80,6 +80,14 @@ dependencies here (`@solana/web3.js`, `@solana/spl-token`, `bs58`) do not need a
 flag costs nothing. `npm ci` needs `package-lock.json` (present in the repository) and installs the
 exact locked versions.
 
+**A harmless startup warning.** With `--ignore-scripts` a transitive dependency's optional native
+addon is not compiled, so on first use it prints
+`bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)`. This is expected and
+safe: the library falls back to pure JavaScript, which is correct and only marginally slower. The
+`npm run rebuild` in that message does **not** mean this repository's `rebuild` script (which rebuilds
+the curve-reconstruction research report) — it refers to npm's built-in `npm rebuild`, and you do not
+need to run it.
+
 **The one mandatory variable is `RPC_URL`.** `lib/config.mjs` validates it at startup and exits if it
 is missing or does not start with `http://` / `https://`:
 
@@ -183,6 +191,17 @@ npm run replay           # replay/compare lab variants
 npm test                 # the offline test chain
 ```
 
+**Before running a bot.** Copy `.env.example` to `.env` and set `RPC_URL`; create a wallet key with
+`node lib/wallet.mjs generate` — trading bots load `keys/default.json` at startup. `monitor`,
+`analytics`, `journal` and `replay` are read-only and need no key. `npm test` needs neither `.env`
+nor a key: every test boots a throwaway keypair in a temp dir and a dummy `RPC_URL`.
+
+**Going live.** The commands above run in dry-run by default. Trading real SOL requires `--live`
+**and** `LIVE_CONFIRM=yes` (a second, independent switch). cmd.exe:
+`set LIVE_CONFIRM=yes && npm run sniper -- --live` · PowerShell:
+`$env:LIVE_CONFIRM="yes"; npm run sniper -- --live`. Without `LIVE_CONFIRM=yes` the process exits
+before connecting.
+
 ## Verification status
 
 Statuses come from the test files, the code itself and the git history — never from assumption.
@@ -203,7 +222,7 @@ Statuses come from the test files, the code itself and the git history — never
 | `rescue-sell` planner | **Dry-run verified** | `scripts/sell-plan.test.mjs` covers the planner; the script itself is not covered by a test |
 | PumpSwap (AMM) sell | **UNVERIFIED** | the code says so; live use is gated behind `LIVE_CONFIRM_AMM=yes` |
 | PumpSwap event parsing | **Tested** | `scripts/pumpswap.test.mjs` |
-| `npm test` | **Tested** | 26 test scripts chained in `package.json` |
+| `npm test` | **Tested** | 27 test scripts chained in `package.json` (hermetic: no `.env`, no `keys/`) |
 
 ---
 
