@@ -196,7 +196,8 @@ function requestStop(reason) {
 
 // Mints with a buy in flight. buyToken() is async and the position is only recorded after the
 // send, so overlapping WS events could buy the same mint twice and overshoot MAX_POSITIONS
-// (check → await → set race). Same fix as bots/sniper/sniper.mjs.
+// (check → await → set race). The WS handler puts the mint here BEFORE calling buyToken(), so
+// buyToken() must NOT re-check `opening.has(mint)` — it would always see itself and never buy.
 const opening = new Set();
 
 function parseV3TradeEvent(data) {
@@ -232,7 +233,7 @@ const holdersSeen = new Map(); // mint -> Set(user)
 
 async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves, meta = {}) {
   if (positions.size >= MAX_POSITIONS) return;
-  if (positions.has(mint) || opening.has(mint)) return;
+  if (positions.has(mint)) return; // `opening` is owned by the WS handler: it holds the slot while buyToken runs
   if (blacklist.has(mint) || attempted.has(mint)) return;
   if ((buyFailUntil.get(mint) || 0) > Date.now()) return;
   if (Date.now() - lastBuyTime < COOLDOWN_SEC * 1000) return;
