@@ -528,8 +528,45 @@ function deferSell(mint, pos, venue, reason) {
   );
 }
 
+// DRY_SELL=yes inside a DRY RUN: price and SIMULATE the real PumpSwap sell so the journal records
+// what a live exit would have done. Read-only RPC calls only — this branch cannot send anything
+// (drySell: true is passed as well). The LIVE_CONFIRM_AMM gate is not consulted here because there
+// is no send to gate; the LIVE path still passes live: LIVE and enforces it.
+async function dryRunAmmProbe(mint, mintPk, pos) {
+  try {
+    const ata = getAssociatedTokenAddressSync(mintPk, wallet.publicKey, false, TOKEN_2022_PROGRAM);
+    const info = await connection.getTokenAccountBalance(ata).catch(() => null);
+    const total = info ? BigInt(info.value.amount) : 0n;
+    if (total === 0n) return;
+    const state = await getBondingCurveState(mintPk, 0).catch(() => null);
+    if (chooseSellVenue(state) !== "pumpswap") return;
+    const r = await ammSellOnce({
+      connection,
+      wallet,
+      mint,
+      mintPk,
+      total,
+      attempt: 1,
+      slip: 500,
+      live: false,
+      confirmAmm: process.env.LIVE_CONFIRM_AMM,
+      drySell: true,
+      journal,
+      log,
+      meta: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, maxAttempts: SELL_MAX_ATTEMPTS },
+    });
+    if (r.status === "sim_fail") log(`  [DRY SELL] the AMM sell would FAIL: ${r.why}`);
+    else if (r.status === "no_pool") log("  [DRY SELL] no canonical pool for this mint (V3)");
+    else if (r.status === "dry") log(`  [DRY SELL] the AMM sell would return ~${(Number(r.quote) / 1e9).toFixed(6)} SOL`);
+  } catch (e) {
+    log(`  [DRY SELL] probe failed: ${describeTxError(e)}`);
+  }
+}
+
 async function sellPosition(mint, mintPk, pos, ratio) {
   if (DRY_RUN) {
+    // DRY_SELL=yes: also simulate the REAL PumpSwap exit (journal: sell_sim / sell_attempt / sell_dry).
+    if (DRY_SELL) await dryRunAmmProbe(mint, mintPk, pos);
     const mult = ratio ?? (pos.lastPrice && pos.entryPrice ? pos.lastPrice / pos.entryPrice : 1);
     const entrySol = pos.entrySolSol ?? BUY_SOL;
     const pnlSol = entrySol * (mult - 1);
