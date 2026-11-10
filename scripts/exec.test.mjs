@@ -33,4 +33,14 @@ asrt(sell.found === true, "sell tx found");
 asrt(sell.tokensSold === 1_000_000n, `tokensSold = 1_000_000, got ${sell.tokensSold}`);
 asrt(sell.solReceivedSol > 0, `solReceivedSol reflects the positive SOL delta, got ${sell.solReceivedSol}`);
 
+// A closed WSOL ATA returns its rent: that 0.00203928 SOL is not proceeds (step 4 / TODO(verify) V5).
+const rented = await readExecution("SELL_RENT", owner, mint, { retries: 1, delayMs: 0 });
+asrt(rented.found === true, "rent tx found");
+asrt(rented.solDeltaSol > 0.102, `rent tx SOL delta is ~0.10204, got ${rented.solDeltaSol}`);
+asrt(Math.abs(rented.rentReturnedSol - 0.00203928) < 1e-12, `rentReturnedSol = 0.00203928, got ${rented.rentReturnedSol}`);
+asrt(
+  Math.abs(rented.solReceivedSol - 0.1) < 1e-9,
+  `solReceivedSol excludes the ATA rent (expected 0.1), got ${rented.solReceivedSol}`,
+);
+
 console.log("PASS: readExecution resolves fills from tx meta and reports found:false on meta lag");
