@@ -29,6 +29,8 @@ import { newSessionId, paramsHash, gitSha } from "../../lib/runmeta.mjs";
 import { describeTxError, isCurveCompleteError } from "../../lib/pump-errors.mjs";
 import { previewExit, readExecution, simulateTx } from "../../lib/exec.mjs";
 import { checkBuyGate } from "../../lib/buy-gate.mjs";
+import { exitDepth } from "../../lib/buy-checks.mjs";
+import { BUY_SKIP_REASON } from "../../lib/buy-skip-reasons.mjs";
 import { planSellParts } from "../../lib/sell-plan.mjs";
 import { ammSellOnce, chooseSellVenue, isDrySell } from "../../lib/amm-sell.mjs";
 import { curvePrice, gradFillPct } from "../../lib/curve.mjs";
@@ -233,6 +235,23 @@ function getFillPct(realSolReserves) {
 // It is a LOWER BOUND (a mint may already have holders before we see it) — journaled as such.
 const holdersSeen = new Map(); // mint -> Set(user)
 
+// One place that records a refused buy: the legacy `candidate` row (action: skip) plus a
+// `buy_skipped` row with the machine-readable reason and the numbers behind it. Every reason in
+// BUY_SKIP_REASON ends up here, so `journal` can answer "why did it not buy".
+function skipBuy(candidate, reason, extra = {}) {
+  journal.write({ ...candidate, action: "skip", reason });
+  journal.write({
+    type: "buy_skipped",
+    sessionId: SESSION_ID,
+    paramsHash: PARAMS_HASH,
+    gitSha: GIT_SHA,
+    mint: candidate.mint,
+    reason,
+    fillPct: candidate.fillPct,
+    ...extra,
+  });
+}
+
 async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves, meta = {}) {
   if (positions.size >= MAX_POSITIONS) return;
   if (positions.has(mint)) return; // `opening` is owned by the WS handler: it holds the slot while buyToken runs
@@ -302,24 +321,37 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
       return;
     }
 
-    // Exit preview: a buy moves the curve, then the sell pays its own 1% fee. If an immediate
-    // round trip already returns < EXIT_MIN_RATIO of the buy (or the curve cannot pay it), skip.
+    // Exit preview, used two ways:
+    //   1) exit depth — the bot must be able to sell what it buys (WELDERS: it could not);
+    //   2) the older EXIT_MIN_RATIO guard, kept as is.
     const prev = previewExit(state, BUY_SOL);
     const exitRatio = prev.ok ? prev.ratio : null;
+    const entryLamports = BigInt(Math.floor(BUY_SOL * 1e9));
+    const depth = exitDepth({ solOutLamports: prev.ok ? prev.solOut : 0n, entryLamports });
     const skipReason = !prev.ok
       ? prev.reason
       : !prev.payable
         ? "curve cannot pay the exit (rSol < out)"
-        : prev.ratio < EXIT_MIN_RATIO
-          ? `exit ratio ${prev.ratio.toFixed(3)} < ${EXIT_MIN_RATIO}`
-          : null;
-    journal.write({ ...candidate, action: skipReason ? "skip" : "enter", exitRatio, reason: skipReason });
+        : !depth.ok
+          ? depth.reason
+          : prev.ratio < EXIT_MIN_RATIO
+            ? `exit ratio ${prev.ratio.toFixed(3)} < ${EXIT_MIN_RATIO}`
+            : null;
     if (skipReason) {
+      skipBuy(candidate, skipReason, {
+        exitRatio,
+        buySol: BUY_SOL,
+        expectedExitSol: prev.ok ? Number(prev.solOut) / 1e9 : null,
+        minExitSol: Number(depth.minOutLamports) / 1e9,
+        realSolReserves: Number(state.realSolReserves) / 1e9,
+      });
       guard.release(BUY_SOL);
       attempted.add(mint);
       log(`  skip: ${skipReason}`);
       return;
     }
+    journal.write({ ...candidate, action: "enter", exitRatio, reason: null });
+
 
     log(`*** PRE-GRADUATION BUY ***`);
     log(`  mint: ${mint}`);
