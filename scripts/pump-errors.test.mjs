@@ -2,6 +2,7 @@
 // {Custom:6024} — the code decides whether a retry can succeed. Also checks the exit preview:
 // a drained curve (rSol < out) must be rejected BEFORE sending (that is the 6024 spam).
 process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+import "./lib/test-env.mjs";
 import assert from "node:assert/strict";
 import {
   describeCustom,

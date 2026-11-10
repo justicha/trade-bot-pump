@@ -1,4 +1,5 @@
 // Pessimistic execution model test (step 5).
+import "./lib/test-env.mjs";
 import { sizeSlippageBps, pessimisticRoundTrip, bothModes, executionDelay, DELAY_MIN_MS, DELAY_MAX_MS } from "../lib/pessimistic.mjs";
 
 const asrt = (c, m) => {

@@ -3,6 +3,7 @@
 // The parser fix (390/391) depends on both: raw files are the evidence, and the identity check is
 // what lets a snapshot be accepted without a neighbour event. Both are tested on synthetic data
 // so a failure points at the code, not at the network.
+import "./lib/test-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

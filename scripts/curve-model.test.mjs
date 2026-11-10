@@ -5,6 +5,7 @@
 //   * what checkCurve accepts and refuses (floor / ceiling / price anomalies)
 //   * TP and SL firing at the right ratio, with the costs of a round trip
 //   * slippage monotonicity and the exact fee arithmetic
+import "./lib/test-env.mjs";
 import { metricsOf, curvePrice, checkCurve, CURVE_BOUNDS, rawSolPerTokenToWhole, RAW_TO_WHOLE } from "../lib/curve.mjs";
 import { getPrice } from "../lib/pumpfun.mjs";
 import { roundTripCosts, PUMP_FEE_BPS, txCostSol } from "../lib/fees.mjs";

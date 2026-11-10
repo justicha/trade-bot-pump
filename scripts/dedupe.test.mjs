@@ -1,5 +1,6 @@
 // Dedupe unit test: dedupeTrades must drop duplicate trades (same mint across processes and across
 // sessions) and report how many were removed per gitSha.
+import "./lib/test-env.mjs";
 import { dedupeTrades } from "../lib/journal.mjs";
 
 const asrt = (c, m) => {

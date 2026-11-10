@@ -1,4 +1,5 @@
 // Unit test for the task-B instrumentation: run metadata, the tick log (write, rotate, drain).
+import { makeTempKeys } from "./lib/test-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -68,6 +69,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ticks-"));
       RPC_MOCK: path.join(repo, "scripts", "mocks", "rpc-mock.mjs"),
       WS_MOCK: path.join(repo, "scripts", "mocks", "ws-mock.mjs"),
       JOURNAL_DIR: jdir,
+      KEYS_DIR: makeTempKeys(),
       SNIPER_MAX_SEC: "6",
       SNIPER_DRAIN_MAX_SEC: "0",
       TICKS: "0",

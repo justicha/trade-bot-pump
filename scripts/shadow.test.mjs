@@ -1,5 +1,6 @@
 // Shadow V0-V7 unit test: entry filters, V4/V5 exit replay on synthetic tick trajectories, skip
 // share + skipped mean net, and the no-data path.
+import "./lib/test-env.mjs";
 import { evaluateShadow, LAUNCH_RAW } from "../lib/shadow.mjs";
 
 const asrt = (c, m) => {

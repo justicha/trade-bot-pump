@@ -5,6 +5,7 @@
 // Windows note: child.kill("SIGINT") force-terminates a child without running its handler, so the
 // signal delivery itself cannot be tested here. SNIPER_MAX_SEC triggers the SAME finish() function
 // that the SIGINT/SIGTERM handlers call, so this exercises the real shutdown code path.
+import { makeTempKeys } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,6 +29,7 @@ const env = {
   RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
   WS_MOCK: path.join(here, "mocks", "ws-mock.mjs"),
   JOURNAL_DIR: dir,
+  KEYS_DIR: makeTempKeys(),
   SNIPER_MAX_SEC: "5", // deterministic stop -> finish() (same path as SIGINT/SIGTERM)
   SNIPER_DRAIN_MAX_SEC: "1", // a short drain so the summary-vs-drain ordering is exercised
   TICKS: "1",

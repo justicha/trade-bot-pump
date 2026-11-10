@@ -5,6 +5,7 @@
 //   * isMayhem for a TOKEN comes from byte 81 of the curve account (is_mayhem_mode)
 //   * the rebuilt curve reproduces the snapshot exactly when the amounts explain the trade, and
 //     must not pretend when they do not
+import "./lib/test-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

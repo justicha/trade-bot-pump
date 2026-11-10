@@ -9,6 +9,7 @@
 //   * synthetic create/buy/sell notifications (>= 10 events, incl. a Mayhem CPI) were handled
 //   * positions were opened AND closed; none left open at the stop
 //   * the journal in the temp dir agrees with the session summary (spent / received / closed)
+import { makeTempKeys } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -33,6 +34,7 @@ const env = {
   RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
   WS_MOCK: path.join(here, "mocks", "ws-mock.mjs"),
   JOURNAL_DIR: dir,
+  KEYS_DIR: makeTempKeys(),
   SNIPER_MAX_SEC: String(maxSec),
   SNIPER_DRAIN_MAX_SEC: "0", // no post-run tick draining in the smoke test
   TICKS: "1", // tick log on (deterministic for the assertions below)
