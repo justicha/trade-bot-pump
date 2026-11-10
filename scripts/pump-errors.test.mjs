@@ -27,6 +27,7 @@ assert.match(describeTxError({ InstructionError: [2, "ProgramFailedToComplete"] 
 assert.equal(isOverflowError({ InstructionError: [2, { Custom: 6024 }] }), true);
 assert.equal(isSlippageError({ InstructionError: [2, { Custom: 6003 }] }), true);
 assert.equal(isCurveCompleteError({ InstructionError: [2, { Custom: 6005 }] }), true);
+assert.equal(isCurveCompleteError({ InstructionError: [2, { Custom: 6081 }] }), true, "6081 BondingCurveAlreadyMigrated must also blacklist the mint (no repeat buys)");
 assert.equal(isCurveCompleteError({ InstructionError: [2, { Custom: 6024 }] }), false);
 
 const mk = (vSol, vTok, rSol, rTok) => ({
