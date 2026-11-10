@@ -30,6 +30,7 @@ import { describeTxError, isCurveCompleteError } from "../../lib/pump-errors.mjs
 import { previewExit, readExecution, simulateTx } from "../../lib/exec.mjs";
 import { checkBuyGate } from "../../lib/buy-gate.mjs";
 import { exitDepth } from "../../lib/buy-checks.mjs";
+import { checkMintExtensions, mayhemReason } from "../../lib/token-safety.mjs";
 import { BUY_SKIP_REASON } from "../../lib/buy-skip-reasons.mjs";
 import { planSellParts } from "../../lib/sell-plan.mjs";
 import { ammSellOnce, chooseSellVenue, isDrySell } from "../../lib/amm-sell.mjs";
@@ -320,6 +321,29 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
       journal.write({ ...candidate, action: "skip", reason: state ? "curve complete" : "curve unavailable" });
       return;
     }
+
+    // Mayhem Mode breaks the curve invariant the sell math relies on (and the exit quote with it).
+    const mayhem = mayhemReason({ curveMayhem: state.isMayhemMode });
+    if (mayhem) {
+      skipBuy(candidate, mayhem, { isMayhem: true });
+      guard.release(BUY_SOL);
+      attempted.add(mint);
+      log(`  skip: ${mayhem}`);
+      return;
+    }
+
+    // Token-2022 extensions: transfer fee / hook / permanent delegate / non-transferable can make
+    // the position unsellable or silently taxed. An unreadable mint is refused, never assumed safe.
+    const mintInfo = await connection.getAccountInfo(mintPk).catch(() => null);
+    const mintSafety = checkMintExtensions({ ownerProgram: mintInfo?.owner ?? null, data: mintInfo?.data ?? null });
+    if (!mintSafety.ok) {
+      skipBuy(candidate, mintSafety.reason, { extensions: mintSafety.extensions });
+      guard.release(BUY_SOL);
+      attempted.add(mint);
+      log(`  skip: ${mintSafety.reason}`);
+      return;
+    }
+    if (mintSafety.extensions.length > 0) candidate.tokenExtensions = mintSafety.extensions;
 
     // Exit preview, used two ways:
     //   1) exit depth — the bot must be able to sell what it buys (WELDERS: it could not);

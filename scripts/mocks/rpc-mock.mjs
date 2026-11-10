@@ -5,6 +5,10 @@
 // how the smoke test gets a real exit without waiting. Layout: 8 discriminator,
 // virtualTokenReserves(8), virtualSolReserves(16), realTokenReserves(24), realSolReserves(32),
 // tokenTotalSupply(40), complete(48), creator(49..81), is_mayhem_mode(81).
+// The curve bytes above are reused for every address in this fixture, so they need a PublicKey
+// import for the mint owner.
+import { PublicKey } from "@solana/web3.js";
+
 const V_TOK = 1_073_000_000_000_000n;
 let calls = 0;
 
@@ -25,7 +29,19 @@ function curveAccount() {
 
 export const connection = {
   async getAccountInfo() {
-    return { data: curveAccount(), executable: false, lamports: 1, owner: null };
+    // The same curve bytes are served for every address in this fixture. `owner` is the classic
+    // SPL token program so the graduation bot's mint-safety gate (Token-2022 extensions) treats
+    // the fixture mint as plain SPL — a null owner means "unverified" and would block every buy.
+    return {
+      data: curveAccount(),
+      executable: false,
+      lamports: 1,
+      owner: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    };
+  },
+  // The bot simulates a curve sell before it buys; this fixture always says "would succeed".
+  async simulateTransaction() {
+    return { value: { err: null, logs: ["Program log: fixture simulation ok"], unitsConsumed: 1000 } };
   },
   async getBalance() {
     return 2_000_000_000; // 2 SOL, enough for the session caps used by the test
