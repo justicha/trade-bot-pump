@@ -64,6 +64,39 @@ Live mode needs **two** switches at the same time: the `--live` flag **and** `LI
 in the same shell. Either one alone stops the bot at startup. A `--dry-run` flag also cancels
 `--live`.
 
+## Sell all
+
+`scripts/sell-all.mjs` lists every token the wallet still holds and, with `--live`, exits them one by
+one. It is a rescue tool, not a strategy: it never buys and never opens a position.
+
+```powershell
+node scripts/sell-all.mjs
+```
+
+The default run is a **plan only**. It prints a table (mint, balance, venue, expected SOL out,
+status) and sends nothing — no transaction is signed at all.
+
+To actually sell:
+
+```powershell
+$env:LIVE_CONFIRM="yes"; node scripts/sell-all.mjs --live
+```
+
+`LIVE_CONFIRM=yes` is required; without it the script exits before it even builds an RPC client.
+
+Tokens still on the bonding curve sell through the curve. Tokens that already graduated go through
+PumpSwap, and that path is gated separately: it needs `LIVE_CONFIRM_AMM=yes`, because the PumpSwap
+sell layout is **not verified on-chain yet** (the program currently rejects it with `Custom 6062`).
+Without that flag such a token is skipped with `PumpSwap sell unverified` and nothing is sent.
+
+Every sell is simulated first. A failed simulation prints the full program logs and is skipped, and
+the run continues with the next token. Sends are sequential and nothing is retried automatically.
+Every decision is journaled in `data/journal` as `sell_all_plan`, `sell_all_sent`,
+`sell_all_skipped` or `sell_all_failed`.
+
+**For migrated tokens a manual sale through Jupiter or Photon is the safer option** until the
+PumpSwap exit is confirmed on a real transaction.
+
 ## Which bot should I look at?
 
 | Command | What it does | Risk |
