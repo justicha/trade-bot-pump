@@ -38,7 +38,7 @@ const g = {
   protocolFeeRecipients: [pk(0x77)],
   reservedFeeRecipient: PublicKey.default,
   reservedFeeRecipients: [],
-  buybackFeeRecipients: [],
+  buybackFeeRecipients: [pk(0x88)],
 };
 const QUOTE = { pool: pk(0x33), p, g, feeBps: 30, solOut: 100_000_000n }; // 0.1 SOL net
 const TOTAL = 5_000_000_000n;
