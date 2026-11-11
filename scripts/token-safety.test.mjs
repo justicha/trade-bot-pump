@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ExtensionType, MINT_SIZE } from "@solana/spl-token";
+import { ExtensionType, MINT_SIZE, ACCOUNT_SIZE, ACCOUNT_TYPE_SIZE, AccountType } from "@solana/spl-token";
 import { PublicKey } from "@solana/web3.js";
 import { UNSAFE_EXTENSIONS, checkMintExtensions, mayhemReason } from "../lib/token-safety.mjs";
 import { BUY_SKIP_REASON } from "../lib/buy-skip-reasons.mjs";
@@ -20,7 +20,13 @@ const asrt = (c, m) => {
 const T22 = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const SPL = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
-// A mint account: 82-byte base + a TLV list of the given extension types (8-byte payload each).
+// Synthetic mint account builder.
+//
+// NOTE: these fixtures are *constructed*, not captured — they are built on an assumption. The old
+// version assumed the TLV list starts right after the 82-byte base; that was wrong (see the real
+// fixture below). Token-2022 pads the base mint to ACCOUNT_SIZE (165), then stores a 1-byte account
+// type, and only then the TLV records:
+//   base(82) + padding(83) + account-type(1) + TLV  ==  ACCOUNT_SIZE + ACCOUNT_TYPE_SIZE + TLV.
 function mintWith(types) {
   const payload = 8;
   const tlv = Buffer.alloc(types.length * (4 + payload));
@@ -29,7 +35,9 @@ function mintWith(types) {
     tlv.writeUInt16LE(t, off);
     tlv.writeUInt16LE(payload, off + 2);
   });
-  return Buffer.concat([Buffer.alloc(MINT_SIZE), tlv]);
+  const base = Buffer.alloc(ACCOUNT_SIZE + ACCOUNT_TYPE_SIZE); // base mint + padding + account type, zero-filled
+  base[ACCOUNT_SIZE] = AccountType.Mint;
+  return Buffer.concat([base, tlv]);
 }
 
 // --- extension table ---
@@ -85,12 +93,26 @@ for (const [type, name] of UNSAFE_EXTENSIONS) {
   asrt(res.extensions.includes(UNKNOWN_ID), "the numeric id is in the reported extensions");
 }
 
+// --- a real Token-2022 pump.fun mint (captured once from the network; no network in tests) ---
+{
+  const hex = fs.readFileSync(path.join(here, "fixtures", "mint-5qfTfUYWpz-t22.hex"), "utf8").trim();
+  const data = Buffer.from(hex, "hex");
+  asrt(data.length === 403, `captured mint is 403 bytes, got ${data.length}`);
+  asrt(data[ACCOUNT_SIZE] === AccountType.Mint, "the account-type byte sits at ACCOUNT_SIZE (165), not at MINT_SIZE (82)");
+  const res = checkMintExtensions({ ownerProgram: T22, data });
+  asrt(res.ok === true, `real fixture reads without a TLV error, got ${JSON.stringify(res)}`);
+  asrt(
+    res.extensions.includes(ExtensionType.MetadataPointer) && res.extensions.includes(ExtensionType.TokenMetadata),
+    `real fixture yields MetadataPointer(18)+TokenMetadata(19), got ${JSON.stringify(res.extensions)}`
+  );
+}
+
 // --- unknown / broken input is never assumed safe ---
 asrt(checkMintExtensions({ ownerProgram: null, data: null }).reason === BUY_SKIP_REASON.unverifiedExtensions, "unknown owner -> unverified");
 asrt(checkMintExtensions({ ownerProgram: T22, data: null }).reason === BUY_SKIP_REASON.unverifiedExtensions, "no data -> unverified");
 asrt(checkMintExtensions({ ownerProgram: T22, data: Buffer.alloc(10) }).reason === BUY_SKIP_REASON.unverifiedExtensions, "short account -> unverified");
 {
-  const malformed = Buffer.concat([Buffer.alloc(MINT_SIZE), Buffer.from([1, 0, 0xff, 0x7f])]); // length overruns the buffer
+  const malformed = Buffer.concat([mintWith([]), Buffer.from([1, 0, 0xff, 0x7f])]); // length overruns the buffer
   const res = checkMintExtensions({ ownerProgram: T22, data: malformed });
   asrt(res.ok === false && res.reason === BUY_SKIP_REASON.unverifiedExtensions, `malformed TLV -> unverified, got "${res.reason}"`);
   asrt(
