@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="termTitle termDesc">
+  <title id="termTitle">Пример вывода бота в режиме dry-run</title>
+  <desc id="termDesc">Иллюстрация окна терминала. В заголовке написано «пример вывода, не реальные данные». Внутри строки журнала: режим DRY RUN, наблюдение за токеном MINT_EXAMPLE, строка «would buy» с нулевыми заглушками вместо сумм и итоговая сводка сессии с нулями.</desc>
+  <defs>
+    <linearGradient id="termBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#0a101c"/>
+    </linearGradient>
+    <clipPath id="winClip">
+      <rect x="40" y="34" width="1040" height="452" rx="16"/>
+    </clipPath>
+    <filter id="winShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <rect width="1120" height="520" fill="url(#termBg)"/>
+
+  <g filter="url(#winShadow)">
+    <rect x="40" y="34" width="1040" height="452" rx="16" fill="#0d1523" stroke="#2a405c" stroke-width="1.5"/>
+  </g>
+
+  <g clip-path="url(#winClip)">
+    <rect x="40" y="34" width="1040" height="46" fill="#131e30"/>
+    <circle cx="70" cy="57" r="6" fill="#f87171" opacity="0.85"/>
+    <circle cx="90" cy="57" r="6" fill="#fbbf24" opacity="0.85"/>
+    <circle cx="110" cy="57" r="6" fill="#34d399" opacity="0.85"/>
+  </g>
+
+  <text x="560" y="62" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" fill="#8aa0b8">пример вывода, не реальные данные</text>
+  <text x="1058" y="62" text-anchor="end" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#5b6f86">pump-bot · dry-run</text>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
+    <text x="68" y="112" fill="#6f8299">12:00:01</text>
+    <text x="146" y="112" fill="#2dd4bf">INFO</text>
+    <text x="200" y="112" fill="#e6f1ff">=== SNIPER BOT (V3) ===</text>
+
+    <text x="68" y="140" fill="#6f8299">12:00:01</text>
+    <text x="146" y="140" fill="#2dd4bf">INFO</text>
+    <text x="200" y="140" fill="#9fb3c8">Wallet: WALLET_EXAMPLE</text>
+
+    <text x="68" y="168" fill="#6f8299">12:00:01</text>
+    <text x="146" y="168" fill="#fbbf24">MODE</text>
+    <text x="200" y="168" fill="#fbbf24">DRY RUN — транзакции не подписываются</text>
+
+    <text x="68" y="196" fill="#6f8299">12:00:04</text>
+    <text x="146" y="196" fill="#2dd4bf">INFO</text>
+    <text x="200" y="196" fill="#9fb3c8">WATCHING: MINT_EXAMPLE  fill=95.0%  holders=7</text>
+
+    <text x="68" y="224" fill="#6f8299">12:00:09</text>
+    <text x="146" y="224" fill="#2dd4bf">INFO</text>
+    <text x="200" y="224" fill="#5eead4">[DRY RUN] would buy 0.020 SOL → 0.00 tokens</text>
+
+    <text x="68" y="252" fill="#6f8299">12:01:41</text>
+    <text x="146" y="252" fill="#2dd4bf">INFO</text>
+    <text x="200" y="252" fill="#5eead4">[DRY RUN] would sell: +0.0% net of costs, held 92s</text>
+
+    <text x="68" y="280" fill="#6f8299">12:01:41</text>
+    <text x="146" y="280" fill="#2dd4bf">INFO</text>
+    <text x="200" y="280" fill="#9fb3c8">session: 1 trades, 0W/0L</text>
+
+    <text x="68" y="316" fill="#6f8299">12:01:42</text>
+    <text x="146" y="316" fill="#2dd4bf">INFO</text>
+    <text x="200" y="316" fill="#e6f1ff">SESSION SUMMARY — SNIPER</text>
+
+    <text x="200" y="344" fill="#9fb3c8">spent           : 0.00 SOL</text>
+    <text x="200" y="372" fill="#9fb3c8">received        : 0.00 SOL</text>
+    <text x="200" y="400" fill="#9fb3c8">NET result      : 0.00 SOL</text>
+    <text x="200" y="428" fill="#9fb3c8">mode            : DRY RUN</text>
+  </g>
+
+  <line x1="68" y1="452" x2="1052" y2="452" stroke="#1e2f45" stroke-width="1"/>
+
+  <text x="68" y="474" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11.5" fill="#6f8299">Иллюстрация. MINT_EXAMPLE, WALLET_EXAMPLE и 0.00 — заглушки: реальные адреса, суммы и цены здесь не показаны.</text>
+</svg>

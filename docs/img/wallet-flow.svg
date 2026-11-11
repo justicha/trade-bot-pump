@@ -1,61 +1,78 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="t d">
-  <title id="t">wallet setup flow</title>
-  <desc id="d">Generate a local wallet, store the key file under keys which is gitignored, fund it with a small amount, run only dry-run first, and enable live mode only with an explicit flag and confirmation. A warning marks the key file as a secret.</desc>
-  <rect width="1200" height="420" fill="#0f1724"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" role="img" aria-labelledby="walletTitle walletDesc">
+  <title id="walletTitle">Настройка кошелька: от нуля до dry-run</title>
+  <desc id="walletDesc">Четыре шага: создать кошелёк локально, получить файл ключа в папке keys (в git не попадает), пополнить небольшую сумму, сначала запустить dry-run. Отдельно — необязательный шаг live с флагом --live и переменной LIVE_CONFIRM=yes, проверка того, что git не видит ключи, и предупреждение: никому не показывать файл ключа.</desc>
   <defs>
-    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <linearGradient id="wBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#0c1424"/>
+    </linearGradient>
+    <pattern id="wGrid" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M50 0H0V50" fill="none" stroke="#151f33" stroke-width="1"/>
+    </pattern>
+    <marker id="wArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
     </marker>
-    <style>
-      .b { fill:#16243a; stroke:#2dd4bf; stroke-width:2; rx:10; }
-      .b2 { fill:#241a08; stroke:#fbbf24; stroke-width:2; rx:10; }
-      .b3 { fill:#151d2b; stroke:#3b5578; stroke-width:2; rx:10; }
-      .lbl { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:14px; fill:#dbe7f5; }
-      .sm { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:11px; fill:#8aa0b8; }
-      .hd { font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; font-size:19px; font-weight:700; fill:#e6f1ff; }
-      .e { stroke:#2dd4bf; stroke-width:2; fill:none; marker-end:url(#a); }
-    </style>
+    <filter id="wShadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
   </defs>
-  <text x="36" y="40" class="hd">Wallet setup — from zero to a dry run</text>
 
-  <rect x="36" y="70" width="210" height="90" class="b"/>
-  <text x="50" y="98" class="lbl">1. Generate</text>
-  <text x="50" y="120" class="sm">node lib/wallet.mjs generate [name]</text>
-  <text x="50" y="138" class="sm">prints the public address</text>
+  <rect width="1200" height="460" fill="url(#wBg)"/>
+  <rect width="1200" height="460" fill="url(#wGrid)" opacity="0.5"/>
 
-  <rect x="286" y="70" width="230" height="90" class="b2"/>
-  <text x="300" y="98" class="lbl">2. Key file</text>
-  <text x="300" y="120" class="sm">keys/&lt;name&gt;.json — JSON array</text>
-  <text x="300" y="138" class="sm">gitignored, chmod 0600 on POSIX</text>
+  <text x="32" y="40" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#e6f1ff">Кошелёк: от нуля до dry-run</text>
 
-  <rect x="556" y="70" width="220" height="90" class="b"/>
-  <text x="570" y="98" class="lbl">3. Fund</text>
-  <text x="570" y="120" class="sm">send a small amount of SOL</text>
-  <text x="570" y="138" class="sm">throwaway wallet only</text>
+  <g filter="url(#wShadow)">
+    <rect x="32" y="70" width="220" height="96" rx="12" fill="#122238" stroke="#2dd4bf" stroke-width="1.6"/>
+    <rect x="286" y="70" width="220" height="96" rx="12" fill="#241a08" stroke="#fbbf24" stroke-width="1.6"/>
+    <rect x="540" y="70" width="220" height="96" rx="12" fill="#122238" stroke="#2dd4bf" stroke-width="1.6"/>
+    <rect x="794" y="70" width="220" height="96" rx="12" fill="#122238" stroke="#2dd4bf" stroke-width="1.6"/>
+    <rect x="32" y="210" width="474" height="88" rx="12" fill="#141d2b" stroke="#3b5578" stroke-width="1.6"/>
+    <rect x="540" y="210" width="628" height="88" rx="12" fill="#241a08" stroke="#fbbf24" stroke-width="2"/>
+  </g>
 
-  <rect x="816" y="70" width="348" height="90" class="b"/>
-  <text x="830" y="98" class="lbl">4. Dry run first</text>
-  <text x="830" y="120" class="sm">npm run sniper -- --dry-run</text>
-  <text x="830" y="138" class="sm">no key is used to sign, nothing is sent</text>
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+    <text x="48" y="98" font-size="14" font-weight="600" fill="#dbe7f5">1. Создание</text>
+    <text x="48" y="120" font-size="11" fill="#8aa0b8">node lib/wallet.mjs generate</text>
+    <text x="48" y="138" font-size="11" fill="#8aa0b8">печатает публичный адрес</text>
+    <text x="48" y="156" font-size="11" fill="#6f8299">деньги не нужны</text>
 
-  <path d="M246 115 H 286" class="e"/><path d="M516 115 H 556" class="e"/><path d="M776 115 H 816" class="e"/>
+    <text x="302" y="98" font-size="14" font-weight="600" fill="#fbbf24">2. Файл ключа</text>
+    <text x="302" y="120" font-size="11" fill="#c9b48a">keys/default.json</text>
+    <text x="302" y="138" font-size="11" fill="#c9b48a">массив из 64 чисел</text>
+    <text x="302" y="156" font-size="11" fill="#b99a5b">git его не видит</text>
 
-  <rect x="556" y="220" width="608" height="80" class="b2"/>
-  <text x="572" y="248" class="lbl">5. Optional: live (only after you reviewed the code and the limits)</text>
-  <text x="572" y="270" class="sm">--live requires LIVE_CONFIRM=yes in the environment; otherwise the process exits with a clear message.</text>
-  <text x="572" y="288" class="sm">Never publish a screenshot with the API key in RPC_URL or with the key file open.</text>
-  <path d="M990 160 V 220" class="e"/>
+    <text x="556" y="98" font-size="14" font-weight="600" fill="#dbe7f5">3. Пополнение</text>
+    <text x="556" y="120" font-size="11" fill="#8aa0b8">немного SOL на адрес</text>
+    <text x="556" y="138" font-size="11" fill="#8aa0b8">только отдельный кошелёк</text>
+    <text x="556" y="156" font-size="11" fill="#6f8299">не основной</text>
 
-  <rect x="36" y="220" width="470" height="80" class="b3"/>
-  <text x="52" y="248" class="lbl">Check what git tracks</text>
-  <text x="52" y="270" class="sm">git ls-files — keys/ and .env must not appear</text>
-  <text x="52" y="288" class="sm">The bot loads the key once and only signs with it.</text>
+    <text x="810" y="98" font-size="14" font-weight="600" fill="#dbe7f5">4. Сначала dry-run</text>
+    <text x="810" y="120" font-size="11" fill="#8aa0b8">npm run sniper</text>
+    <text x="810" y="138" font-size="11" fill="#8aa0b8">ничего не подписывается</text>
+    <text x="810" y="156" font-size="11" fill="#6f8299">транзакций нет</text>
 
-  <g transform="translate(140,350)">
-    <path d="M0 -30 L 30 -18 V 6 C 30 22, 18 32, 0 38 C -18 32, -30 22, -30 6 V -18 Z" fill="#241a08" stroke="#fbbf24" stroke-width="3"/>
-    <text x="0" y="2" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="26" font-weight="700" fill="#fbbf24">!</text>
-    <text x="52" y="-8" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="15" font-weight="700" fill="#fbbf24">Never share keys/ or .env</text>
-    <text x="52" y="14" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="12" fill="#c9b48a">Anyone with the key file controls all funds in that wallet.</text>
-    <text x="52" y="34" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif" font-size="12" fill="#c9b48a">No screenshots, no chats, no commits. Use a throwaway wallet.</text>
+    <text x="48" y="238" font-size="13.5" font-weight="600" fill="#dbe7f5">Проверьте, что git не видит лишнего</text>
+    <text x="48" y="260" font-size="11" fill="#8aa0b8">git ls-files keys — должно быть пусто</text>
+    <text x="48" y="278" font-size="11" fill="#8aa0b8">git ls-files .env — тоже пусто</text>
+
+    <text x="556" y="238" font-size="13.5" font-weight="600" fill="#fbbf24">5. Живьём — только осознанно</text>
+    <text x="556" y="260" font-size="11" fill="#c9b48a">--live требует LIVE_CONFIRM=yes в той же оболочке; иначе бот остановится до подключения к сети</text>
+    <text x="556" y="278" font-size="11" fill="#c9b48a">и только на сумму, которую не страшно потерять целиком</text>
+  </g>
+
+  <g stroke="#2dd4bf" stroke-width="2" fill="none" marker-end="url(#wArrow)">
+    <path d="M252 118 H 286"/>
+    <path d="M506 118 H 540"/>
+    <path d="M760 118 H 794"/>
+    <path d="M904 166 V 210"/>
+  </g>
+
+  <g transform="translate(80,342)">
+    <path d="M0 -28 L 28 -17 V 6 C 28 21, 17 30, 0 36 C -17 30, -28 21, -28 6 V -17 Z" fill="#241a08" stroke="#fbbf24" stroke-width="2.5"/>
+    <text x="0" y="4" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="24" font-weight="700" fill="#fbbf24">!</text>
+    <text x="54" y="-4" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="700" fill="#fbbf24">Никому не показывайте keys/ и .env</text>
+    <text x="54" y="18" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11.5" fill="#c9b48a">Кто получил файл ключа — распоряжается всеми деньгами на этом адресе. Отозвать ключ нельзя.</text>
+    <text x="54" y="38" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11.5" fill="#c9b48a">Никаких скриншотов, чатов, облачных дисков и коммитов. Резервная копия — на офлайн-носитель.</text>
   </g>
 </svg>

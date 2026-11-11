@@ -1,35 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="t d">
-  <title id="t">pump-bot banner</title>
-  <desc id="d">Deep navy banner with a teal bonding-curve line that rises and flattens, an amber accent, and a small node pattern suggesting a blockchain stream.</desc>
-  <rect width="1280" height="320" fill="#0b1220"/>
-  <g stroke="#1a2b45" stroke-width="1">
-    <path d="M0 80h1280M0 160h1280M0 240h1280"/>
-    <path d="M160 0v320M320 0v320M480 0v320M640 0v320M800 0v320M960 0v320M1120 0v320"/>
-  </g>
-  <g fill="none" stroke="#2dd4bf" stroke-width="6" stroke-linecap="round">
-    <path d="M80 250 C 260 250, 340 210, 470 150 S 700 60, 880 58 C 1000 57, 1080 70, 1200 76"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="bannerTitle bannerDesc">
+  <title id="bannerTitle">pump-bot — баннер проекта</title>
+  <desc id="bannerDesc">Тёмно-синий баннер: бирюзовая кривая bonding curve с градиентом и мягким свечением уходит вправо и выравнивается, янтарная точка отмечает вход, круглый жёлтый значок с буквой p. Заголовок pump-bot, подзаголовок «боты для pump.fun на Solana, сначала dry-run» и два бейджа: «DRY-RUN по умолчанию» и «исследовательский инструмент».</desc>
+  <defs>
+    <linearGradient id="bgFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="0.55" stop-color="#0c1626"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="curveStroke" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="0.55" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#2dd4bf"/>
+    </linearGradient>
+    <linearGradient id="curveArea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="tealGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#1a2b45" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="320" fill="url(#bgFill)"/>
+  <rect width="1280" height="320" fill="url(#grid)" opacity="0.75"/>
+  <circle cx="980" cy="150" r="250" fill="url(#tealGlow)"/>
+
+  <path d="M470 248 C 620 248, 690 216, 800 170 S 1010 96, 1100 92 C 1160 90, 1200 94, 1244 98 L 1244 264 L 470 264 Z" fill="url(#curveArea)"/>
+  <path d="M470 248 C 620 248, 690 216, 800 170 S 1010 96, 1100 92 C 1160 90, 1200 94, 1244 98" fill="none" stroke="url(#curveStroke)" stroke-width="6" stroke-linecap="round" filter="url(#softGlow)"/>
+
+  <g fill="#0b1220" stroke="#2dd4bf" stroke-width="3">
+    <circle cx="800" cy="170" r="7"/>
+    <circle cx="1100" cy="92" r="7"/>
   </g>
   <g fill="#2dd4bf">
-    <circle cx="470" cy="150" r="7"/><circle cx="700" cy="86" r="7"/><circle cx="880" cy="58" r="7"/>
+    <circle cx="800" cy="170" r="3"/>
+    <circle cx="1100" cy="92" r="3"/>
   </g>
-  <g fill="none" stroke="#fbbf24" stroke-width="3" stroke-dasharray="6 8">
-    <path d="M80 250 L 1200 78"/>
+  <circle cx="978" cy="135" r="6" fill="#fbbf24"/>
+
+  <circle cx="1140" cy="222" r="30" fill="#131f33" stroke="#fbbf24" stroke-width="2.5"/>
+  <text x="1140" y="233" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="30" font-weight="700" fill="#fbbf24">p</text>
+
+  <text x="64" y="124" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="62" font-weight="800" fill="#e6f1ff" letter-spacing="-1">pump-bot</text>
+  <text x="66" y="164" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="20" fill="#9fb3c8">боты для pump.fun на Solana · сначала dry-run</text>
+
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="15" font-weight="600">
+    <rect x="64" y="196" width="232" height="34" rx="17" fill="#0e2a28" stroke="#2dd4bf" stroke-width="1.5"/>
+    <text x="180" y="218" text-anchor="middle" fill="#5eead4">DRY-RUN по умолчанию</text>
+    <rect x="312" y="196" width="292" height="34" rx="17" fill="#241a08" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="458" y="218" text-anchor="middle" fill="#fbbf24">исследовательский инструмент</text>
   </g>
-  <g fill="#0b1220" stroke="#fbbf24" stroke-width="3">
-    <circle cx="1040" cy="64" r="26"/>
-  </g>
-  <text x="1040" y="72" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="26" font-weight="700" fill="#fbbf24">p</text>
-  <g fill="#8aa0b8" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
-    <circle cx="1120" cy="180" r="5"/><circle cx="1160" cy="200" r="5"/><circle cx="1200" cy="180" r="5"/>
-    <circle cx="1140" cy="236" r="5"/><circle cx="1186" cy="246" r="5"/>
-    <path d="M1120 180 L 1160 200 L 1200 180 M 1160 200 L 1140 236 M 1140 236 L 1186 246" fill="none" stroke="#2a405c" stroke-width="2"/>
-  </g>
-  <text x="80" y="108" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="58" font-weight="800" fill="#e6f1ff">pump-bot</text>
-  <text x="82" y="150" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="22" fill="#9fb3c8">pump.fun on-chain bots and analytics. Dry-run first.</text>
-  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16">
-    <rect x="80" y="276" width="176" height="30" rx="15" fill="#122238" stroke="#2dd4bf"/>
-    <text x="168" y="296" text-anchor="middle" fill="#2dd4bf">DRY RUN by default</text>
-    <rect x="272" y="276" width="196" height="30" rx="15" fill="#1a1508" stroke="#fbbf24"/>
-    <text x="370" y="296" text-anchor="middle" fill="#fbbf24">research tool, no hype</text>
-  </g>
+
+  <text x="64" y="272" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" fill="#7f93a8">не финансовый совет · прибыль не гарантирована</text>
 </svg>

@@ -1,32 +1,35 @@
-# Image index
+# Картинки
 
-All images in this folder are hand-written SVG files. They use no external fonts, no CDN, no
-`<image>` tags and no scripts, and every file has a solid background so it stays readable on both
-light and dark GitHub themes. Each file carries a `<title>` and a `<desc>` for screen readers.
+Все файлы в этой папке — SVG, написанные вручную. В них нет внешних шрифтов, CDN, тегов `<image>` и
+скриптов. У каждой картинки есть сплошной тёмный фон, поэтому она одинаково читается и в светлой, и в
+тёмной теме GitHub. В каждом файле есть `<title>` и `<desc>` — их читают скринридеры, и они же
+попадают в alt-текст на страницах.
 
-| File | Used by | Purpose |
+| Файл | Где используется | Что нарисовано |
 |---|---|---|
-| `banner.svg` | `README.md` | Title banner: deep navy, teal bonding-curve line, amber accent |
-| `flow.svg` | `README.md` | The five-step loop, left to right: watch → filter → buy → exit → journal |
-| `architecture.svg` | `docs/architecture.md` | Module map: RPC/WS → parser → bots → tx builder → send → journal |
-| `modes.svg` | `docs/getting-started.md` | DRY RUN vs LIVE lane by lane |
-| `sniper-flow.svg` | `docs/bots.md` | `bots/sniper/sniper.mjs` decision flow with env names |
-| `graduation-flow.svg` | `docs/bots.md` | `bots/graduation-sniper/graduation.mjs` decision flow |
-| `wallet-flow.svg` | `docs/wallet-and-keys.md` | Wallet creation, funding, dry run, optional live |
+| `banner.svg` | `README.md` | Баннер: тёмно-синий фон, бирюзовая кривая, янтарные точки, надпись pump-bot |
+| `flow.svg` | `README.md` | Пять шагов слева направо: наблюдение → фильтры → покупка → выход → журнал |
+| `architecture.svg` | `docs/architecture.md` | Карта модулей: RPC и WebSocket → парсер → расчёты → боты → сборка транзакции → отправка → журнал; сбоку ограничители, логгер, журнал |
+| `modes.svg` | `docs/getting-started.md` | Две дорожки: dry-run (0 транзакций) и live (симуляция, подпись, подтверждение) |
+| `sniper-flow.svg` | `docs/bots.md` | `bots/sniper/sniper.mjs`: фильтры входа, покупка, опрос выходов, итог сессии |
+| `graduation-flow.svg` | `docs/bots.md` | `bots/graduation-sniper/graduation.mjs`: коридор заполнения, держатели, проверка выхода, продажа частями, STUCK, путь PumpSwap |
+| `wallet-flow.svg` | `docs/wallet-and-keys.md` | Кошелёк: создание → файл ключа → пополнение → dry-run → (по желанию) live, плюс предупреждение про ключ |
+| `dryrun-terminal.svg` | `README.md`, `docs/getting-started.md` | Иллюстрация вывода бота в dry-run. Адреса и суммы — заглушки, в заголовке окна написано «пример вывода, не реальные данные» |
 
-## Text prompts for raster versions (optional)
+## Правила для новых картинок
 
-If you ever want PNG/JPEG versions, these prompts describe the same artwork. Keep the palette and
-the "no hype" tone; do not add price charts that look like results.
+- Палитра: фон `#0b1220`–`#0d1523`, панели `#141d2b` и `#122238`, бирюзовый `#2dd4bf`, янтарный
+  `#fbbf24`, текст `#e6f1ff` / `#9fb3c8` / `#8aa0b8`.
+- Только платформенные шрифты: `system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif` для
+  текста и `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace` для «терминала».
+- Никаких обещаний доходности, графиков «прибыли» и реальных адресов. Если показываете вывод бота —
+  ставьте заглушки (`MINT_EXAMPLE`, `WALLET_EXAMPLE`, `0.00`) и подписывайте, что это иллюстрация.
+- Проверяйте, что текст не выходит за рамки блоков: длинные имена переменных лучше разбивать на две
+  строки, а не уменьшать шрифт ниже 10 px.
+- Файл должен открываться парсером XML: `python -c "import xml.dom.minidom as m; m.parse('docs/img/x.svg')"`.
 
-- **banner.svg** — "Wide 4:1 tech banner, deep navy background #0b1220, a single teal bonding-curve line rising and flattening, small amber dot accents and a faint node grid. The words pump-bot in a modern sans-serif, subtitle 'pump.fun on-chain bots and analytics. Dry-run first.' Flat vector style, no gradients, no logos."
-- **architecture.svg** — "Clean architecture diagram on navy, rounded boxes in teal and amber, arrows left to right: Solana RPC and WebSocket, parser, bots, transaction builder, signed transaction, RPC. Three side boxes for guards, logger and journal. Minimal, high contrast, 1200x700."
-- **modes.svg** — "Two horizontal swimlanes on navy, the upper one teal labelled DRY RUN with five small boxes ending in 'no transaction', the lower one amber labelled LIVE with six boxes ending in 'journal'. Flat icons, generous spacing."
-- **sniper-flow.svg** — "Decision flowchart, vertical list of filters on the left (dev buy, holder gate, organic crowd, cooldown) and exit rules on the right (take profit, stop loss, timeout), navy background, teal boxes, amber entry and session-end boxes."
-- **graduation-flow.svg** — "Decision flowchart focused on a bonding curve nearing graduation: real fill band, holder count, exit preview, simulate-then-buy, partial sell planning, bounded retries and a STUCK state. Navy, teal, amber."
-- **wallet-flow.svg** — "Five-step horizontal flow: generate wallet, key file, fund, dry run, optional live, with a bold amber shield icon warning never to share the key file."
+## Скриншоты
 
-## Screenshots
-
-`docs/img/screenshots/` is reserved for real terminal or dashboard captures. See the README inside
-that folder for the exact shots to take and the redaction checklist.
+Папка `docs/img/screenshots/` зарезервирована под настоящие снимки терминала или дашборда. Что снимать
+и что вымарывать перед публикацией — в `screenshots/README.md`. В репозитории этих снимков нет:
+пустая папка с `.gitkeep` — это нормально.

@@ -156,9 +156,9 @@ OK   scripts/graduation-analyze.test.mjs
 PASS: 3 real 429 shapes retryable, 3 timeout shapes retryable, 5xx/network retryable, 4xx permanent, retried 2x -> success
 {"parserCases":9,"integration":"ok"}
 PASS: inline comments stripped, quoted values and '#'-in-value preserved
-Keypair saved: C:\Users\HUAWEI\AppData\Local\Temp\wallet-gen-9vPNLk\alpha.json
+Keypair saved: <TEMP>\wallet-gen-XXXX\alpha.json
 Public key: MegDaWFW1q2QdLnDzX2bCv4cJ41RP8ybZJ32hfRGgRZ
-Keypair saved: C:\Users\HUAWEI\AppData\Local\Temp\wallet-gen-9vPNLk\alpha.json
+Keypair saved: <TEMP>\wallet-gen-XXXX\alpha.json
 Public key: 2KGTRU4rd6Ux6o1qYC7pVbjHNQLdyFpbbUfafmhkrgN8
 {"created":true,"overwriteRefused":true,"forceOk":true,"namesRejected":7}
 PASS: wallet generation is safe (no overwrite, no path escape, atomic write)
@@ -182,7 +182,7 @@ PASS: lab positions survive a missing price and exit when it returns
 PASS: MSK day/hour/weekday keys are zone-correct across midnight
 node.exe : bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
 строка:1 знак:1
-+ & "C:\Program Files\nodejs/node.exe" "C:\Users\HUAWEI\AppData\Roaming ...
++ & "<NODE_DIR>/node.exe" "<APPDATA> ...
 + ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     + CategoryInfo          : NotSpecified: (bigint: Failed ...m run rebuild?):String) [], RemoteException
     + FullyQualifiedErrorId : NativeCommandError

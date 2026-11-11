@@ -1,82 +1,89 @@
-# Commands
+# Команды
 
-Every entry was checked against `package.json` or the file on disk. "Trades?" answers whether the
-command can ever sign a transaction (live mode always also needs `LIVE_CONFIRM=yes`).
+Список всех команд из `package.json`. Колонка «Тратит деньги?» отвечает на вопрос,
+может ли команда подписать и отправить транзакцию — и для этого всё равно нужны
+**оба** переключателя (`--live` и `LIVE_CONFIRM=yes`).
 
-## npm scripts — trading bots
+Запускать команды нужно **из папки проекта** (там, где `package.json`).
 
-| Command | What it does | Reads network | Writes files | Trades? | Status |
-|---|---|---|---|---|---|
-| `npm run sniper` | New-token sniper (dry-run by default) | Yes | `data/journal/*`, `.sniper.lock` | Only `--live` | **Tested** (smoke, shutdown, instance-lock, dedupe) |
-| `npm run graduation` | Curve-near-migration sniper | Yes | `data/journal/*`, `graduation-blacklist.json`, `.graduation.lock` | Only `--live` | Dry-run verified; live observed; AMM route UNVERIFIED |
-| `npm run copy` | Copy trader | Yes | `data/journal/*` | Only `--live` | **UNVERIFIED** |
-| `npm run trade` | Manual CLI: `buy`, `sell`, `price`, `balance`, `wallet` | Yes | — | Only `--live` | **UNVERIFIED** |
-| `npm run rescue` | Inventory unsold tokens, plan/sell a part | Yes | — | Only `--live --mint` | Planner **Tested**; script **Dry-run verified** |
+## Торговые боты
 
-## npm scripts — read-only analytics
-
-| Command | What it does | Reads network | Writes files | Trades? | Status |
-|---|---|---|---|---|---|
-| `npm run monitor` | Live token/trade stream | Yes | — | No | **UNVERIFIED** |
-| `npm run analytics` | Dashboard + `/api/stats` on `ANALYTICS_PORT` | Yes | — | No | **UNVERIFIED** |
-| `npm run analyze` | `wallet <addr>` or `token <mint>` history + coverage | Yes | `data/txcache/*.json` | No | Parsing **Tested**; CLI **UNVERIFIED** |
-| `npm run journal` | Reads `data/journal`, prints slices and a summary | No | — | No | **Tested** (journal library tests) |
-| `npm run status` | Progress/ETA helper for long runs | No | — | No | **UNVERIFIED** |
-| `npm run raw-stats` | Size/records per hourly raw-capture file | No | — | No | **UNVERIFIED** |
-| `npm run coverage` | Coverage report over captured raw data | No | — | No | **UNVERIFIED** |
-
-## npm scripts — research and diagnostics
-
-| Command | What it does | Reads network | Writes files | Status |
-|---|---|---|---|---|
-| `npm run lab` | Paper variants on one stream (refuses `--live`) | Yes | `data/research/variants/*.jsonl` | **Tested** |
-| `npm run replay` | Train/test comparison of lab variants | No | — | **Tested** |
-| `npm run capture-raw` | Raw event capture, gz per hour | Yes | `data/raw/*.jsonl.gz` | **Tested** (rawcap tests) |
-| `npm run validate-parser` | Sample the stream and validate the parser | Yes | `data/research/*` | **Diagnostic** |
-| `npm run probe-layout` | Scan payload layouts for a limited time | Yes | — | **Diagnostic** |
-| `npm run dump-layout` | Look for exact reserve offsets | Yes | — | **Diagnostic** |
-| `npm run diag-curve` | Curve/price diagnostics | Yes | — | **Diagnostic** |
-| `npm run diag-390` | Diagnostics for the 390-event anomaly | Yes | — | **Diagnostic** |
-| `npm run verify-invariants` | Check the bonding-curve invariant on live events | Yes | — | **Diagnostic** |
-| `npm run recheck-baseline` | Re-check a stored baseline | Local data | — | **Diagnostic** |
-| `npm run replay-raw` | Replay captured raw data offline | No | — | **Diagnostic** |
-| `npm run replay-cycle` | Replay one cycle with the bot logic | Optional | — | **Diagnostic** |
-| `npm run mayhem` | Mayhem mode report | Local data | — | **Tested** (library) |
-| `npm run mayhem-impact` | Mayhem impact on curve consistency | Local data | — | **Tested** (library) |
-| `npm run mayhem-sol` | Mayhem SOL accounting | Local data | — | **Tested** (library) |
-| `npm run lab-raw` | Lab over captured raw data, freeze/control variants | No | — | **Diagnostic** |
-| `npm run rebuild` | Rebuild a report from stored artifacts | No | — | **Diagnostic** |
-| `npm run audit-data` | Data-integrity audit of local files | No | — | **UNVERIFIED** |
-| `npm run audit-scripts` | Script-run audit (uses mocks where needed) | No | — | **UNVERIFIED** |
-
-## npm scripts — tests
-
-| Command | What it does | Status |
+| Команда | Что делает | Тратит деньги? |
 |---|---|---|
-| `npm test` | Runs the full chain of 26 test scripts (offline; mocks for RPC/WS) | **Tested, passes** |
-| `npm run smoke` | Single smoke test of the sniper handler on a synthetic stream | **Tested** |
+| `npm run sniper` | снайпер: покупает новые токены по фильтрам, выходит по take profit / stop loss / таймауту | только с `--live` |
+| `npm run graduation` | снайпер перед миграцией: входит при заполнении кривой 92–97% | только с `--live` |
+| `npm run copy` | копи-трейдер: повторяет сделки адресов из `COPY_TARGETS` | только с `--live` |
+| `npm run trade` | ручные команды: `buy`, `sell`, `price`, `balance`, `wallet` | только с `--live` |
+| `npm run rescue` | спасательная продажа остатков: по умолчанию только план, продаёт с `--live --mint` | только с `--live --mint` |
 
-## Direct commands (exist on disk, not in `package.json`)
+## Наблюдение и аналитика (только чтение)
 
-| Command | What it does | Status |
+| Команда | Что делает | Тратит деньги? |
 |---|---|---|
-| `node lib/wallet.mjs generate [name]` | Create `keys/<name>.json`, print the address | **UNVERIFIED** (no test; verified by reading the code) |
-| `node lib/wallet.mjs show [name]` | Print the public address | **UNVERIFIED** (same) |
-| `node bots/monitor/stream.mjs --filter-dev-buy <SOL>` | Monitor with a minimum dev buy | **UNVERIFIED** |
-| `node bots/graduation-sniper/shadow.mjs` | Graduation paper lab, variants A–I | Statistics **Tested**; harness dry-run verified |
-| `node scripts/analyze-graduation.mjs [journal.jsonl]` | Report for the shadow lab | **Tested** (stats) |
-| `node scripts/session-total.mjs [journal.jsonl]` | Sum a journal's session totals | **UNVERIFIED** |
-| `node scripts/export-compact.mjs [sessionId]` | Compact export of a session | **UNVERIFIED** |
-| `node scripts/dump-tx.mjs <SIGNATURE>` | Decode one transaction | **Diagnostic** |
-| `node scripts/probe.mjs isbuy <wallet> [n] \| cusurvey <mint> [n] \| pswap [n] \| who <sigPrefix>` | Probes for instruction/account questions | **Diagnostic** |
-| `node scripts/verify-live-tx.mjs [mint]` | Builds and simulates a buy (no send) | **Diagnostic** |
-| `node scripts/capture-create.mjs` | Capture one token creation | **Diagnostic** |
-| `node scripts/final-report.mjs` | Two-half report over journal data | **Diagnostic** |
+| `npm run monitor` | показывает новые токены и сделки в реальном времени | нет |
+| `npm run analytics` | локальный дашборд и JSON `/api/stats` на порту `ANALYTICS_PORT` | нет |
+| `npm run analyze` | история одного кошелька (`wallet <адрес>`) или токена (`token <mint>`) + отчёт о покрытии | нет |
+| `npm run journal` | читает `data/journal`, печатает срезы и сводку | нет |
+| `npm run status` | прогресс: сколько данных собрано и насколько близко к выводу | нет |
+| `npm run raw-stats` | размеры и число записей по часовым файлам сырых данных | нет |
+| `npm run coverage` | какая доля потока поддаётся оценке цены и насколько цена свежая | нет |
 
-## Removed from older docs
+## Исследование (бумажная торговля)
 
-The previous README/GUIDE described badges, "666 wallets", a "+88.2% in 3 seconds" example and a
-"7 bots were inside" claim. None of that exists in the code or in any journal, so it was removed. No
-command was removed for being non-existent: every `npm run …` above is defined in `package.json`. The
-old research sections were rewritten as [research.md](research.md).
+| Команда | Что делает | Тратит деньги? |
+|---|---|---|
+| `npm run lab` | прогоняет несколько наборов правил на одном потоке; `--live` отклоняется | нет |
+| `npm run replay` | сравнивает варианты лаборатории с разделением «обучение/проверка» | нет |
+| `npm run capture-raw` | записывает все события в сжатые файлы `data/raw/*.jsonl.gz` (по часам) | нет |
+| `npm run lab-raw` | лаборатория на записанных данных: сетка задержек и проскальзывания | нет |
+| `npm run replay-raw` | офлайн-прогон записанных данных через тот же парсер и расчёт цены | нет |
+| `npm run replay-cycle` | полный офлайн-цикл: вход/выход снайпера и варианты лаборатории + проверка учёта | нет |
 
+## Диагностика и аудит кода
+
+Это служебные скрипты: они нужны для проверки парсера, раскладки данных и
+целостности файлов. Для торговли они не требуются.
+
+| Команда | Что делает | Тратит деньги? |
+|---|---|---|
+| `npm run validate-parser` | проверяет парсер на живом потоке (только чтение) | нет |
+| `npm run probe-layout` | ищет, где в сообщениях разных длин лежат резервы | нет |
+| `npm run dump-layout` | находит точные байтовые смещения резервов | нет |
+| `npm run verify-invariants` | проверяет инвариант кривой на живых событиях | нет |
+| `npm run recheck-baseline` | пересчитывает старый базовый прогон с исправленной ценой и комиссиями | нет |
+| `npm run diag-curve` | диагностика кривой и цены (только чтение) | нет |
+| `npm run diag-390` | разбирает класс сообщений, ломающих инвариант `x*y=k` | нет |
+| `npm run mayhem` | отчёт по «Mayhem»-режиму: один ли это владелец нарушений | нет |
+| `npm run mayhem-impact` | что меняется, если исключить сделки Mayhem | нет |
+| `npm run mayhem-sol` | что реально двигает SOL-резерв при Mayhem-маршруте | нет |
+| `npm run rebuild` | можно ли восстановить кривую из «якоря» и сумм сделок | нет |
+| `npm run audit-data` | проверка целостности локальных файлов данных | нет |
+| `npm run audit-scripts` | прогоняет офлайн-скрипты с таймаутом и печатает коды выхода | нет |
+
+## Тесты
+
+| Команда | Что делает | Тратит деньги? |
+|---|---|---|
+| `npm test` | полный набор из **60** тестовых файлов; работает офлайн, без кошелька и без сети | нет |
+| `npm run smoke` | дымовой тест: настоящий снайпер в dry-run на подставных RPC/WebSocket | нет |
+
+`npm test` останавливается на первом падении и печатает `FAIL:`. Для отладки удобнее
+запускать один файл: `node scripts/smoke.test.mjs`.
+
+## Прямые команды (есть на диске, но нет в `package.json`)
+
+| Команда | Что делает |
+|---|---|
+| `node lib/wallet.mjs generate [имя] [--force]` | создать кошелёк в `keys/<имя>.json` и напечатать адрес |
+| `node lib/wallet.mjs show [имя]` | напечатать публичный адрес (без сети) |
+| `node bots/graduation-sniper/shadow.mjs` | теневой (бумажный) прогон вариантов graduation |
+| `node scripts/analyze-graduation.mjs [журнал]` | отчёт по теневому прогону |
+| `node scripts/sell-all.mjs` | перечислить все токены на кошельке; с `--live` — продать по одному |
+| `node scripts/session-total.mjs [журнал]` | сложить итоги сессий из журнала |
+| `node scripts/export-compact.mjs [sessionId]` | компактная выгрузка одной сессии |
+| `node scripts/dump-tx.mjs <подпись>` | разобрать одну транзакцию |
+| `node scripts/verify-live-tx.mjs [mint]` | собрать и просимулировать покупку без отправки |
+| `node scripts/final-report.mjs` | отчёт по двум половинам данных журнала |
+
+Точный синтаксис каждой прямой команды напечатает сама команда, если запустить её без
+аргументов: в начале файлов есть блок «Использование».

@@ -24,7 +24,7 @@ makes money.
 
 ## The audit log
 
-The file [`../BUGS_VERIFICATION.md`](../BUGS_VERIFICATION.md) in the repository root is a historical
+The file [`dev-reports/BUGS_VERIFICATION.md`](dev-reports/BUGS_VERIFICATION.md) is a historical
 audit of 29 reported issues plus follow-up findings, with a verdict and a status per row. Read it
 like a changelog, not like a certificate:
 

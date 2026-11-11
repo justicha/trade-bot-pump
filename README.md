@@ -1,154 +1,238 @@
-<p align="center"><img src="docs/img/banner.svg" alt="pump-bot: deep navy banner with a teal curve and the words pump-bot" width="100%"></p>
+<p align="center"><img src="docs/img/banner.svg" alt="pump-bot: тёмно-синий баннер, бирюзовая кривая и надпись pump-bot" width="100%"></p>
 
 <h1 align="center">pump-bot</h1>
 
-<p align="center">Small bots that watch pump.fun on Solana and can buy and sell memecoins for you — on paper first, with real money only if you insist.</p>
+<p align="center">Небольшие боты, которые следят за pump.fun в сети Solana и могут покупать и продавать мемкоины за вас — сначала на бумаге, за реальные деньги только если вы сами этого захотите.</p>
 
-## Read this first
+## Содержание
 
-> **You can lose every cent you put in.** Memecoin prices can fall 99% in a minute, and some tokens
-> cannot be sold at all. This is **not financial advice**, nothing here promises a profit, and the
-> code is a research tool that may still contain bugs.
+- [Сначала прочтите это](#сначала-прочтите-это)
+- [Что делает проект](#что-делает-проект)
+- [Быстрый старт: dry-run без денег](#быстрый-старт-dry-run-без-денег)
+- [Dry-run и live](#dry-run-и-live)
+- [Какой бот мне нужен](#какой-бот-мне-нужен)
+- [Лимиты безопасности](#лимиты-безопасности)
+- [Продать всё](#продать-всё)
+- [Это проверено?](#это-проверено)
+- [Безопасность в четырёх строках](#безопасность-в-четырёх-строках)
+- [Документация](#документация)
+- [Лицензия](#лицензия)
+
+## Сначала прочтите это
+
+> ⚠️ **Вы можете потерять всё, что положите на кошелёк.** Цена мемкоина падает на 99% за минуту,
+> а некоторые токены не продаются вообще. Это **не инвестиционный совет**: прибыль здесь никто не
+> обещает, а код — исследовательский инструмент, и в нём могут быть ошибки.
 >
-> Start in **dry-run** (no money moves at all). If you ever go live, use a **new throwaway wallet**
-> holding only an amount you can afford to lose completely.
+> Начните с **dry-run** — в этом режиме деньги не двигаются. Если когда-нибудь перейдёте в live,
+> берите **новый одноразовый кошелёк** и только ту сумму, которую не страшно потерять целиком.
 
-<p align="center"><img src="docs/img/flow.svg" alt="Five steps: watch new tokens, check filters and limits, dry-run or live buy, take profit or stop loss or timeout, journal and summary" width="100%"></p>
+<p align="center"><img src="docs/img/flow.svg" alt="Пять шагов: наблюдение за новыми токенами, фильтры и лимиты, покупка в dry-run или live, выход по тейк-профиту, стоп-лоссу или таймауту, журнал и сводка" width="100%"></p>
 
-## What it does
+## Что делает проект
 
-- Watches the Solana blockchain for brand-new tokens on pump.fun, as they appear.
-- Buys and sells by simple rules: take profit, stop loss, or a timeout.
-- Can copy another wallet's trades, or enter just before a token "graduates".
-- Runs in **dry-run by default**: it records what it *would* have done and never signs a transaction.
-- Also includes read-only tools: a live feed of new tokens, a local dashboard, and research scripts.
+- Следит за блокчейном Solana и видит новые токены pump.fun в момент появления.
+- Покупает и продаёт по простым правилам: тейк-профит, стоп-лосс или таймаут.
+- Умеет копировать сделки другого кошелька и входить за шаг до «выпуска» токена (graduation).
+- По умолчанию работает в **dry-run**: записывает, что сделал бы, и не подписывает ни одной транзакции.
+- Даёт инструменты только для чтения: поток новых токенов, локальный дашборд, исследовательские скрипты.
+- Ключ лежит в файле на вашем компьютере; наружу уходит только уже подписанная транзакция.
 
-## Quick start (dry-run, no money)
+## Быстрый старт: dry-run без денег
 
-1. Install **Node.js 22 or newer** from <https://nodejs.org>. Check it with `node -v`.
-2. Clone the repository and install the libraries:
-   ```powershell
-   git clone https://github.com/<you>/pump-bot.git
-   cd pump-bot
-   npm ci --ignore-scripts
-   ```
-3. Create your settings file:
-   ```powershell
-   Copy-Item .env.example .env
-   ```
-4. Open `.env` in any editor and set `RPC_URL` to your own Solana RPC endpoint. A free public one
-   will be throttled and the bot will look idle.
-5. Create an empty wallet. This only writes `keys/default.json`; it costs nothing and holds no money:
-   ```powershell
-   node lib/wallet.mjs generate
-   ```
-6. Start the sniper in dry-run:
-   ```powershell
-   npm run sniper
-   ```
+Понадобится **Node.js 22 или новее** (проверить: `node -v`). Всё остальное — пять шагов ниже.
+Команды для Windows даны для PowerShell, для macOS и Linux — для bash; различаются они только
+копированием файла настроек.
 
-It prints the tokens it would buy and the exits it would take. Nothing is signed, nothing is sent.
-Stop it with `Ctrl+C`.
+**1. Скачайте код и поставьте библиотеки**
 
-A harmless `bigint: Failed to load bindings` warning may appear. It is safe.
-(Step-by-step with more detail: [docs/getting-started.md](docs/getting-started.md).)
+```powershell
+# Windows (PowerShell)
+git clone <URL-вашего-форка>
+cd pump-bot
+npm ci --ignore-scripts
+```
 
-## Dry-run vs live
+```bash
+# macOS / Linux (bash)
+git clone <URL-вашего-форка>
+cd pump-bot
+npm ci --ignore-scripts
+```
 
-| Mode | What happens | Money at risk |
+**2. Создайте файл настроек из шаблона**
+
+```powershell
+Copy-Item .env.example .env
+```
+
+```bash
+cp .env.example .env
+```
+
+**3. Откройте `.env` в любом редакторе и задайте `RPC_URL`** — адрес своего Solana RPC. Бесплатный
+публичный endpoint будет постоянно упираться в лимиты, и бот будет выглядеть «заснувшим». Если
+`RPC_URL` не задан, бот остановится сразу с сообщением `RPC_URL is required`.
+
+**4. Создайте пустой кошелёк**
+
+```powershell
+node lib/wallet.mjs generate
+```
+
+Команда только записывает файл `keys/default.json` в папку проекта: денег не тратит, в сеть не
+ходит. Что внутри файла и зачем нужен `--force` — в [docs/wallet-and-keys.md](docs/wallet-and-keys.md).
+
+**5. Запустите снайпер в dry-run**
+
+```powershell
+npm run sniper
+```
+
+Бот печатает токены, которые «купил бы», и выходы, которые «сделал бы». Ничего не подписывается и
+никуда не отправляется. Остановка — `Ctrl+C`.
+
+![Пример вывода в dry-run: строки журнала, адреса и суммы заменены заглушками](docs/img/dryrun-terminal.svg)
+
+Иногда появляется безобидное предупреждение `bigint: Failed to load bindings` — это нормально и на
+работу не влияет.
+
+Пошаговый разбор с пояснениями: [docs/getting-started.md](docs/getting-started.md).
+
+## Dry-run и live
+
+| Режим | Что происходит | Чем рискуете |
 |---|---|---|
-| **Dry-run** (default) | Decisions are made, a simulated fill is recorded, the journal is written. No transaction is ever signed or sent. | None |
-| **Live** | Real transactions are signed with the wallet in `keys/` and sent to the network. | All of it |
+| **dry-run** (по умолчанию) | Решения принимаются, «сделка» считается виртуально, журнал пишется. Ни одна транзакция не подписывается и не отправляется. | Ничем |
+| **live** | Настоящие транзакции подписываются ключом из `keys/` и уходят в сеть. | Всем, что лежит на кошельке |
 
-Live mode needs **two** switches at the same time: the `--live` flag **and** `LIVE_CONFIRM=yes` set
-in the same shell. Either one alone stops the bot at startup. A `--dry-run` flag also cancels
-`--live`.
+Для live нужны **два** переключателя одновременно: флаг `--live` **и** переменная
+`LIVE_CONFIRM=yes` в той же оболочке. По отдельности каждого мало — бот останавливается ещё до
+подключения к сети. Флаг `--dry-run` отменяет `--live`.
 
-## Sell all
+```powershell
+# Windows (PowerShell): переменная живёт только внутри этого процесса
+$env:LIVE_CONFIRM="yes"; npm run sniper -- --live
+```
 
-`scripts/sell-all.mjs` lists every token the wallet still holds and, with `--live`, exits them one by
-one. It is a rescue tool, not a strategy: it never buys and never opens a position.
+```bash
+# macOS / Linux
+LIVE_CONFIRM=yes npm run sniper -- --live
+```
+
+Отдельный переключатель `LIVE_CONFIRM_AMM=yes` относится к продаже токена, который уже уехал на
+PumpSwap: этот путь **не проверен на реальной транзакции**, и без явного согласия бот такой токен
+пропускает.
+
+## Какой бот мне нужен
+
+| Команда | Что делает | Риск | Новичку подходит? |
+|---|---|---|---|
+| `npm run monitor` | Печатает новые токены и сделки по мере появления. | Только чтение | ✅ Да, с него и начните |
+| `npm run analytics` | Локальный веб-дашборд: что бот видит прямо сейчас. | Только чтение | ✅ Да |
+| `npm run lab` · `npm run replay` | Бумажная торговля и исследование «обучение/тест» на истории. | Денег нет | ✅ Да |
+| `npm run sniper` | Покупает новые токены, прошедшие фильтры; выход по TP, SL или таймауту. | Торгует | 🟡 Только в dry-run |
+| `npm run graduation` | Входит за шаг до завершения кривой токена. | Торгует | 🟡 Только в dry-run |
+| `npm run trade` | Ручные buy / sell / price / balance из командной строки. | Торгует | 🟡 Если понимаете, что делаете |
+| `npm run copy` | Повторяет сделки кошельков из `COPY_TARGETS`. | Торгует | ❌ Не для первого запуска |
+
+«Торгует» всегда означает «пока не добавлен `--live` — считает на бумаге». Все флаги каждого
+бота: [docs/bots.md](docs/bots.md) · все команды npm: [docs/commands.md](docs/commands.md).
+
+## Лимиты безопасности
+
+Три жёстких лимита не дают одному плохому дню превратиться в катастрофу. Это значения по умолчанию
+из `.env.example`:
+
+- **На сделку — 0.05 SOL** (`MAX_TRADE_SOL`). Сделка больше лимита пропускается, бот продолжает работу.
+- **На сессию — 0.1 SOL** на покупки (`MAX_SESSION_SOL`). Когда лимит исчерпан, бот перестаёт слушать,
+  закрывает что может (только в live), печатает сводку и завершается.
+- **Серия убытков — 3 подряд** (`MAX_CONSEC_LOSSES`). Сессия заканчивается вместо «отыгрыша».
+
+Для `MAX_SESSION_SOL` и `MAX_CONSEC_LOSSES` значение `0` означает «без лимита». Для `MAX_TRADE_SOL`
+`0` означает «запретить все сделки» — намеренно: пропущенное значение не должно означать «без
+ограничений». Полный список настроек: [docs/configuration.md](docs/configuration.md).
+
+## Продать всё
+
+`scripts/sell-all.mjs` показывает все токены, которые ещё лежат на кошельке, и с `--live` продаёт их
+по одному. Это спасательный инструмент, а не стратегия: он никогда не покупает и не открывает позиций.
 
 ```powershell
 node scripts/sell-all.mjs
 ```
 
-The default run is a **plan only**. It prints a table (mint, balance, venue, expected SOL out,
-status) and sends nothing — no transaction is signed at all.
+Запуск по умолчанию — **только план**. Печатается таблица (mint, баланс, площадка, ожидаемо SOL,
+статус), ничего не отправляется и не подписывается.
 
-To actually sell:
+Чтобы действительно продать:
 
 ```powershell
 $env:LIVE_CONFIRM="yes"; node scripts/sell-all.mjs --live
 ```
 
-`LIVE_CONFIRM=yes` is required; without it the script exits before it even builds an RPC client.
+Без `LIVE_CONFIRM=yes` скрипт завершается раньше, чем создаст RPC-клиент.
 
-Tokens still on the bonding curve sell through the curve. Tokens that already graduated go through
-PumpSwap, and that path is gated separately: it needs `LIVE_CONFIRM_AMM=yes`, because the PumpSwap
-sell layout is **not verified on-chain yet** (the program currently rejects it with `Custom 6062`).
-Without that flag such a token is skipped with `PumpSwap sell unverified` and nothing is sent.
+Токены на кривой продаются через кривую. Токены, которые уже перешли на PumpSwap, идут другим путём
+и требуют отдельного согласия `LIVE_CONFIRM_AMM=yes`: раскладка продажи PumpSwap **пока не проверена
+в сети** (программа отвечает `Custom 6062`). Без этого флага токен пропускается с сообщением
+`PumpSwap sell unverified`, и ничего не отправляется.
 
-Every sell is simulated first. A failed simulation prints the full program logs and is skipped, and
-the run continues with the next token. Sends are sequential and nothing is retried automatically.
-Every decision is journaled in `data/journal` as `sell_all_plan`, `sell_all_sent`,
-`sell_all_skipped` or `sell_all_failed`.
+Каждая продажа сначала симулируется. Неудачная симуляция печатает логи программы, токен
+пропускается, работа продолжается со следующим. Отправки идут по очереди, автоматических повторов
+нет. Каждое решение попадает в `data/journal` как `sell_all_plan`, `sell_all_sent`,
+`sell_all_skipped` или `sell_all_failed`.
 
-**For migrated tokens a manual sale through Jupiter or Photon is the safer option** until the
-PumpSwap exit is confirmed on a real transaction.
+**Для токенов на PumpSwap разумнее продать вручную через Jupiter или Photon**, пока выход через
+PumpSwap не подтверждён на реальной транзакции.
 
-## Which bot should I look at?
+## Это проверено?
 
-| Command | What it does | Risk |
-|---|---|---|
-| `npm run monitor` | Prints new tokens and trades as they happen. | Read-only |
-| `npm run sniper` | Buys new tokens that pass filters; exits on take profit, stop loss or timeout. | Trades |
-| `npm run graduation` | Enters a token just before its bonding curve finishes. | Trades |
-| `npm run copy` | Mirrors the wallets listed in `COPY_TARGETS`. | Trades |
-| `npm run trade` | Manual buy / sell / price / balance from the command line. | Trades |
-| `npm run analytics` | Local web dashboard of what the bot sees. | Read-only |
-| `npm run lab` · `npm run replay` | Paper trading and train/test research. | None |
+**Нет.** Опубликованных результатов нет: ни бэктеста, ни истории сделок, ни утверждения, что
+какая-то стратегия здесь зарабатывает. Что есть — набор тестов (`npm test`, 60 файлов), который
+работает офлайн, и аудит с вердиктом по каждой найденной проблеме. Тесты доказывают, что код делает
+заявленное; о прибыли они не говорят ничего. Прежде чем верить цифрам в логах, прочитайте
+[docs/verification-status.md](docs/verification-status.md).
 
-"Trades" always means "dry-run unless you add `--live`". Full flags for every bot:
-[docs/bots.md](docs/bots.md) · every command: [docs/commands.md](docs/commands.md).
+Отчёты разработки лежат в [docs/dev-reports/](docs/dev-reports/). Это не результаты торговли.
 
-## Safety limits
+## Безопасность в четырёх строках
 
-Three hard limits stop a bad day from becoming a disaster. These are the defaults shipped in
-`.env.example`:
+- **Никому не показывайте `keys/`.** Там приватный ключ открытым текстом. Относитесь как к наличным.
+- **Никогда не коммитьте `.env`.** Там ваш RPC-адрес, часто вместе с платным API-ключом.
+- **Прочитайте код подписи** до запуска в live: `lib/wallet.mjs`, `lib/tx.mjs`, `lib/send.mjs`.
+- **Берите свой RPC.** Чужой или перегруженный endpoint может скрывать и задерживать данные.
 
-- **Per trade — 0.05 SOL** (`MAX_TRADE_SOL`). A larger trade is skipped; the bot keeps running.
-- **Per session — 0.1 SOL** spent on buys (`MAX_SESSION_SOL`). When it runs out, the bot stops
-  listening, closes what it can (live only), prints a summary and exits.
-- **Losing streak — 3 in a row** (`MAX_CONSEC_LOSSES`). The session ends instead of revenge trading.
+Резервную копию ключа держите на офлайн-носителе. И главное: **не запускайте это с основного
+кошелька** и не храните на этом адресе сбережения — только сумму, которую готовы потерять целиком.
 
-`MAX_SESSION_SOL` and `MAX_CONSEC_LOSSES` accept `0` for "no limit". For `MAX_TRADE_SOL`, `0` means
-"block every trade" (on purpose: a missing value must never mean "unlimited").
+Подробнее: [docs/security.md](docs/security.md) · кошелёк и ключи:
+[docs/wallet-and-keys.md](docs/wallet-and-keys.md) · настройки: [docs/configuration.md](docs/configuration.md) ·
+ошибки: [docs/errors-and-troubleshooting.md](docs/errors-and-troubleshooting.md).
 
-## Is it proven?
+## Документация
 
-**No.** There are no published results: no backtest, no track record, no claim that any strategy
-here makes money. What the repository does have is a test suite of **47 test files** (`npm test`)
-that runs offline, and an audit with a verdict for each reported issue. Tests show that the code
-does what it says; they say nothing about profit. Read
-[docs/verification-status.md](docs/verification-status.md) before trusting any number that appears
-in a log.
+| Документ | О чём |
+|---|---|
+| [docs/getting-started.md](docs/getting-started.md) | С нуля: Node.js, `.env`, кошелёк, первый dry-run, словарь терминов |
+| [docs/bots.md](docs/bots.md) | Все восемь ботов: флаги, переменные, что пишут в журнал |
+| [docs/commands.md](docs/commands.md) | Полные таблицы команд `npm run …` и вспомогательных скриптов |
+| [docs/configuration.md](docs/configuration.md) | Каждая переменная `.env`: смысл и значения по умолчанию |
+| [docs/wallet-and-keys.md](docs/wallet-and-keys.md) | Генерация кошелька, где лежит ключ, резервная копия |
+| [docs/architecture.md](docs/architecture.md) | Как устроено внутри: RPC, парсер, расчёты, отправка |
+| [docs/errors-and-troubleshooting.md](docs/errors-and-troubleshooting.md) | Тексты ошибок и что с ними делать |
+| [docs/verification-status.md](docs/verification-status.md) | Что проверено, что нет и почему |
+| [docs/security.md](docs/security.md) | Угрозы и правила обращения с ключами |
+| [docs/research.md](docs/research.md) | Лаборатория, реплеи, исследовательские отчёты |
+| [docs/dev-reports/](docs/dev-reports/) | Отчёты разработки (не торговые результаты) |
 
-## Security, in four lines
+## Лицензия
 
-- **Never share `keys/`.** It holds the private key in plain text. Treat it like cash.
-- **Never commit `.env`.** It holds your RPC URL, often with a paid API key.
-- **Read the signing code** before running live: `lib/wallet.mjs`, `lib/tx.mjs`, `lib/send.mjs`.
-- **Use a private RPC.** A throttled or hostile endpoint can hide or delay what the bot sees.
+**Не указана.** В исходном репозитории лицензии не было, поэтому здесь она тоже не предоставляется и
+предполагать её нельзя. Если планируете распространять код, спросите автора оригинала.
 
-More: [docs/security.md](docs/security.md) · wallet and keys: [docs/wallet-and-keys.md](docs/wallet-and-keys.md) ·
-settings: [docs/configuration.md](docs/configuration.md) · errors: [docs/errors-and-troubleshooting.md](docs/errors-and-troubleshooting.md).
+Программа предоставляется «как есть», без гарантий любого рода. Торговля мемкоинами может привести к
+полной потере вложенных средств; ничто в этом репозитории не является инвестиционной рекомендацией.
+Ответственность за ключи, деньги и соблюдение законов вашей страны лежит на вас.
 
-## License
 
-**Not specified.** The upstream repository carried no license, so no license is granted here and none
-should be assumed. If you plan to redistribute this code, ask the original author first.
-
-The software is provided as-is, without warranty of any kind. Trading memecoins can result in the
-total loss of the funds involved, and nothing in this repository is financial advice. You are
-responsible for your keys, your money and the laws that apply to you.

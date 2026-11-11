@@ -1,70 +1,80 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="240" viewBox="0 0 1200 240" role="img" aria-labelledby="ft fd">
-  <title id="ft">How the bot works, in five steps</title>
-  <desc id="fd">Five boxes left to right: watch new tokens, check filters and limits, dry-run or live buy, take profit or stop loss or timeout, journal and summary. The buy step is highlighted in amber.</desc>
-  <rect width="1200" height="240" fill="#0b1220"/>
-  <g stroke="#1a2b45" stroke-width="1">
-    <path d="M0 80h1200M0 160h1200"/>
-    <path d="M200 0v240M400 0v240M600 0v240M800 0v240M1000 0v240"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-labelledby="flowTitle flowDesc">
+  <title id="flowTitle">Как работает бот: пять шагов</title>
+  <desc id="flowDesc">Пять карточек слева направо: наблюдение за новыми токенами, фильтры и лимиты, покупка в dry-run или live (выделена янтарным), выход по take profit, stop loss или таймауту, журнал и сводка. Стрелки показывают порядок шагов.</desc>
+  <defs>
+    <linearGradient id="flowBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#0d1728"/>
+    </linearGradient>
+    <pattern id="flowGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M60 0H0V60" fill="none" stroke="#16243a" stroke-width="1"/>
+    </pattern>
+    <marker id="flowArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#2dd4bf"/>
+    </marker>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="280" fill="url(#flowBg)"/>
+  <rect width="1200" height="280" fill="url(#flowGrid)" opacity="0.6"/>
+
+  <text x="40" y="46" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="21" font-weight="700" fill="#e6f1ff">Как это работает</text>
+  <text x="40" y="70" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" fill="#8aa0b8">пять шагов, один и тот же порядок для каждого токена</text>
+
+  <g filter="url(#cardShadow)">
+    <rect x="40" y="96" width="192" height="120" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="1.75"/>
+    <rect x="272" y="96" width="192" height="120" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="1.75"/>
+    <rect x="504" y="96" width="192" height="120" rx="14" fill="#241a08" stroke="#fbbf24" stroke-width="2"/>
+    <rect x="736" y="96" width="192" height="120" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="1.75"/>
+    <rect x="968" y="96" width="192" height="120" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="1.75"/>
   </g>
 
-  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
-    <text x="40" y="46" font-size="22" font-weight="700" fill="#e6f1ff">How it works</text>
-    <text x="40" y="70" font-size="14" fill="#9fb3c8">five steps, repeated for every token</text>
+  <g fill="none" stroke="#2dd4bf" stroke-width="1.5">
+    <circle cx="66" cy="122" r="12"/>
+    <circle cx="298" cy="122" r="12"/>
+    <circle cx="822" cy="122" r="12"/>
+    <circle cx="1054" cy="122" r="12"/>
+  </g>
+  <circle cx="530" cy="122" r="12" fill="none" stroke="#fbbf24" stroke-width="1.5"/>
+
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" text-anchor="middle">
+    <text x="66" y="126" fill="#2dd4bf">1</text>
+    <text x="298" y="126" fill="#2dd4bf">2</text>
+    <text x="530" y="126" fill="#fbbf24">3</text>
+    <text x="822" y="126" fill="#2dd4bf">4</text>
+    <text x="1054" y="126" fill="#2dd4bf">5</text>
   </g>
 
-  <!-- 1 -->
-  <g>
-    <rect x="40" y="96" width="192" height="96" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="2"/>
-    <circle cx="62" cy="118" r="11" fill="none" stroke="#2dd4bf" stroke-width="2"/>
-    <text x="62" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#2dd4bf">1</text>
-    <text x="136" y="142" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">Watch new</text>
-    <text x="136" y="164" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">tokens</text>
-  </g>
-  <!-- 2 -->
-  <g>
-    <rect x="272" y="96" width="192" height="96" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="2"/>
-    <circle cx="294" cy="118" r="11" fill="none" stroke="#2dd4bf" stroke-width="2"/>
-    <text x="294" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#2dd4bf">2</text>
-    <text x="368" y="142" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">Check filters</text>
-    <text x="368" y="164" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">&amp; limits</text>
-  </g>
-  <!-- 3 (the money step) -->
-  <g>
-    <rect x="504" y="96" width="192" height="96" rx="14" fill="#1a1508" stroke="#fbbf24" stroke-width="2"/>
-    <circle cx="526" cy="118" r="11" fill="none" stroke="#fbbf24" stroke-width="2"/>
-    <text x="526" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#fbbf24">3</text>
-    <text x="600" y="142" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#fbbf24">Dry-run or</text>
-    <text x="600" y="164" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#fbbf24">live buy</text>
-  </g>
-  <!-- 4 -->
-  <g>
-    <rect x="736" y="96" width="192" height="96" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="2"/>
-    <circle cx="758" cy="118" r="11" fill="none" stroke="#2dd4bf" stroke-width="2"/>
-    <text x="758" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#2dd4bf">4</text>
-    <text x="832" y="134" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="15" fill="#e6f1ff">Take profit /</text>
-    <text x="832" y="154" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="15" fill="#e6f1ff">stop loss /</text>
-    <text x="832" y="174" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="15" fill="#e6f1ff">timeout</text>
-  </g>
-  <!-- 5 -->
-  <g>
-    <rect x="968" y="96" width="192" height="96" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="2"/>
-    <circle cx="990" cy="118" r="11" fill="none" stroke="#2dd4bf" stroke-width="2"/>
-    <text x="990" y="123" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="700" fill="#2dd4bf">5</text>
-    <text x="1064" y="142" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">Journal &amp;</text>
-    <text x="1064" y="164" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="16" fill="#e6f1ff">summary</text>
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" text-anchor="middle">
+    <text x="136" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Наблюдение</text>
+    <text x="136" y="182" font-size="13" fill="#9fb3c8">новые токены</text>
+    <text x="136" y="201" font-size="11" fill="#6f8299">WebSocket pump.fun</text>
+
+    <text x="368" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Фильтры</text>
+    <text x="368" y="182" font-size="13" fill="#9fb3c8">и лимиты</text>
+    <text x="368" y="201" font-size="11" fill="#6f8299">держатели · сумма · пауза</text>
+
+    <text x="600" y="158" font-size="17" font-weight="600" fill="#fbbf24">Покупка</text>
+    <text x="600" y="182" font-size="13" fill="#e8c37a">dry-run или live</text>
+    <text x="600" y="201" font-size="11" fill="#b99a5b">два переключателя</text>
+
+    <text x="832" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Выход</text>
+    <text x="832" y="182" font-size="13" fill="#9fb3c8">TP · SL · таймаут</text>
+    <text x="832" y="201" font-size="11" fill="#6f8299">по цене или по времени</text>
+
+    <text x="1064" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Журнал</text>
+    <text x="1064" y="182" font-size="13" fill="#9fb3c8">и сводка</text>
+    <text x="1064" y="201" font-size="11" fill="#6f8299">data/journal/*.jsonl</text>
   </g>
 
-  <!-- arrows -->
-  <g stroke="#2dd4bf" stroke-width="3" fill="none" stroke-linecap="round">
-    <path d="M238 144h22"/>
-    <path d="M470 144h22"/>
-    <path d="M702 144h22"/>
-    <path d="M934 144h22"/>
+  <g stroke="#2dd4bf" stroke-width="2" fill="none" marker-end="url(#flowArrow)" stroke-linecap="round">
+    <path d="M236 156 H 264"/>
+    <path d="M468 156 H 496"/>
+    <path d="M700 156 H 728"/>
+    <path d="M932 156 H 960"/>
   </g>
-  <g fill="#2dd4bf">
-    <path d="M262 144l-9 -6v12z"/>
-    <path d="M494 144l-9 -6v12z"/>
-    <path d="M726 144l-9 -6v12z"/>
-    <path d="M958 144l-9 -6v12z"/>
-  </g>
+
+  <text x="40" y="252" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">В dry-run третий шаг ничего не подписывает и не отправляет: бот только записывает, что купил бы.</text>
 </svg>

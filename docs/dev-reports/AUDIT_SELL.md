@@ -500,7 +500,7 @@ $env:LIVE_CONFIRM="yes"; $env:LIVE_CONFIRM_AMM="yes"; $env:DRY_SELL="yes"; npm r
 ## 13. Официальный SDK: sell / pool_v2
 
 Источник — `@pump-fun/pump-sdk@4.3.1`, установленный **вне репозитория**
-(`C:\Users\HUAWEI\Downloads\pump-sdk-ref`, `npm ls @pump-fun/pump-sdk` → `4.3.1`). Код бота не
+(`<папка-вне-репозитория>/pump-sdk-ref`, `npm ls @pump-fun/pump-sdk` → `4.3.1`). Код бота не
 менялся: это справка, а не патч.
 
 ### 13.1 Что нашлось по запросам
