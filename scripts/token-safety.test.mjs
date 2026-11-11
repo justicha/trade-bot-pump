@@ -64,6 +64,26 @@ for (const [type, name] of UNSAFE_EXTENSIONS) {
   asrt(res.ok === true, "a metadata-pointer-only mint passes");
   asrt(res.extensions.includes(ExtensionType.MetadataPointer), "the parsed extension list is reported");
 }
+// --- the standard pump token decoration (metadata pointer + token metadata) is fine ---
+{
+  const res = checkMintExtensions({
+    ownerProgram: T22,
+    data: mintWith([ExtensionType.MetadataPointer, ExtensionType.TokenMetadata]),
+  });
+  asrt(res.ok === true, "metadata-pointer + token-metadata passes");
+  asrt(
+    res.extensions.includes(ExtensionType.MetadataPointer) && res.extensions.includes(ExtensionType.TokenMetadata),
+    "both metadata extensions are parsed and reported"
+  );
+}
+// --- a type we do not recognise blocks the buy, and its numeric id is reported ---
+{
+  const UNKNOWN_ID = 1000; // not part of @solana/spl-token 0.4.15 ExtensionType
+  const res = checkMintExtensions({ ownerProgram: T22, data: mintWith([UNKNOWN_ID]) });
+  asrt(res.ok === false, "an unrecognized extension blocks the buy");
+  asrt(/unrecognized extension id 1000/.test(res.reason), `reason carries the id, got "${res.reason}"`);
+  asrt(res.extensions.includes(UNKNOWN_ID), "the numeric id is in the reported extensions");
+}
 
 // --- unknown / broken input is never assumed safe ---
 asrt(checkMintExtensions({ ownerProgram: null, data: null }).reason === BUY_SKIP_REASON.unverifiedExtensions, "unknown owner -> unverified");
@@ -73,6 +93,11 @@ asrt(checkMintExtensions({ ownerProgram: T22, data: Buffer.alloc(10) }).reason =
   const malformed = Buffer.concat([Buffer.alloc(MINT_SIZE), Buffer.from([1, 0, 0xff, 0x7f])]); // length overruns the buffer
   const res = checkMintExtensions({ ownerProgram: T22, data: malformed });
   asrt(res.ok === false && res.reason === BUY_SKIP_REASON.unverifiedExtensions, `malformed TLV -> unverified, got "${res.reason}"`);
+  asrt(
+    Array.isArray(res.extensions) && res.extensions.length === 1 &&
+      res.extensions[0].tlvOffset === 0 && res.extensions[0].declaredLength === 0x7fff && res.extensions[0].bufferLength === 4,
+    `malformed TLV -> diagnostic in extensions, got ${JSON.stringify(res.extensions)}`
+  );
 }
 
 // --- Mayhem Mode, from the curve or from the pool ---
