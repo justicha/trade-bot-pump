@@ -45,6 +45,8 @@ import { TradeJournal } from "../../lib/journal.mjs";
 import { checkCurve, metricsOf, rawSolPerTokenToWhole } from "../../lib/curve.mjs";
 import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
+import { liveEntry, liveSellAccounting } from "../../lib/live-pnl.mjs";
+import { recordStuck } from "../../lib/stuck.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -353,6 +355,13 @@ async function executeBuy(mint) {
   const posRec = {
     tokens: expectedTokens,
     entryPrice,
+    // SOL the buy itself took. Nominal until a live buy lands; then readExecution's actual spend
+    // (without network fee and ATA rent) replaces it — see lib/live-pnl.mjs.
+    entrySolSol: BUY_SOL,
+    entrySource: DRY_RUN ? "dry-run" : "quote-fallback",
+    buyFeeSol: null, // actual network fee of the buy (null = unknown)
+    ataRentSol: 0, // rent locked in the token ATA created by the buy
+    ataRentKnown: false,
     entryTime: Date.now(),
     entryUsd,
     solUsd,
@@ -394,19 +403,23 @@ async function executeBuy(mint) {
     const sig = await simulateThenSend(tx);
     // C5: entry from ACTUAL execution (tokens that arrived / SOL that left), not the quote.
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
+    // Actual entry (no network fee, no ATA rent) or the nominal size flagged "quote-fallback".
+    Object.assign(posRec, liveEntry(ex, BUY_SOL));
     if (ex.found && ex.tokensReceived > 0n) {
-      const spent = ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+      const spent = posRec.entrySolSol;
       posRec.tokens = ex.tokensReceived;
       posRec.entryPrice = Number(ex.tokensReceived) > 0 ? spent / (Number(ex.tokensReceived) / 1e6) : entryPrice;
       positions.set(mint, posRec);
       lastBuyTime = Date.now();
       session.buy(spent);
+      session.ataRent(posRec.ataRentSol);
       ticks.track(mint, { phase: "hold", entryPrice: posRec.entryPrice });
-      log(`  position opened (actual ${ex.tokensReceived} tokens)`);
+      log(`  position opened (actual ${ex.tokensReceived} tokens for ${spent.toFixed(6)} SOL, ATA rent ${posRec.ataRentSol.toFixed(6)})`);
     } else {
       positions.set(mint, posRec);
       lastBuyTime = Date.now();
-      session.buy(BUY_SOL);
+      session.buy(posRec.entrySolSol);
+      session.ataRent(posRec.ataRentSol);
       ticks.track(mint, { phase: "hold", entryPrice });
       log(`  position opened (quote-fallback)`);
     }
@@ -418,11 +431,13 @@ async function executeBuy(mint) {
       const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
       if (ex && ex.found && ex.tokensReceived > 0n) {
         posRec.tokens = ex.tokensReceived;
-        const spent = ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+        Object.assign(posRec, liveEntry(ex, BUY_SOL));
+        const spent = posRec.entrySolSol;
         posRec.entryPrice = Number(ex.tokensReceived) > 0 ? spent / (Number(ex.tokensReceived) / 1e6) : posRec.entryPrice;
         positions.set(mint, posRec);
         lastBuyTime = Date.now();
         session.buy(spent);
+        session.ataRent(posRec.ataRentSol);
         ticks.track(mint, { phase: "hold", entryPrice: posRec.entryPrice });
         log(`  buy confirmed on-chain despite confirm error (${ex.tokensReceived} tokens) — position opened`);
         return;
@@ -499,8 +514,21 @@ async function executeSell(mint, reason, exitInfo = null) {
 
     const state = await getBondingCurveState(mintPk, 0, 0);
     if (!state || state.complete) {
-      log(`  bonding curve complete, cannot sell via pump.fun`);
-      session.drop(`${mint.slice(0, 8)}: graduated, unsold`);
+      // The curve is closed and this bot has no AMM sell: the tokens stay in the wallet. That used
+      // to be a silent drop — invisible to MAX_CONSEC_LOSSES. Now it is a journaled STUCK whose
+      // entry is booked as an assumed loss (lib/stuck.mjs).
+      const why = state ? "curve complete: no AMM sell in this bot" : "curve unavailable: no AMM sell in this bot";
+      const lossSol = recordStuck({
+        journal,
+        recordResult,
+        mint,
+        pos: { ...pos, tokens: tokenAmount },
+        buySol: BUY_SOL,
+        reason: why,
+        fields: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mode: "LIVE", exitReason: reason },
+      });
+      log(`  STUCK ${mint.slice(0, 8)}: ${why} — booked as an assumed loss of ${lossSol.toFixed(6)} SOL, use scripts/rescue-sell.mjs`);
+      session.drop(`${mint.slice(0, 8)}: STUCK ${why}`);
       positions.delete(mint);
       return;
     }
@@ -518,20 +546,31 @@ async function executeSell(mint, reason, exitInfo = null) {
 
     const tx = await buildVersionedTx(wallet, ixs);
     const sig = await simulateThenSend(tx);
-    // C5: received SOL from the chain (fee excluded), falling back to the quote if meta lags.
+    // C5: received SOL from the chain (the wallet delta, i.e. already NET of this tx's network
+    // fee), falling back to the quote if meta lags.
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
 
     const sellPrice = getPrice(state);
-    const ratio = sellPrice / pos.entryPrice;
-    const receivedSol = ex.found && ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(expectedSol) / 1e9;
+    const fromChain = ex.found && ex.solReceivedSol > 0;
     const holdSec = ((Date.now() - pos.entryTime) / 1000).toFixed(0);
     const buyAt = new Date(pos.entryTime);
     const sellAt = new Date();
-    // calcBuyTokens/calcSellSol already include the 1% pump fees: only tx fees + slippage
-    // are added here (pumpFeeBps: 0 avoids charging them twice).
-    const costs = roundTripCosts({ buySol: BUY_SOL, ratio, pumpFeeBps: 0 });
-    const pnlSol = receivedSol - BUY_SOL - costs.txSol - costs.slipSol;
-    const pnlPct = (pnlSol / BUY_SOL) * 100;
+    // PnL from ACTUALS (lib/live-pnl.mjs): received - actual entry. No estimated tx fee and no
+    // assumed slippage are subtracted — both are already inside the real fill. `costs` carries
+    // the real network fees of both legs. One curve sell tx sells the whole balance or fails, so
+    // sold = total here; the helper still splits the entry for a partial sell.
+    const acc = liveSellAccounting({
+      entrySolSol: pos.entrySolSol,
+      buySol: BUY_SOL,
+      receivedSol: fromChain ? ex.solReceivedSol : Number(expectedSol) / 1e9,
+      receivedIsWalletNet: fromChain,
+      soldRaw: tokenAmount,
+      totalRaw: tokenAmount,
+      buyFeeSol: pos.buyFeeSol ?? null,
+      sellFeeSol: ex.found ? ex.feeSol : null,
+    });
+    const { pnlSol, costs } = acc;
+    const pnlPct = acc.shareEntry > 0 ? (pnlSol / acc.shareEntry) * 100 : 0;
     recordExit(mint, pos, {
       exitPrice: sellPrice,
       ratio: sellPrice / pos.entryPrice,
@@ -543,9 +582,10 @@ async function executeSell(mint, reason, exitInfo = null) {
       exitRSol: state.realSolReserves,
       priceSource: ex.found ? "chain-meta" : "quote-fallback",
       priceAgeMs: streamAgeMs(mint),
+      live: liveFields(pos, acc),
     });
     recordResult(pnlSol);
-    session.sell(receivedSol, receivedSol - BUY_SOL, costs);
+    session.sell(acc.ledger.receivedSol, acc.ledger.pnlSol, costs);
     totalPnl += pnlSol;
     totalTrades++;
     if (pnlSol > 0) wins++;
@@ -561,10 +601,20 @@ async function executeSell(mint, reason, exitInfo = null) {
         const st = await getBondingCurveState(mintPk, 0, 0).catch(() => null);
         const sellPrice = st ? getPrice(st) : pos.entryPrice;
         const ratio = sellPrice / pos.entryPrice;
-        const receivedSol = ex.solReceivedSol > 0 ? ex.solReceivedSol : BUY_SOL;
+        // The chain value is a fact even when it is 0 (proceeds below the fee): never replace it
+        // with BUY_SOL, which booked such a sale as break-even.
+        const acc = liveSellAccounting({
+          entrySolSol: pos.entrySolSol,
+          buySol: BUY_SOL,
+          receivedSol: ex.solReceivedSol,
+          receivedIsWalletNet: true,
+          soldRaw: ex.tokensSold,
+          totalRaw: ex.tokensSold,
+          buyFeeSol: pos.buyFeeSol ?? null,
+          sellFeeSol: ex.feeSol,
+        });
+        const { pnlSol, costs } = acc;
         const holdSec = ((Date.now() - pos.entryTime) / 1000).toFixed(0);
-        const costs = roundTripCosts({ buySol: BUY_SOL, ratio, pumpFeeBps: 0 });
-        const pnlSol = receivedSol - BUY_SOL - costs.txSol - costs.slipSol;
         recordExit(mint, pos, {
           exitPrice: sellPrice,
           ratio,
@@ -576,9 +626,10 @@ async function executeSell(mint, reason, exitInfo = null) {
           exitRSol: st ? st.realSolReserves : null,
           priceSource: "chain-meta",
           priceAgeMs: streamAgeMs(mint),
+          live: liveFields(pos, acc),
         });
         recordResult(pnlSol);
-        session.sell(receivedSol, receivedSol - BUY_SOL, costs);
+        session.sell(acc.ledger.receivedSol, acc.ledger.pnlSol, costs);
         totalPnl += pnlSol;
         totalTrades++;
         if (pnlSol > 0) wins++;
@@ -602,7 +653,22 @@ function round9(x) {
 // One journal line per closed trade, then watch what the price does without us.
 // `costs` is optional here: it used to be read from an enclosing scope that no longer has it,
 // which threw on every exit ("costs is not defined") and left the position open forever.
-function recordExit(mint, pos, { exitPrice, ratio, pnlSol, holdSec, reason, costs, exitVSol = null, exitRSol = null, priceSource = null, priceAgeMs = null, unconfirmed = false }) {
+// Journal fields that exist only for a LIVE sale: the actual entry/proceeds and the real network
+// fees, so a reader can rebuild any PnL definition without guessing (see lib/live-pnl.mjs).
+function liveFields(pos, acc) {
+  return {
+    entrySolSol: acc.shareEntry, // SOL the buy took for the sold share (no network fee, no ATA rent)
+    entrySource: pos.entrySource ?? null, // "chain-meta" | "quote-fallback"
+    solReceived: acc.receivedSol, // wallet delta of the sell: already net of sellFeeSol
+    buyFeeSol: acc.costs.buyFeeSol, // NOT inside pnlSol
+    sellFeeSol: acc.costs.sellFeeSol, // inside pnlSol (through solReceived)
+    feesActual: acc.costs.feesActual, // false = a fee was estimated (meta missing)
+    ataRentSol: pos.ataRentSol ?? 0, // rent locked in the token ATA; NOT inside pnlSol
+    ataRentKnown: pos.ataRentKnown === true,
+  };
+}
+
+function recordExit(mint, pos, { exitPrice, ratio, pnlSol, holdSec, reason, costs, exitVSol = null, exitRSol = null, priceSource = null, priceAgeMs = null, unconfirmed = false, live = null }) {
   entryMeta.delete(mint);
   const sellAt = new Date();
   const buyAt = new Date(pos.entryTime);
@@ -650,6 +716,7 @@ function recordExit(mint, pos, { exitPrice, ratio, pnlSol, holdSec, reason, cost
     priceSource,
     priceAgeMs: priceAgeMs === null || priceAgeMs === undefined ? null : Math.round(priceAgeMs),
     unconfirmed: unconfirmed === true,
+    ...(live || {}),
     sessionId: SESSION_ID,
     paramsHash: PARAMS_HASH,
     gitSha: GIT_SHA,
@@ -968,7 +1035,7 @@ async function finish(reason = stopReason || "stopped") {
   holders.clear(); // cancel every watched mint: no new entries after the stop signal
   // B11: capture the open-at-stop state BEFORE any deletion — the summary must show the real
   // position count/spend, not zeros.
-  const openAtStop = [...positions.keys()].map((mint) => ({ mint, spentSol: BUY_SOL }));
+  const openAtStop = [...positions.entries()].map(([mint, pos]) => ({ mint, spentSol: pos.entrySolSol ?? BUY_SOL }));
   await closeOpenPositions(); // close ALL open positions first (exitReason "manual stop")
   // Flush the post-exit window of trades that were still being sampled.
   for (const [mint, rec] of [...postExit]) {

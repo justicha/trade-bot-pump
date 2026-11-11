@@ -1,6 +1,6 @@
 // basic-trader CLI validation (M4): invalid sell percentages must fail with a clear message
 // before any RPC, instead of a TypeError/RangeError (fractional/negative/NaN pct).
-import { makeTempKeys } from "./lib/test-env.mjs";
+import { makeTempKeys, cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,12 +17,11 @@ const MINT = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"; // valid base58, use
 
 const run = (amount) =>
   new Promise((resolve) => {
-    const env = {
-      ...process.env,
+    const env = cleanEnv({
       RPC_URL: "http://127.0.0.1:1",
       RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
       KEYS_DIR: makeTempKeys(),
-    };
+    });
     const child = spawn(
       process.execPath,
       [path.join(root, "bots", "basic-trader", "trade.mjs"), "sell", MINT, amount],

@@ -3,9 +3,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { cleanEnv } from "./lib/test-env.mjs";
 import { execFileSync } from "node:child_process";
 
-process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+process.env.RPC_URL = "https://example.invalid/?api-key=test";
 const { bootstrapCI, splitByTime, evaluateVariant, chooseByTuning } = await import("../lib/research.mjs");
 
 const asrt = (c, m) => {
@@ -74,7 +75,7 @@ const asrt = (c, m) => {
 
   const out = execFileSync(process.execPath, ["bots/research/replay.mjs", dir], {
     cwd: process.cwd(),
-    env: { ...process.env, RPC_URL: process.env.RPC_URL },
+    env: cleanEnv({ RPC_URL: process.env.RPC_URL }),
     encoding: "utf8",
   });
 

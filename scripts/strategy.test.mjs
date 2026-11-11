@@ -1,5 +1,5 @@
 // Deterministic tests for the strategy variants A..E (paper trading, no network).
-process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+process.env.RPC_URL = "https://example.invalid/?api-key=test";
 process.env.SLIPPAGE_ASSUMED_BPS = "0"; // costs are asserted separately in research.test.mjs
 
 const { StrategyLab, buildVariants, statsOf } = await import("../lib/strategy.mjs");

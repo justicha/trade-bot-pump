@@ -6,7 +6,7 @@
 //
 // Covered: the exit decision table, "only the session's own positions are ever sold", and two real
 // dry runs with an open position that must not send anything.
-import { makeTempKeys } from "./lib/test-env.mjs";
+import { makeTempKeys, cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -55,8 +55,7 @@ const MINT_B = "HbZM3fVa7XWGbLPzvdZykDX1mtjPJw9UUE8fVg3Wpump";
 // --- two dry runs with an open position: the stop path sends nothing ---
 function runBot(extraEnv) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grad-exit-journal-"));
-  const env = {
-    ...process.env,
+  const env = cleanEnv({
     RPC_URL: "http://127.0.0.1:1",
     RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
     WS_MOCK: path.join(here, "mocks", "grad-ws-mock.mjs"),
@@ -76,7 +75,7 @@ function runBot(extraEnv) {
     LIVE_CONFIRM: "",
     LIVE_CONFIRM_AMM: "",
     ...extraEnv,
-  };
+  });
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(root, "bots", "graduation-sniper", "graduation.mjs")], { cwd: root, env });
     let out = "";

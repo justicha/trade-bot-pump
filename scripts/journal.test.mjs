@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+process.env.RPC_URL = "https://example.invalid/?api-key=test";
 const { TradeJournal, readJournal, summarize } = await import("../lib/journal.mjs");
 
 const asrt = (c, m) => {

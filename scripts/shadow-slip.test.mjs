@@ -8,7 +8,7 @@
 //   buySol 0.02, slipBps 54, pump 100+100 bps, tx 455000 lamports x2
 //   single charge (v3): netPnl = -0.0004 - 0.000216 - 0.00091        -> -7.63%
 //   double charge (v2): the same plus 0.54% of the position         -> -8.16%, ratio 0.994629
-import "./lib/test-env.mjs";
+import { cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -27,8 +27,7 @@ const asrt = (c, m) => {
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
 const dir = tmp("shadow-slip-journal-");
-const env = {
-  ...process.env,
+const env = cleanEnv({
   ROOT: tmp("shadow-slip-root-"), // a fresh ROOT: the developer's .env must not leak in
   RPC_URL: "http://127.0.0.1:1", // never used: RPC_MOCK replaces the client
   RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
@@ -44,7 +43,7 @@ const env = {
   CU_PRICE: "1500000",
   CU_LIMIT: "300000",
   SLIPPAGE_ASSUMED_BPS: "50",
-};
+});
 
 const child = spawn(process.execPath, [path.join(root, "bots", "graduation-sniper", "shadow.mjs")], { cwd: root, env });
 let out = "";

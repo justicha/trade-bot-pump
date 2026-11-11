@@ -1,6 +1,7 @@
 // Shadow-report math: the numbers behind the go/no-go rule must be reproducible and honest.
 // bootstrap CI only for n >= 30; no CI on tiny samples; PF/maxDD edge cases defined.
 import assert from "node:assert/strict";
+import { cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -67,7 +68,7 @@ assert.equal(s.ci95, null, "n=4 -> no CI");
 
   const child = spawn(process.execPath, [path.join(here, "analyze-graduation.mjs"), journal], {
     cwd: root,
-    env: { ...process.env, ROOT: dir, RPC_URL: "http://127.0.0.1:1" },
+    env: cleanEnv({ ROOT: dir, RPC_URL: "http://127.0.0.1:1" }),
   });
   let out = "";
   child.stdout.on("data", (b) => (out += String(b)));

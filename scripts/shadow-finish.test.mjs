@@ -5,7 +5,7 @@
 // one mint). All three stop paths (SIGINT / SIGTERM / SHADOW_MAX_SEC) share finishShadow(), and
 // Windows cannot deliver SIGINT to a child (kill() terminates it), so this test drives the SAME
 // function through SHADOW_MAX_SEC against the real handler and a fixture socket.
-import "./lib/test-env.mjs";
+import { cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -25,8 +25,7 @@ const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
 async function runShadow(overrides = {}) {
   const dir = tmp("shadow-finish-journal-");
-  const env = {
-    ...process.env,
+  const env = cleanEnv({
     ROOT: tmp("shadow-finish-root-"), // a fresh ROOT: the developer's .env must not leak in
     RPC_URL: "http://127.0.0.1:1", // never used: RPC_MOCK replaces the client
     RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
@@ -42,7 +41,7 @@ async function runShadow(overrides = {}) {
     CU_LIMIT: "300000",
     SLIPPAGE_ASSUMED_BPS: "50",
     ...overrides,
-  };
+  });
   const child = spawn(process.execPath, [path.join(root, "bots", "graduation-sniper", "shadow.mjs")], { cwd: root, env });
   let out = "";
   let err = "";

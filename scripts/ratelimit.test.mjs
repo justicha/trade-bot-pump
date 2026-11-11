@@ -1,7 +1,7 @@
 // Unit test: the RPC rate limiter, 429 counting, degraded marking, and degraded-session exclusion.
 // The mock returns 429 on every 2nd call and must NOT make the loop spin forever or exceed a sane
 // total delay; the stats must mark the session degraded and the journal helper must exclude it.
-process.env.RPC_URL = process.env.RPC_URL || "http://127.0.0.1:1";
+process.env.RPC_URL = "http://127.0.0.1:1";
 process.env.RPC_MAX_RPS = "20"; // fast for the test
 
 const { rpcCall, rpcStats } = await import("../lib/rpc.mjs");

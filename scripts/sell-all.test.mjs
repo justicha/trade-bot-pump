@@ -4,7 +4,7 @@
 // with no venue skipped, a failed simulation never sent while the NEXT token is still processed,
 // and the --live CLI gate that refuses to run without LIVE_CONFIRM=yes.
 // No RPC, no sendTransaction: the fakes below are the only "network".
-import "./lib/test-env.mjs";
+import { cleanEnv } from "./lib/test-env.mjs";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -173,8 +173,7 @@ const count = (j, t) => types(j).filter((x) => x === t).length;
 
 // --- 4) the CLI refuses --live without LIVE_CONFIRM=yes, before any RPC client exists ---
 {
-  const env = { ...process.env, RPC_URL: "http://127.0.0.1:1", LIVE_CONFIRM: "" };
-  delete env.RPC_MOCK;
+  const env = cleanEnv({ RPC_URL: "http://127.0.0.1:1", LIVE_CONFIRM: "" });
   const res = await new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(here, "sell-all.mjs"), "--live"], { cwd: path.join(here, ".."), env });
     let out = "";

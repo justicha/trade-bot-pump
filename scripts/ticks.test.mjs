@@ -1,5 +1,5 @@
 // Unit test for the task-B instrumentation: run metadata, the tick log (write, rotate, drain).
-import { makeTempKeys } from "./lib/test-env.mjs";
+import { makeTempKeys, cleanEnv } from "./lib/test-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -63,8 +63,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ticks-"));
   const run = spawnSync(process.execPath, [path.join(repo, "bots", "sniper", "sniper.mjs"), "--dry-run"], {
     cwd: repo,
     timeout: 25_000,
-    env: {
-      ...process.env,
+    env: cleanEnv({
       RPC_URL: "http://127.0.0.1:1",
       RPC_MOCK: path.join(repo, "scripts", "mocks", "rpc-mock.mjs"),
       WS_MOCK: path.join(repo, "scripts", "mocks", "ws-mock.mjs"),
@@ -79,7 +78,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ticks-"));
       SNIPER_MIN_DEV_BUY: "0",
       SNIPER_MIN_SLOTS: "1",
       SNIPER_MIN_DELAY_MS: "0",
-    },
+    }),
   });
   asrt(run.status === 0, "sniper with TICKS=0 exits cleanly, got " + run.status);
   const tickFiles = fs.readdirSync(jdir).filter((f) => f.startsWith("ticks-"));

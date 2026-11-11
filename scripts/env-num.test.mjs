@@ -1,6 +1,7 @@
 // Numeric env validation (H7): an invalid numeric env var must abort startup with the variable
 // name (lib/config.mjs numOr), never silently become NaN (a NaN COPY_MAX_POSITIONS used to disable
 // the copy-trader position cap entirely).
+import { cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,7 @@ const asrt = (c, m) => {
 
 const run = (relScript, argv, extraEnv) =>
   new Promise((resolve) => {
-    const env = { ...process.env, RPC_URL: "http://127.0.0.1:1", ...extraEnv };
+    const env = cleanEnv({ RPC_URL: "http://127.0.0.1:1", ...extraEnv });
     const child = spawn(process.execPath, [path.join(root, relScript), ...argv], { cwd: root, env });
     let out = "";
     let err = "";

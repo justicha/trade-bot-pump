@@ -10,3 +10,5 @@ keys/
 __pycache__/
 *.pyc
 .vscode/
+agents/
+.claude/

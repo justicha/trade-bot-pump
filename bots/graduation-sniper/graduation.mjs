@@ -64,6 +64,8 @@ import {
 import { connection, getSOLBalance, sendTxWithRetry, rpcStats } from "../../lib/rpc.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
 import { SessionLedger, roundSol, splitEntryForSell } from "../../lib/session.mjs";
+import { recordStuck } from "../../lib/stuck.mjs";
+import { liveEntry } from "../../lib/live-pnl.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -498,12 +500,15 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     const sig = await sendTxWithRetry(tx, { skipPreflight: true });
     // Entry price = ACTUAL execution (tokens that arrived / SOL that left), not the pre-trade quote.
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
-    const entrySol = ex.found && ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+    // Entry WITHOUT the network fee and WITHOUT the token-ATA rent (the rent is tracked apart).
+    const entry = liveEntry(ex, BUY_SOL);
+    const entrySol = entry.entrySolSol;
     const tokens = ex.found && ex.tokensReceived > 0n ? ex.tokensReceived : expectedTokens;
     const entryPrice = Number(tokens) > 0 ? entrySol / (Number(tokens) / 1e6) : quotePrice;
     positions.set(mint, {
       tokens,
       entrySolSol: entrySol,
+      ataRentSol: entry.ataRentSol,
       entryPrice,
       entryTime: Date.now(),
       fillAtEntry: fillPct,
@@ -513,6 +518,7 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     attempted.add(mint);
     boughtMints.add(mint); // this session's own position: the only kind the exit path may sell
     session.buy(entrySol);
+    session.ataRent(entry.ataRentSol);
     journal.trade({
       sessionId: SESSION_ID,
       paramsHash: PARAMS_HASH,
@@ -521,6 +527,8 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
       side: "buy",
       sig,
       solSpent: entrySol,
+      ataRentSol: entry.ataRentSol,
+      ataRentKnown: entry.ataRentKnown,
       tokens: tokens.toString(),
       entryPrice,
       fillPct,
@@ -537,11 +545,13 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     if (err.sig) {
       const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
       if (ex && ex.found && ex.tokensReceived > 0n) {
-        const entrySol = ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+        const entry = liveEntry(ex, BUY_SOL);
+        const entrySol = entry.entrySolSol;
         const entryPrice = Number(ex.tokensReceived) > 0 ? entrySol / (Number(ex.tokensReceived) / 1e6) : quotePrice;
         positions.set(mint, {
           tokens: ex.tokensReceived,
           entrySolSol: entrySol,
+          ataRentSol: entry.ataRentSol,
           entryPrice,
           entryTime: Date.now(),
           fillAtEntry: fillPct,
@@ -551,9 +561,11 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
         attempted.add(mint);
     boughtMints.add(mint); // this session's own position: the only kind the exit path may sell
         session.buy(entrySol);
+        session.ataRent(entry.ataRentSol);
         journal.trade({
           sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, side: "buy", sig: err.sig,
-          solSpent: entrySol, tokens: ex.tokensReceived.toString(), entryPrice, fillPct,
+          solSpent: entrySol, ataRentSol: entry.ataRentSol, ataRentKnown: entry.ataRentKnown,
+          tokens: ex.tokensReceived.toString(), entryPrice, fillPct,
           exitRatioPreview: exitRatio, priceSource: "chain-meta", simulationResult: "ok", unitsConsumed: null,
         });
         log(`  bought! (reconciled after confirm error) entry ${entryPrice.toExponential(3)} SOL/token`);
@@ -621,17 +633,24 @@ function markStuck(mint, pos, reason, extra = {}) {
   const tag = [venue ? `venue=${venue}` : null, `attempts=${attempts}/${SELL_MAX_ATTEMPTS}`].filter(Boolean).join(" ");
   stuck.add(`${mint.slice(0, 12)}: ${tag} — ${reason}`);
   session.drop(`${mint.slice(0, 12)}: STUCK ${reason}`);
-  journal.write({
-    type: "stuck",
-    sessionId: SESSION_ID,
-    paramsHash: PARAMS_HASH,
-    gitSha: GIT_SHA,
+  // The limits must see a stuck position: the REMAINING entry (partial sells already reduced
+  // pos.entrySolSol) is booked as an assumed loss — journal row `pnlSol` + `lossAssumed: true`,
+  // TradeGuard (MAX_CONSEC_LOSSES) and today's net (daily loss limit) via recordResult.
+  const lossSol = recordStuck({
+    journal,
+    recordResult,
     mint,
-    venue,
+    pos,
+    buySol: BUY_SOL,
     reason,
-    attempts,
-    maxAttempts: SELL_MAX_ATTEMPTS,
-    tokens: (pos.tokens ?? 0n).toString(),
+    fields: {
+      sessionId: SESSION_ID,
+      paramsHash: PARAMS_HASH,
+      gitSha: GIT_SHA,
+      venue,
+      attempts,
+      maxAttempts: SELL_MAX_ATTEMPTS,
+    },
   });
   // The reason and the attempt count are part of the message: "retries stopped" alone hid the fact
   // that nothing had ever been retried (AUDIT_SELL.md §2).
@@ -640,6 +659,7 @@ function markStuck(mint, pos, reason, extra = {}) {
       ? `retries stopped after ${attempts}/${SELL_MAX_ATTEMPTS} attempts`
       : `no further automatic retry (${attempts}/${SELL_MAX_ATTEMPTS} attempts used)`;
   log(`  ALERT: ${mint.slice(0, 12)} STUCK (${tag}): ${reason} — ${tail}, use scripts/rescue-sell.mjs`);
+  log(`  STUCK booked as an assumed loss of ${lossSol.toFixed(6)} SOL for the limits (tokens are still in the wallet)`);
   positions.delete(mint);
 }
 
@@ -878,6 +898,9 @@ async function sellPosition(mint, mintPk, pos, ratio) {
       venue,
       solReceived: receivedSol,
       pnlSol: pnlActual,
+      // Rent locked in this position's token ATA. Written on the sale that CLOSES the position
+      // (0 on a partial sell), so summing the field over sell rows never counts it twice.
+      ataRentSol: amountRaw < total ? 0 : (pos.ataRentSol ?? 0),
       amountRaw: amountRaw.toString(),
       balanceRaw: total.toString(),
       quoteOut: Number(quote) / 1e9,

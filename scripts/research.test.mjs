@@ -1,6 +1,6 @@
 // Tests for the research building blocks: holder-gate bugfix, curve anomaly guard, cost model.
 // No network, no wallet.
-process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+process.env.RPC_URL = "https://example.invalid/?api-key=test";
 process.env.SLIPPAGE_ASSUMED_BPS = "0";
 
 const { HolderTracker } = await import("../lib/holders.mjs");

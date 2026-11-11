@@ -1,6 +1,6 @@
 // rescue-sell safety gate (C3): --dry-run must always win over --live (no send), and --live alone
 // without LIVE_CONFIRM=yes must be refused by lib/config.mjs before any transaction.
-import { makeTempKeys } from "./lib/test-env.mjs";
+import { makeTempKeys, cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,12 +17,11 @@ const MINT = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"; // valid base58, use
 
 const run = (argv) =>
   new Promise((resolve) => {
-    const env = {
-      ...process.env,
+    const env = cleanEnv({
       RPC_URL: "http://127.0.0.1:1",
       RPC_MOCK: path.join(here, "mocks", "rescue-rpc-mock.mjs"),
       KEYS_DIR: makeTempKeys(),
-    };
+    });
     const child = spawn(process.execPath, [path.join(root, "scripts", "rescue-sell.mjs"), ...argv], { cwd: root, env });
     let out = "";
     let err = "";

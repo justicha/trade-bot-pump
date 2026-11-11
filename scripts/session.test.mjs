@@ -4,7 +4,9 @@
 //   - an oversized single trade is only refused per-trade (bot keeps running);
 //   - SessionLedger totals: spent / received / net, W/L, unresolved, one-shot report.
 // lib/config.mjs aborts the process when RPC_URL is missing, so set the env before importing.
-process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+import { cleanEnv } from "./lib/test-env.mjs";
+
+process.env.RPC_URL = "https://example.invalid/?api-key=test";
 process.env.MAX_TRADE_SOL = "0.05";
 process.env.MAX_SESSION_SOL = "0.2";
 process.env.MAX_CONSEC_LOSSES = "3";
@@ -137,7 +139,7 @@ asrt(sum2.worstCaseSol === -0.019, "worst case (open = 0) must be received - spe
   // Set --live on process.argv BEFORE importing config/rpc: both compute their gate at import time.
   const code = `process.argv = ['node','bot','--live']; process.env.RPC_MOCK = ${JSON.stringify(mockPath)}; await import('./lib/rpc.mjs'); console.log('SHOULD NOT REACH');`;
   const run = (extraEnv) =>
-    spawnSync(process.execPath, ["--input-type=module", "-e", code], { cwd: root, env: { ...process.env, ...extraEnv } });
+    spawnSync(process.execPath, ["--input-type=module", "-e", code], { cwd: root, env: cleanEnv({ MAX_TRADE_SOL: process.env.MAX_TRADE_SOL, MAX_SESSION_SOL: process.env.MAX_SESSION_SOL, MAX_CONSEC_LOSSES: process.env.MAX_CONSEC_LOSSES, ...extraEnv }) });
 
   // 1) --live alone is not enough: LIVE_CONFIRM=yes is required.
   const noConfirm = run({ LIVE_CONFIRM: "" });

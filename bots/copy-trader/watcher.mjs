@@ -35,6 +35,9 @@ import { simulateThenSend } from "../../lib/send.mjs";
 import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
 import { SessionLedger, splitEntryForSell } from "../../lib/session.mjs";
+import { TradeJournal } from "../../lib/journal.mjs";
+import { recordStuck } from "../../lib/stuck.mjs";
+import { liveEntry } from "../../lib/live-pnl.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -52,6 +55,8 @@ let totalTrades = 0;
 
 // Session ledger: spent / received / net for the end-of-session report (lib/session.mjs).
 const session = new SessionLedger({ label: "COPY TRADER", mode: LIVE ? "LIVE" : "DRY RUN" });
+// Journal: only STUCK rows for now (same writer and directory as the sniper).
+const journal = new TradeJournal({ bot: "copy-trader" });
 
 if (!TARGETS.length) {
   console.log("Set COPY_TARGETS=addr1,addr2,... in .env");
@@ -153,10 +158,12 @@ async function copyBuyUnlocked(mint, copiedFrom) {
     // C5: entry from ACTUAL execution (tokens that arrived / SOL that left), falling back to the
     // quote if the transaction meta is not available yet.
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
-    const spent = ex.found && ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
+    const entry = liveEntry(ex, BUY_SOL); // ATA rent is tracked apart, not inside the entry
+    const spent = entry.entrySolSol;
     const actualEntry = ex.found && ex.tokensReceived > 0n ? spent / (Number(ex.tokensReceived) / 1e6) : entryPrice;
-    positions.set(mint, { entryPrice: actualEntry, entrySolSol: spent, entryTime: Date.now(), copiedFrom });
+    positions.set(mint, { entryPrice: actualEntry, entrySolSol: spent, ataRentSol: entry.ataRentSol, entryTime: Date.now(), copiedFrom });
     session.buy(spent);
+    session.ataRent(entry.ataRentSol);
     log(`  copied${ex.found ? "" : " (quote-fallback)"}`);
   } catch (err) {
     // C2: the buy may have landed even though confirmTransaction failed. If the chain shows the
@@ -164,9 +171,11 @@ async function copyBuyUnlocked(mint, copiedFrom) {
     if (err.sig) {
       const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
       if (ex && ex.found && ex.tokensReceived > 0n) {
-        const spent = ex.solSpentSol > 0 ? ex.solSpentSol : BUY_SOL;
-        positions.set(mint, { entryPrice: entryPrice, entrySolSol: spent, entryTime: Date.now(), copiedFrom });
+        const entry = liveEntry(ex, BUY_SOL);
+        const spent = entry.entrySolSol;
+        positions.set(mint, { entryPrice: entryPrice, entrySolSol: spent, ataRentSol: entry.ataRentSol, entryTime: Date.now(), copiedFrom });
         session.buy(spent);
+        session.ataRent(entry.ataRentSol);
         log(`  copied (reconciled after confirm error, ${ex.tokensReceived} tokens)`);
         return;
       }
@@ -213,8 +222,15 @@ async function copySell(mint, copiedFrom) {
     const sellAmount = SELL_PCT >= 100 ? total : (total * BigInt(SELL_PCT)) / 100n;
     const state = await getBondingCurveState(mintPk, 0);
     if (!state || state.complete) {
-      log(`  bonding curve unavailable`);
-      session.drop(`${mint.slice(0, 8)}: bonding curve gone`);
+      // No AMM sell in this bot: the tokens stay in the wallet. Journal it as STUCK and book the
+      // remaining entry as an assumed loss so MAX_CONSEC_LOSSES sees it (lib/stuck.mjs).
+      const why = state ? "curve complete: no AMM sell in this bot" : "curve unavailable: no AMM sell in this bot";
+      const lossSol = recordStuck({
+        journal, recordResult, mint, pos: { ...pos, tokens: total }, buySol: BUY_SOL, reason: why,
+        fields: { mode: "LIVE", copiedFrom },
+      });
+      log(`  STUCK ${mint.slice(0, 8)}: ${why} — booked as an assumed loss of ${lossSol.toFixed(6)} SOL, use scripts/rescue-sell.mjs`);
+      session.drop(`${mint.slice(0, 8)}: STUCK ${why}`);
       positions.delete(mint);
       return;
     }

@@ -1,6 +1,6 @@
 // H4: splitEntryForSell returns the entry share sold and the entry that remains, so a partial sell
 // does not double-count the full entry.
-process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+process.env.RPC_URL = "https://example.invalid/?api-key=test";
 import "./lib/test-env.mjs";
 import { splitEntryForSell, roundSol } from "../lib/session.mjs";
 

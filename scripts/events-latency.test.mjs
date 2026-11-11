@@ -1,5 +1,5 @@
 // Tests for the validated event parser, the execution-latency model and the freeze rule.
-process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+process.env.RPC_URL = "https://example.invalid/?api-key=test";
 process.env.SLIPPAGE_ASSUMED_BPS = "0";
 const bs58 = (await import("bs58")).default;
 const { parseTrade, describe, reservesOf, tradeDirection } = await import("../lib/events.mjs");

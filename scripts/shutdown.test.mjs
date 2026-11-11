@@ -5,7 +5,7 @@
 // Windows note: child.kill("SIGINT") force-terminates a child without running its handler, so the
 // signal delivery itself cannot be tested here. SNIPER_MAX_SEC triggers the SAME finish() function
 // that the SIGINT/SIGTERM handlers call, so this exercises the real shutdown code path.
-import { makeTempKeys } from "./lib/test-env.mjs";
+import { makeTempKeys, cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -23,8 +23,7 @@ const asrt = (c, m) => {
 };
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "shutdown-journal-"));
-const env = {
-  ...process.env,
+const env = cleanEnv({
   RPC_URL: "http://127.0.0.1:1",
   RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
   WS_MOCK: path.join(here, "mocks", "ws-mock.mjs"),
@@ -48,7 +47,7 @@ const env = {
   SNIPER_STOP_LOSS: "0", // no SL
   MAX_TRADE_SOL: "0.02",
   MAX_SESSION_SOL: "0.2",
-};
+});
 
 const child = spawn(process.execPath, [path.join(root, "bots", "sniper", "sniper.mjs"), "--dry-run"], { cwd: root, env });
 let out = "";

@@ -28,10 +28,46 @@ fs.writeFileSync(
   "RPC_URL=https://example.invalid # endpoint comment\nCU_PRICE=1500000 # lamports\nLOG_LEVEL=debug # verbose\n",
 );
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const code = `process.env.ROOT=${JSON.stringify(root)}; import("./lib/config.mjs").then((m) => console.log(m.CU_PRICE, m.RPC_URL));`;
-const run = spawnSync(process.execPath, ["--input-type=module", "-e", code], { cwd: repo, encoding: "utf8" });
-assert.equal(run.status, 0, `config loads with inline comments (stderr: ${run.stderr})`);
-assert.match(run.stdout, /^1500000 https:\/\/example\.invalid\s*$/m, `clean values loaded, got "${run.stdout.trim()}"`);
+
+// Hermetic child env. lib/config.mjs never lets .env override an EXISTING env var, so a developer's
+// shell (or IDE) that exports RPC_URL / CU_PRICE would win over the temp .env and the child would
+// load the real endpoint instead of the values under test. Strip every setting the child could pick
+// up (case-insensitive: Windows env names are) and point ROOT at the temp dir, so the repo .env is
+// never read either.
+const STRIP = new Set([
+  "ROOT", "RPC_URL", "HELIUS_API_KEY", "CU_PRICE", "CU_LIMIT", "SLIPPAGE_BPS", "LOG_LEVEL",
+  "MAX_TRADE_SOL", "MAX_SESSION_SOL", "MAX_CONSEC_LOSSES", "CURVE_CACHE_MS", "RPC_TIMEOUT_MS",
+  "LIVE_CONFIRM", "LIVE_CONFIRM_AMM", "DRY_SELL", "SELL_ON_EXIT", "KEYS_DIR", "WS_MOCK", "RPC_MOCK",
+]);
+function childEnv(base, rootDir) {
+  const env = {};
+  for (const [k, v] of Object.entries(base)) if (!STRIP.has(k.toUpperCase())) env[k] = v;
+  env.ROOT = rootDir;
+  return env;
+}
+// Failure messages must never echo a real endpoint / API key from the developer's environment.
+const redact = (s) =>
+  String(s ?? "")
+    .replace(/\b(?:https?|wss?):\/\/(?!example\.invalid\b)[^\s"'`]*/gi, "<url-redacted>")
+    .replace(/api[-_]?key=[^\s&"'`]*/gi, "api-key=<redacted>");
+
+// Poison the inherited env on purpose: the result must not depend on what this machine exports.
+// Without the stripping above the child would print "777 https://poison.invalid/..." and fail.
+const inherited = {
+  ...process.env,
+  RPC_URL: "https://poison.invalid/?api-key=POISON",
+  CU_PRICE: "777",
+  LOG_LEVEL: "error",
+  LIVE_CONFIRM: "yes",
+};
+const code = `import("./lib/config.mjs").then((m) => console.log(m.CU_PRICE, m.RPC_URL));`;
+const run = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+  cwd: repo,
+  encoding: "utf8",
+  env: childEnv(inherited, root),
+});
+assert.equal(run.status, 0, `config loads with inline comments (stderr: ${redact(run.stderr)})`);
+assert.match(run.stdout, /^1500000 https:\/\/example\.invalid\s*$/m, `clean values loaded, got "${redact(run.stdout.trim())}"`);
 
 console.log(JSON.stringify({ parserCases: 9, integration: "ok" }));
 console.log("PASS: inline comments stripped, quoted values and '#'-in-value preserved");

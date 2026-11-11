@@ -9,7 +9,7 @@
 //   * synthetic create/buy/sell notifications (>= 10 events, incl. a Mayhem CPI) were handled
 //   * positions were opened AND closed; none left open at the stop
 //   * the journal in the temp dir agrees with the session summary (spent / received / closed)
-import { makeTempKeys } from "./lib/test-env.mjs";
+import { makeTempKeys, cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,8 +28,7 @@ const asrt = (c, m) => {
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "smoke-journal-"));
 const maxSec = 14;
-const env = {
-  ...process.env,
+const env = cleanEnv({
   RPC_URL: "http://127.0.0.1:1", // never used: RPC_MOCK replaces the client
   RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
   WS_MOCK: path.join(here, "mocks", "ws-mock.mjs"),
@@ -51,7 +50,7 @@ const env = {
   SNIPER_TIMEOUT_SEC: "6", // exits come from the timeout (the stream price rises slowly in the fixture)
   MAX_TRADE_SOL: "0.02",
   MAX_SESSION_SOL: "0.2",
-};
+});
 
 const out = [];
 const err = [];

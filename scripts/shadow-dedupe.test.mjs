@@ -7,7 +7,7 @@
 //
 // Scenario "reappear": the mint crosses MIN_FILL, filler mints push mintState past a tiny cap, the
 // spent mint is pruned, then the same mint trades again — with the fix it stays closed.
-import "./lib/test-env.mjs";
+import { cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -26,8 +26,7 @@ const asrt = (c, m) => {
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
 const dir = tmp("shadow-dedupe-journal-");
-const env = {
-  ...process.env,
+const env = cleanEnv({
   ROOT: tmp("shadow-dedupe-root-"), // a fresh ROOT: the developer's .env must not leak in
   RPC_URL: "http://127.0.0.1:1", // never used: RPC_MOCK replaces the client
   RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
@@ -43,7 +42,7 @@ const env = {
   CU_PRICE: "1500000",
   CU_LIMIT: "300000",
   SLIPPAGE_ASSUMED_BPS: "50",
-};
+});
 
 const child = spawn(process.execPath, [path.join(root, "bots", "graduation-sniper", "shadow.mjs")], { cwd: root, env });
 let out = "";

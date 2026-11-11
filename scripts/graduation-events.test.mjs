@@ -1,6 +1,6 @@
 // H2: graduation must process EVERY buy event in a tx, not just the first (the old `break`). Two
 // events — 90% then 95% fill — must end with the watchlist showing the higher fill.
-import { makeTempKeys } from "./lib/test-env.mjs";
+import { makeTempKeys, cleanEnv } from "./lib/test-env.mjs";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,8 +17,7 @@ const asrt = (c, m) => {
 };
 
 const jdir = fs.mkdtempSync(path.join(os.tmpdir(), "grad-events-journal-"));
-const env = {
-  ...process.env,
+const env = cleanEnv({
   RPC_URL: "http://127.0.0.1:1",
   RPC_MOCK: path.join(here, "mocks", "rpc-mock.mjs"),
   WS_MOCK: path.join(here, "mocks", "grad-ws-mock.mjs"),
@@ -29,7 +28,7 @@ const env = {
   GRAD_MAX_FILL_PCT: "97",
   MIN_HOLDERS: "0",
   GRAD_MAX_POSITIONS: "3",
-};
+});
 
 const child = spawn(process.execPath, [path.join(root, "bots", "graduation-sniper", "graduation.mjs"), "--dry-run"], { cwd: root, env });
 let out = "";

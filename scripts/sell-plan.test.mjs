@@ -1,7 +1,7 @@
 // Step-1 regression suite: a 100% sell must never be sent when the curve cannot pay it.
 // Real numbers from the stuck position (FMosXPu8L1cm): balance 235,612.53 tokens,
 // realSolReserves 0.000786 SOL, while the naive full-balance quote is 0.0509 SOL.
-process.env.RPC_URL = process.env.RPC_URL || "https://example.invalid/?api-key=test";
+process.env.RPC_URL = "https://example.invalid/?api-key=test";
 import "./lib/test-env.mjs";
 import assert from "node:assert/strict";
 import { calcSellQuote, calcSellSol, solToLamports } from "../lib/pumpfun.mjs";
