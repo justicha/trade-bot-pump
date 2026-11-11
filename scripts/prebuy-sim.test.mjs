@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { simulateCurveSell } from "../lib/prebuy-sim.mjs";
 import { calcSellSol } from "../lib/pumpfun.mjs";
+import { ATA_PROGRAM } from "../lib/constants.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const asrt = (c, m) => {
@@ -64,6 +65,18 @@ function harness({ sim = SIM_OK } = {}) {
   asrt(sellIx.data.readBigUInt64LE(8) === TOKENS, "the sell offers the FULL position");
   asrt(sellIx.data.readBigUInt64LE(16) === (res.quote * 9500n) / 10000n, "min_out is the quote minus the 5% slip");
   asrt(sellIx.data.subarray(0, 8).toString("hex") === "33e685a4017f83ad", "it is the curve sell instruction");
+}
+
+// --- the sim creates the user ATA first, exactly like the real buy does ---
+{
+  const h = harness();
+  const res = await simulateCurveSell({ wallet, mintPk, state, tokens: TOKENS, deps: h.deps });
+  asrt(res.ok === true, "simulation passes with the ATA create");
+  const ixs = h.built[0];
+  const sellIx = ixs.at(-1);
+  const ataIx = ixs.find((ix) => ix.programId.equals(ATA_PROGRAM) && ix.data.length === 1 && ix.data[0] === 1);
+  asrt(!!ataIx, "the transaction creates the associated token account (idempotent)");
+  asrt(ixs.indexOf(ataIx) < ixs.indexOf(sellIx), "the ATA create runs before the curve sell");
 }
 
 // --- a failing simulation must refuse the buy ---
