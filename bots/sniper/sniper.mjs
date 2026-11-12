@@ -45,7 +45,7 @@ import { TradeJournal } from "../../lib/journal.mjs";
 import { checkCurve, metricsOf, rawSolPerTokenToWhole } from "../../lib/curve.mjs";
 import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
-import { liveEntry, liveSellAccounting } from "../../lib/live-pnl.mjs";
+import { applyLiveSell, liveEntry } from "../../lib/live-pnl.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
@@ -122,8 +122,10 @@ let summaryWritten = false; // SESSION SUMMARY + session_summary record/file alr
 let manualStopCloses = 0; // positions closed at stop with exitReason "manual stop"
 const CLOSE_TIMEOUT_MS = 15000; // close-open-positions safety budget
 
-function recordResult(pnlSol) {
-  guard.recordResult(pnlSol);
+// opts.guardPnlSol: a live sale's PnL before network fees — what MAX_CONSEC_LOSSES classifies by
+// (lib/guards.mjs). Without it (dry run, STUCK) the guard sees pnlSol, as before.
+function recordResult(pnlSol, opts) {
+  guard.recordResult(pnlSol, opts);
   if (guard.halted) requestStop(guard.haltReason || "loss limit reached");
 }
 
@@ -551,24 +553,15 @@ async function executeSell(mint, reason, exitInfo = null) {
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
 
     const sellPrice = getPrice(state);
-    const fromChain = ex.found && ex.solReceivedSol > 0;
     const holdSec = ((Date.now() - pos.entryTime) / 1000).toFixed(0);
     const buyAt = new Date(pos.entryTime);
     const sellAt = new Date();
-    // PnL from ACTUALS (lib/live-pnl.mjs): received - actual entry. No estimated tx fee and no
-    // assumed slippage are subtracted — both are already inside the real fill. `costs` carries
-    // the real network fees of both legs. One curve sell tx sells the whole balance or fails, so
-    // sold = total here; the helper still splits the entry for a partial sell.
-    const acc = liveSellAccounting({
-      entrySolSol: pos.entrySolSol,
-      buySol: BUY_SOL,
-      receivedSol: fromChain ? ex.solReceivedSol : Number(expectedSol) / 1e9,
-      receivedIsWalletNet: fromChain,
-      soldRaw: tokenAmount,
-      totalRaw: tokenAmount,
-      buyFeeSol: pos.buyFeeSol ?? null,
-      sellFeeSol: ex.found ? ex.feeSol : null,
-    });
+    // PnL from ACTUALS — the same calculation as graduation-sniper and copy-trader
+    // (lib/live-pnl.mjs applyLiveSell): proceeds - actual entry - both real network fees. No
+    // estimated tx fee and no assumed slippage. One curve sell tx sells the whole balance or
+    // fails, so sold = total here.
+    const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, quoteSol: Number(expectedSol) / 1e9, soldRaw: tokenAmount, totalRaw: tokenAmount });
+    const { acc } = sale;
     const { pnlSol, costs } = acc;
     const pnlPct = acc.shareEntry > 0 ? (pnlSol / acc.shareEntry) * 100 : 0;
     recordExit(mint, pos, {
@@ -582,9 +575,9 @@ async function executeSell(mint, reason, exitInfo = null) {
       exitRSol: state.realSolReserves,
       priceSource: ex.found ? "chain-meta" : "quote-fallback",
       priceAgeMs: streamAgeMs(mint),
-      live: liveFields(pos, acc),
+      live: sale.fields,
     });
-    recordResult(pnlSol);
+    recordResult(pnlSol, { guardPnlSol: sale.guardPnlSol });
     session.sell(acc.ledger.receivedSol, acc.ledger.pnlSol, costs);
     totalPnl += pnlSol;
     totalTrades++;
@@ -601,18 +594,11 @@ async function executeSell(mint, reason, exitInfo = null) {
         const st = await getBondingCurveState(mintPk, 0, 0).catch(() => null);
         const sellPrice = st ? getPrice(st) : pos.entryPrice;
         const ratio = sellPrice / pos.entryPrice;
-        // The chain value is a fact even when it is 0 (proceeds below the fee): never replace it
-        // with BUY_SOL, which booked such a sale as break-even.
-        const acc = liveSellAccounting({
-          entrySolSol: pos.entrySolSol,
-          buySol: BUY_SOL,
-          receivedSol: ex.solReceivedSol,
-          receivedIsWalletNet: true,
-          soldRaw: ex.tokensSold,
-          totalRaw: ex.tokensSold,
-          buyFeeSol: pos.buyFeeSol ?? null,
-          sellFeeSol: ex.feeSol,
-        });
+        // The chain value is a fact even when nothing arrived (proceeds below the fee): never
+        // replace it with BUY_SOL, which booked such a sale as break-even. The sniper sells the
+        // whole balance in one tx, so the landed sale closes the position (sold = total).
+        const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, soldRaw: ex.tokensSold, totalRaw: ex.tokensSold });
+        const { acc } = sale;
         const { pnlSol, costs } = acc;
         const holdSec = ((Date.now() - pos.entryTime) / 1000).toFixed(0);
         recordExit(mint, pos, {
@@ -626,9 +612,9 @@ async function executeSell(mint, reason, exitInfo = null) {
           exitRSol: st ? st.realSolReserves : null,
           priceSource: "chain-meta",
           priceAgeMs: streamAgeMs(mint),
-          live: liveFields(pos, acc),
+          live: sale.fields,
         });
-        recordResult(pnlSol);
+        recordResult(pnlSol, { guardPnlSol: sale.guardPnlSol });
         session.sell(acc.ledger.receivedSol, acc.ledger.pnlSol, costs);
         totalPnl += pnlSol;
         totalTrades++;
@@ -653,21 +639,8 @@ function round9(x) {
 // One journal line per closed trade, then watch what the price does without us.
 // `costs` is optional here: it used to be read from an enclosing scope that no longer has it,
 // which threw on every exit ("costs is not defined") and left the position open forever.
-// Journal fields that exist only for a LIVE sale: the actual entry/proceeds and the real network
-// fees, so a reader can rebuild any PnL definition without guessing (see lib/live-pnl.mjs).
-function liveFields(pos, acc) {
-  return {
-    entrySolSol: acc.shareEntry, // SOL the buy took for the sold share (no network fee, no ATA rent)
-    entrySource: pos.entrySource ?? null, // "chain-meta" | "quote-fallback"
-    solReceived: acc.receivedSol, // wallet delta of the sell: already net of sellFeeSol
-    buyFeeSol: acc.costs.buyFeeSol, // NOT inside pnlSol
-    sellFeeSol: acc.costs.sellFeeSol, // inside pnlSol (through solReceived)
-    feesActual: acc.costs.feesActual, // false = a fee was estimated (meta missing)
-    ataRentSol: pos.ataRentSol ?? 0, // rent locked in the token ATA; NOT inside pnlSol
-    ataRentKnown: pos.ataRentKnown === true,
-  };
-}
-
+// `live`: journal fields of a LIVE sale (lib/live-pnl.mjs liveSellFields) — actual entry/proceeds
+// and the real network fees.
 function recordExit(mint, pos, { exitPrice, ratio, pnlSol, holdSec, reason, costs, exitVSol = null, exitRSol = null, priceSource = null, priceAgeMs = null, unconfirmed = false, live = null }) {
   entryMeta.delete(mint);
   const sellAt = new Date();
@@ -929,13 +902,11 @@ async function closePositionAtStop(mint, { unconfirmed = false } = {}) {
   // wallet (scripts/rescue-sell.mjs can find them).
   if (!DRY_RUN) {
     log(`  [stop] ${mint.slice(0, 8)} curve unavailable — NOT sold (STUCK: tokens remain in wallet)`);
-    journal.write({
-      type: "stuck",
-      sessionId: SESSION_ID,
-      paramsHash: PARAMS_HASH,
-      gitSha: GIT_SHA,
-      mint,
-      reason: "stop: curve unavailable, not sold",
+    // Assumed loss for the limits (lib/stuck.mjs): the daily loss limit must see this position
+    // when the bot is restarted on the same day.
+    recordStuck({
+      journal, recordResult, mint, pos, buySol: BUY_SOL, reason: "stop: curve unavailable, not sold",
+      fields: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mode: "LIVE" },
     });
     session.drop(`${mint.slice(0, 8)}: unsold at stop (curve unavailable)`);
     positions.delete(mint);

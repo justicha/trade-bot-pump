@@ -34,10 +34,10 @@ import { connection, getSOLBalance, sendTxWithRetry } from "../../lib/rpc.mjs";
 import { simulateThenSend } from "../../lib/send.mjs";
 import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
-import { SessionLedger, splitEntryForSell } from "../../lib/session.mjs";
+import { SessionLedger } from "../../lib/session.mjs";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
-import { liveEntry } from "../../lib/live-pnl.mjs";
+import { applyLiveSell, balanceBeforeSell, liveEntry } from "../../lib/live-pnl.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -83,8 +83,10 @@ let stopping = false; // no new work is accepted
 let exited = false; // report printed, process is on its way out
 let stopReason = "";
 
-function recordResult(pnlSol) {
-  guard.recordResult(pnlSol);
+// opts.guardPnlSol: a live sale's PnL before network fees — what MAX_CONSEC_LOSSES classifies by
+// (lib/guards.mjs). Without it (dry run, STUCK) the guard sees pnlSol, as before.
+function recordResult(pnlSol, opts) {
+  guard.recordResult(pnlSol, opts);
   if (guard.halted) requestStop(guard.haltReason || "loss limit reached");
 }
 
@@ -161,7 +163,7 @@ async function copyBuyUnlocked(mint, copiedFrom) {
     const entry = liveEntry(ex, BUY_SOL); // ATA rent is tracked apart, not inside the entry
     const spent = entry.entrySolSol;
     const actualEntry = ex.found && ex.tokensReceived > 0n ? spent / (Number(ex.tokensReceived) / 1e6) : entryPrice;
-    positions.set(mint, { entryPrice: actualEntry, entrySolSol: spent, ataRentSol: entry.ataRentSol, entryTime: Date.now(), copiedFrom });
+    positions.set(mint, { entryPrice: actualEntry, ...entry, entryTime: Date.now(), copiedFrom });
     session.buy(spent);
     session.ataRent(entry.ataRentSol);
     log(`  copied${ex.found ? "" : " (quote-fallback)"}`);
@@ -173,7 +175,7 @@ async function copyBuyUnlocked(mint, copiedFrom) {
       if (ex && ex.found && ex.tokensReceived > 0n) {
         const entry = liveEntry(ex, BUY_SOL);
         const spent = entry.entrySolSol;
-        positions.set(mint, { entryPrice: entryPrice, entrySolSol: spent, ataRentSol: entry.ataRentSol, entryTime: Date.now(), copiedFrom });
+        positions.set(mint, { entryPrice: entryPrice, ...entry, entryTime: Date.now(), copiedFrom });
         session.buy(spent);
         session.ataRent(entry.ataRentSol);
         log(`  copied (reconciled after confirm error, ${ex.tokensReceived} tokens)`);
@@ -209,10 +211,13 @@ async function copySell(mint, copiedFrom) {
     return;
   }
 
+  // Token balance BEFORE this sale; the catch (a sale that landed despite a confirm error) measures
+  // the sold share against it.
+  let total = null;
   try {
     const ata = getAssociatedTokenAddressSync(mintPk, wallet.publicKey, false, TOKEN_2022_PROGRAM);
     const info = await connection.getTokenAccountBalance(ata);
-    const total = BigInt(info.value.amount);
+    total = BigInt(info.value.amount);
     if (total === 0n) {
       session.drop(`${mint.slice(0, 8)}: no tokens in wallet`);
       positions.delete(mint);
@@ -251,36 +256,41 @@ async function copySell(mint, copiedFrom) {
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
 
     const sellPrice = getPrice(state);
-    const ratio = sellPrice / pos.entryPrice;
     const pnlPct = ((sellPrice / pos.entryPrice) - 1) * 100;
-    const receivedSol = ex.found && ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(expectedSol) / 1e9;
-    // H4: PnL against the SOLD share of the entry (a SELL_PCT<100 partial sell used to subtract
-    // the full entry again each time).
-    const split = splitEntryForSell(pos.entrySolSol ?? BUY_SOL, sellAmount, total);
-    const pnlSol = receivedSol - split.shareEntry;
-    const costs = roundTripCosts({ buySol: split.shareEntry, ratio, pumpFeeBps: 0 });
-    recordResult(pnlSol);
-    session.sell(receivedSol, pnlSol, costs);
+    // The same calculation as the sniper and graduation-sniper (lib/live-pnl.mjs applyLiveSell):
+    // PnL against the SOLD share of the entry (H4), net of both real network fees; the ledger
+    // gets the gross figures + the real fees as costs (no estimated tx fee / assumed slippage).
+    const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, quoteSol: Number(expectedSol) / 1e9, soldRaw: sellAmount, totalRaw: total });
+    const pnlSol = sale.acc.pnlSol;
+    recordResult(pnlSol, { guardPnlSol: sale.guardPnlSol });
+    session.sell(sale.acc.ledger.receivedSol, sale.acc.ledger.pnlSol, sale.acc.costs);
     totalPnl += pnlSol;
     totalTrades++;
     log(`  sold: ${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(1)}% (${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL)`);
     log(`  session: ${totalTrades} trades, PnL: ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(4)} SOL`);
-    if (SELL_PCT >= 100) positions.delete(mint);
-    else pos.entrySolSol = split.remainderEntry;
+    // SELL_PCT < 100 leaves a remainder: its entry share and its share of the buy fee stay open.
+    if (sale.closed) positions.delete(mint);
+    else Object.assign(pos, sale.remainder);
   } catch (err) {
     // C2: the sell may have landed even though confirmTransaction failed. If the chain shows the
     // tokens left the wallet, record the sale instead of leaving the position open to be re-sold.
     if (err.sig) {
       const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
       if (ex && ex.found && ex.tokensSold > 0n) {
-        const receivedSol = ex.solReceivedSol > 0 ? ex.solReceivedSol : BUY_SOL;
-        const pnlSol = receivedSol - (pos.entrySolSol ?? BUY_SOL);
-        recordResult(pnlSol);
-        session.sell(receivedSol, pnlSol, null);
+        // Same calculation as the normal path, against the balance read BEFORE the sale. It used
+        // to book the FULL entry even for a SELL_PCT<100 partial sale, leave entrySolSol untouched
+        // for the remainder, and substitute BUY_SOL (break-even) when nothing arrived.
+        const soldRaw = ex.tokensSold;
+        const totalRaw = balanceBeforeSell({ balanceRaw: total, posTokens: pos.tokens, soldRaw });
+        const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, soldRaw, totalRaw });
+        const pnlSol = sale.acc.pnlSol;
+        recordResult(pnlSol, { guardPnlSol: sale.guardPnlSol });
+        session.sell(sale.acc.ledger.receivedSol, sale.acc.ledger.pnlSol, sale.acc.costs);
         totalPnl += pnlSol;
         totalTrades++;
         log(`  sold (reconciled after confirm error): ${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL`);
-        if (SELL_PCT >= 100) positions.delete(mint);
+        if (sale.closed) positions.delete(mint);
+        else Object.assign(pos, sale.remainder);
         return;
       }
     }

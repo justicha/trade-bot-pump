@@ -16,6 +16,8 @@ const poisonEnv = {
   HELIUS_API_KEY: POISON,
   CU_PRICE: "999",
   SNIPER_BUY_SOL: "abc",
+  LIVE_CONFIRM_AMM: "yes",
+  DRY_SELL: "yes",
 };
 
 const targets = [
@@ -42,6 +44,26 @@ for (const rel of targets) {
   }
 }
 
+// Direct test-env regression guard: a child that imports test-env under the poisoned env must see
+// RPC_URL overwritten to the throwaway value and the secret/settings vars stripped (never inherited).
+{
+  const code =
+    "await import('./scripts/lib/test-env.mjs'); console.log(JSON.stringify({ rpc: process.env.RPC_URL, helius: process.env.HELIUS_API_KEY ?? null, amm: process.env.LIVE_CONFIRM_AMM ?? null, dry: process.env.DRY_SELL ?? null }))";
+  const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    cwd: repo,
+    encoding: "utf8",
+    env: poisonEnv,
+  });
+  assert.equal(res.status, 0, "test-env child exited " + res.status + ": " + String(res.stderr).slice(0, 300));
+  const out = String(res.stdout ?? "");
+  assert.ok(!out.includes(POISON), "test-env child printed the poison key");
+  const got = JSON.parse(out.trim());
+  assert.equal(got.rpc, "https://example.invalid", "RPC_URL must be overwritten, got " + got.rpc);
+  assert.equal(got.helius, null, "HELIUS_API_KEY must be stripped");
+  assert.equal(got.amm, null, "LIVE_CONFIRM_AMM must be stripped");
+  assert.equal(got.dry, null, "DRY_SELL must be stripped");
+}
+
 assert.equal(leaked, 0, `${leaked} of ${targets.length} child tests leaked/failed under a poisoned parent env`);
-console.log(JSON.stringify({ targets: targets.length, leaked }));
+console.log(JSON.stringify({ targets: targets.length, leaked, direct: "ok" }));
 console.log("PASS: tests are hermetic against a poisoned parent env");

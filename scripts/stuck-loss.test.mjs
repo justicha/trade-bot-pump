@@ -136,6 +136,40 @@ for (const [rel, tokens] of [["bots/sniper/sniper.mjs", "tokenAmount"], ["bots/c
   asrt(!/ammSell|pumpswap-sell|amm-sell/.test(src), `${rel}: no AMM sell was added to this bot`);
 }
 asrt(/new TradeJournal\(\{ bot: "copy-trader" \}\)/.test(read("bots/copy-trader/watcher.mjs")), "copy-trader has a journal (bot: copy-trader)");
+
+// --- P4 (task 3): a position left open at STOP is an assumed loss too — LIVE only ---------------
+// The session ends anyway; what matters is the journal row: after a restart on the same day the
+// daily loss limit is seeded from the journal and must see it.
+{
+  const journal = newJournal();
+  const guard = new TradeGuard({ maxTradeSol: 1, maxSessionSol: 0, maxConsecLosses: 3 });
+  const pos = { entrySolSol: 0.02, tokens: 5n, attempts: 1 };
+  recordStuck({ journal, recordResult: (p) => guard.recordResult(p), mint: "S", pos, buySol: BUY_SOL, reason: "open at stop", fields: { sessionId: "s", attempts: pos.attempts } });
+  recordStuck({ journal, recordResult: (p) => guard.recordResult(p), mint: "U", pos: { entrySolSol: 0.03 }, buySol: BUY_SOL, reason: "stop: curve unavailable, not sold", fields: { mode: "LIVE" } });
+  const rows = readJournal(journal.dir);
+  asrt(rows.every((r) => r.type === "stuck" && r.lossAssumed === true && r.pnlSol < 0), "stop-time stuck rows carry pnlSol < 0 + lossAssumed");
+  asrt(netSolForDay(rows, TODAY) === -0.05, `a restart on the same day sees -entry of both (expected -0.05), got ${netSolForDay(rows, TODAY)}`);
+  asrt(dailyLossBlocked({ netSol: netSolForDay(rows, TODAY), limitSol: 0.05 }).blocked === true, "…and the daily loss limit blocks new buys");
+  asrt(guard.consecLosses === 2, "the guard is told as well");
+}
+{
+  const src = read("bots/graduation-sniper/graduation.mjs");
+  const at = src.indexOf("stuck.add(`${mint.slice(0, 12)}: open at stop`);");
+  asrt(at > 0, "graduation: open-at-stop block found");
+  const block = src.slice(at, src.indexOf("session.drop(`${mint.slice(0, 12)}: still open at stop`);", at));
+  asrt(/if \(LIVE\) \{[\s\S]*recordStuck\(\{[\s\S]*reason: "open at stop"[\s\S]*\} else \{/.test(block), "graduation: LIVE open-at-stop goes through recordStuck");
+  asrt(/journal, recordResult, mint, pos, buySol: BUY_SOL/.test(block), "graduation: with the bot's recordResult, the position and BUY_SOL");
+  const dry = block.slice(block.indexOf("} else {"));
+  asrt(/journal\.write\(\{ type: "stuck"/.test(dry) && !/lossAssumed|recordStuck/.test(dry), "graduation: the DRY RUN row is unchanged (no assumed loss)");
+}
+{
+  const src = read("bots/sniper/sniper.mjs");
+  const at = src.indexOf('reason: "stop: curve unavailable, not sold"');
+  asrt(at > 0, "sniper: unsold-at-stop block found");
+  const block = src.slice(src.lastIndexOf("if (!DRY_RUN) {", at), src.indexOf("positions.delete(mint);", at));
+  asrt(block.startsWith("if (!DRY_RUN) {") && /recordStuck\(\{\s*journal, recordResult, mint, pos, buySol: BUY_SOL, reason: "stop: curve unavailable, not sold"/.test(block), "sniper: LIVE unsold-at-stop goes through recordStuck");
+  asrt(!/journal\.write\(\{\s*type: "stuck"/.test(src), "sniper: no loss-free stuck row is left");
+}
 asrt(!/graduated, unsold`\)/.test(read("bots/sniper/sniper.mjs")), "sniper: the silent 'graduated, unsold' drop is gone");
 
 console.log(JSON.stringify({ stuckLoss: stuckLossSol({ entrySolSol: 0.02 }, BUY_SOL), dayNet: netSolForDay([{ type: "stuck", ts: new Date().toISOString(), pnlSol: -0.02, lossAssumed: true }], TODAY) }));

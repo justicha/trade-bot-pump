@@ -104,6 +104,76 @@ slippage). Session records add `sessionId`, `paramsHash`, `gitSha` and the RPC s
 while lines without the field are the older model that charged it twice, so the analyzer reports
 them as separate tables.
 
+### costsScheme v2.1 (2026-11-11)
+
+`COSTS_SCHEME` was bumped to `v2.1`. Dry-run accounting did not change, so dry `v2` and `v2.1`
+lines can be merged; **live** lines cannot be mixed across this epoch boundary. Field semantics:
+
+| Field | Before | Now |
+|---|---|---|
+| `readExecution.solSpentSol` | -delta - fee (incl. ATA rent) | -delta - fee - ATA rent |
+| `solSpent` in a graduation buy line | entry incl. rent on the first entry into a mint | entry excl. rent; rent in `ataRentSol` |
+| `pnlSol` in a graduation sell line | proceeds - entry (incl. rent) | proceeds - entry (excl. rent): ~0.00207 SOL higher on the first entry |
+| `pnlSol` in a sniper live line | `received - BUY_SOL - estimated tx*2 - estimated slip` | `received - actual entry` |
+| `costsSol` in a sniper live line | estimate (tx*2 + slippage) | actual buy and sell network fees |
+| `pnlPctNet` in a sniper line | `pnlSol / BUY_SOL` | same formula with the new `pnlSol`; denominator still the nominal `BUY_SOL` |
+| `type:"stuck"` | no `pnlSol` | graduation `markStuck`, sniper and copy-trader: `pnlSol < 0`, `lossAssumed: true` |
+| daily total (`netSolForDay`) | only `trade` | `trade` + `stuck` with `lossAssumed: true` |
+| `spent` in a live session | incl. rent | excl. rent; rent in `ataRentSol` |
+| `received`/NET in a sniper live session | minus the sell fee | before the network fee; fees in `costs` |
+| copy-trader journal lines | none | only `stuck` |
+
+Unchanged: all dry-run calculations, shadow (`SHADOW_COSTS_SCHEME`), old `stuck` lines without
+`lossAssumed` (excluded from the daily total), and `netAfterCostsSol`.
+
+Live behaviour that changed (no parameters touched):
+- A STUCK position is booked as a loss: it increments `MAX_CONSEC_LOSSES` and spends the daily loss
+  limit, so a bot may halt (or stop buying) earlier than before.
+- ATA rent is accounted separately (`ataRentSol`, `ataRentKnown`) and is no longer part of the entry.
+- Proceeds from a manual STUCK sell are **not** returned to the daily total: the assumed loss is not
+  reduced even if the position is later sold.
+- TP/SL in graduation and sniper are computed from the entry without ATA rent (previously the rent
+  skewed the ratio by ~10% at `BUY_SOL = 0.02`).
+
+### costsScheme v2.2 (2026-11-12)
+
+`COSTS_SCHEME` begins at `v2.2`. Dry-run did not change: dry `v2`, `v2.1` and `v2.2` lines are one
+model; **live** lines of different versions must not be mixed. Field semantics:
+
+| Field | v2.1 | v2.2 |
+|---|---|---|
+| `pnlSol`, sniper live sale | proceeds - entry (sell fee inside, no buy fee) | proceeds - entry - both fees; on the mock +0.005 -> +0.004545 |
+| `pnlSol`, graduation live sale | proceeds - entry share (no buy fee) | proceeds - entry share - both fees |
+| `pnlSol`, graduation recovered sale | share computed from a doubled balance: a full sale booked only half the entry | share from the balance read before the sale |
+| graduation sale line | `solReceived`, `pnlSol`, `ataRentSol` | plus `entrySolSol`, `entrySource`, `buyFeeSol`, `sellFeeSol`, `feesActual`, `ataRentKnown`; a recovered sale adds `reconciled: true` and `ataRentSol` |
+| `solReceived` | wallet balance delta (or a quote) | unchanged |
+| `buyFeeSol` in a sniper line | not part of `pnlSol` | part of `pnlSol` |
+| `costs` in a graduation/copy-trader live session | estimate: tx*2 + assumed slippage | actual buy and sell network fees |
+| `received` and NET in a graduation/copy-trader live session | minus the sell fee | before network fees; fees in `costs` |
+| session "NET after costs" (live, all three bots) | graduation/copy-trader: the sell fee was subtracted twice plus assumed slippage | the sum of `pnlSol` across the trades = wallet balance delta excluding ATA rent |
+| `stuck`, "open at stop" (graduation, LIVE) | no `pnlSol`, not in limits | `pnlSol < 0`, `lossAssumed: true` |
+| `stuck`, "stop: curve unavailable, not sold" (sniper) | no `pnlSol` | `pnlSol < 0`, `lossAssumed: true` |
+| daily total (`netSolForDay`) | did not see positions left open at stop | sees them (LIVE) |
+| quote-fallback estimate | `pnlSol` without the sell fee | minus both (estimated) fees, `feesActual: false` |
+
+Unchanged: the entry (`entrySolSol`, `solSpent`) and ATA rent (the v2.1 meaning), `stuck` in DRY RUN,
+`stuck` lines without `lossAssumed`, all dry-run calculations, shadow.
+
+Live behaviour that changed:
+- the daily loss limit and the journal `pnlSol` use PnL net of BOTH network fees, so a near-zero
+  trade lowers the day's net;
+- `MAX_CONSEC_LOSSES` classifies a live sale by `guardPnlSol` (PnL before network fees): a trade that
+  made money but lost it only to network fees is NOT a loss; STUCK is always a loss; dry-run and
+  STUCK use `pnlSol` as before;
+- a position left open when a live graduation session stops (including when `SELL_ON_EXIT` is off and
+  the bot deliberately does not sell) spends the daily limit on the whole remaining entry; after a
+  restart the same day, buys may be blocked.
+
+The journal field `guardPnlSol` (PnL before network fees, `acc.ledger.pnlSol`) appears in v2.2 sale
+lines written from this change on. Older v2.2 sale lines do not carry it; for those the value is
+reconstructed as `guardPnlSol = pnlSol + buyFeeSol + sellFeeSol`. A non-finite `guardPnlSol`
+(null/NaN) falls back to classification by `pnlSol`.
+
 Rotation: ticks rotate by size and are drained at stop (`SNIPER_DRAIN_MAX_SEC`); raw captures rotate
 hourly by local hour (`data/raw/YYYY-MM-DD-HH.jsonl.gz`).
 

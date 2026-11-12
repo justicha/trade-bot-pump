@@ -4,7 +4,7 @@ Short answer: **the code is tested, the strategy is not proven.** Those are diff
 
 ## What is tested
 
-- `npm test` runs **61 test files** (the list lives in `package.json`). All of them run offline and
+- `npm test` runs **67 test files** (the list lives in `package.json`). All of them run offline and
   without a wallet: the ones that touch the network point at local RPC/WebSocket fixtures, and the
   rest are pure unit tests that boot a temporary data directory. No network, no SOL.
 - The suite covers the parts that are easy to get silently wrong: the log parser, the curve and fee

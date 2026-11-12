@@ -63,9 +63,9 @@ import {
 } from "../../lib/pumpfun.mjs";
 import { connection, getSOLBalance, sendTxWithRetry, rpcStats } from "../../lib/rpc.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
-import { SessionLedger, roundSol, splitEntryForSell } from "../../lib/session.mjs";
+import { SessionLedger } from "../../lib/session.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
-import { liveEntry } from "../../lib/live-pnl.mjs";
+import { applyLiveSell, balanceBeforeSell, liveEntry } from "../../lib/live-pnl.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -229,8 +229,10 @@ let stopping = false; // no new work is accepted
 let exited = false; // report printed, process is on its way out
 let stopReason = "";
 
-function recordResult(pnlSol) {
-  guard.recordResult(pnlSol);
+// opts.guardPnlSol: a live sale's PnL before network fees — what MAX_CONSEC_LOSSES classifies by
+// (lib/guards.mjs). The day's net below always moves by pnlSol (net of fees: real money).
+function recordResult(pnlSol, opts) {
+  guard.recordResult(pnlSol, opts);
   // Track today's realised PnL for the daily loss limit (buy gate only, never a sell gate).
   dayNetSol = Math.round((dayNetSol + (Number(pnlSol) || 0)) * 1e9) / 1e9;
   if (guard.halted) requestStop(guard.haltReason || "loss limit reached");
@@ -507,8 +509,7 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     const entryPrice = Number(tokens) > 0 ? entrySol / (Number(tokens) / 1e6) : quotePrice;
     positions.set(mint, {
       tokens,
-      entrySolSol: entrySol,
-      ataRentSol: entry.ataRentSol,
+      ...entry, // entrySolSol, entrySource, buyFeeSol, ataRentSol, ataRentKnown
       entryPrice,
       entryTime: Date.now(),
       fillAtEntry: fillPct,
@@ -550,8 +551,7 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
         const entryPrice = Number(ex.tokensReceived) > 0 ? entrySol / (Number(ex.tokensReceived) / 1e6) : quotePrice;
         positions.set(mint, {
           tokens: ex.tokensReceived,
-          entrySolSol: entrySol,
-          ataRentSol: entry.ataRentSol,
+          ...entry, // entrySolSol, entrySource, buyFeeSol, ataRentSol, ataRentKnown
           entryPrice,
           entryTime: Date.now(),
           fillAtEntry: fillPct,
@@ -758,12 +758,15 @@ async function sellPosition(mint, mintPk, pos, ratio) {
   let venue = "curve";
   let quote = null;
   let sig = null;
+  // Token balance BEFORE this sale. Declared here so the catch (a sale that landed despite a
+  // confirm error) can measure the sold share against it — see balanceBeforeSell.
+  let total = null;
   // Simulation result of THIS attempt; the AMM path returns its own (already journaled) one.
   let sim = { ok: true, err: null, logs: [], units: null };
   try {
     const ata = getAssociatedTokenAddressSync(mintPk, wallet.publicKey, false, TOKEN_2022_PROGRAM);
     const info = await connection.getTokenAccountBalance(ata);
-    const total = BigInt(info.value.amount);
+    total = BigInt(info.value.amount);
     if (total === 0n) {
       session.drop(`${mint.slice(0, 12)}: no tokens in wallet`);
       positions.delete(mint);
@@ -875,16 +878,14 @@ async function sellPosition(mint, mintPk, pos, ratio) {
       sig = await sendTxWithRetry(tx, { skipPreflight: true });
     }
 
-    // Received SOL from the chain (fee excluded), falling back to the quote if meta lags.
+    // Actual execution (wallet delta), falling back to the quote if the meta lags. One shared
+    // calculation for every bot (lib/live-pnl.mjs): PnL against the SOLD share of the entry (H4),
+    // net of both real network fees; the ledger gets the gross figures + the real fees as costs.
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
-    const receivedSol = ex.found && ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(quote) / 1e9;
-    const entrySol = pos.entrySolSol ?? BUY_SOL;
-    // H4: measure PnL against the SOLD share of the entry, not the full entry (a partial sell used
-    // to subtract the whole entry again on every part).
-    const split = splitEntryForSell(entrySol, amountRaw, total);
-    const pnlActual = roundSol(receivedSol - split.shareEntry);
-    recordResult(pnlActual);
-    session.sell(receivedSol, pnlActual, roundTripCosts({ buySol: split.shareEntry, ratio: split.shareEntry > 0 ? receivedSol / split.shareEntry : 1, pumpFeeBps: 0 }));
+    const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, quoteSol: Number(quote) / 1e9, soldRaw: amountRaw, totalRaw: total });
+    const pnlActual = sale.acc.pnlSol;
+    recordResult(pnlActual, { guardPnlSol: sale.guardPnlSol });
+    session.sell(sale.acc.ledger.receivedSol, sale.acc.ledger.pnlSol, sale.acc.costs);
     totalTrades++;
     totalPnl += pnlActual;
     if (pnlActual > 0) wins++;
@@ -896,11 +897,10 @@ async function sellPosition(mint, mintPk, pos, ratio) {
       side: "sell",
       sig,
       venue,
-      solReceived: receivedSol,
       pnlSol: pnlActual,
-      // Rent locked in this position's token ATA. Written on the sale that CLOSES the position
-      // (0 on a partial sell), so summing the field over sell rows never counts it twice.
-      ataRentSol: amountRaw < total ? 0 : (pos.ataRentSol ?? 0),
+      // entrySolSol, entrySource, solReceived, buyFeeSol, sellFeeSol, feesActual, ataRentSol (on
+      // the sale that CLOSES the position only), ataRentKnown — same fields as the sniper.
+      ...sale.fields,
       amountRaw: amountRaw.toString(),
       balanceRaw: total.toString(),
       quoteOut: Number(quote) / 1e9,
@@ -912,13 +912,10 @@ async function sellPosition(mint, mintPk, pos, ratio) {
       priceSource: ex.found ? "chain-meta" : "quote-fallback",
     });
     log(`  sold on ${venue}: ${pnlActual >= 0 ? "+" : ""}${pnlActual.toFixed(4)} SOL (${ex.found ? "actual" : "quote"}, slip ${slip} bps)`);
-    if (amountRaw < total) {
-      // Partial fill: keep the position with what is left (tokens AND the remaining entry share);
-      // the next cycle re-reads the curve.
-      pos.tokens = total - amountRaw;
-      pos.entrySolSol = split.remainderEntry;
-      pos.attempts = 0;
-      pos.nextSellAt = 0;
+    if (!sale.closed) {
+      // Partial fill: keep the position with what is left (tokens, the remaining entry share AND
+      // the remaining share of the buy fee); the next cycle re-reads the curve.
+      Object.assign(pos, sale.remainder, { attempts: 0, nextSellAt: 0 });
       log(`  remaining ${(Number(pos.tokens) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens kept for the next cycle`);
     } else {
       positions.delete(mint);
@@ -930,32 +927,28 @@ async function sellPosition(mint, mintPk, pos, ratio) {
     if (err.sig) {
       const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
       if (ex && ex.found && ex.tokensSold > 0n) {
-        const receivedSol = ex.solReceivedSol > 0 ? ex.solReceivedSol : Number(quote) / 1e9;
-        const entrySol = pos.entrySolSol ?? BUY_SOL;
         const soldRaw = ex.tokensSold;
-        const totalRaw = (pos.tokens ?? 0n) + soldRaw; // balance before this sell
-        const share = totalRaw > 0n ? Number(soldRaw) / Number(totalRaw) : 1;
-        const shareEntry = roundSol(entrySol * share);
-        const pnlActual = roundSol(receivedSol - shareEntry);
-        recordResult(pnlActual);
-        session.sell(receivedSol, pnlActual, roundTripCosts({ buySol: shareEntry, ratio: shareEntry > 0 ? receivedSol / shareEntry : 1, pumpFeeBps: 0 }));
+        // The balance read BEFORE the sale (pos.tokens only if it was never read). It used to be
+        // `pos.tokens + soldRaw`: pos.tokens is not reduced yet, so a full sale looked like half of
+        // a double-sized position — PnL overstated by half the entry and a phantom position kept.
+        const totalRaw = balanceBeforeSell({ balanceRaw: total, posTokens: pos.tokens, soldRaw });
+        const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, quoteSol: Number(quote) / 1e9, soldRaw, totalRaw });
+        const pnlActual = sale.acc.pnlSol;
+        recordResult(pnlActual, { guardPnlSol: sale.guardPnlSol });
+        session.sell(sale.acc.ledger.receivedSol, sale.acc.ledger.pnlSol, sale.acc.costs);
         totalTrades++;
         totalPnl += pnlActual;
         if (pnlActual > 0) wins++;
         journal.trade({
           sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, side: "sell", sig: err.sig, venue,
-          solReceived: receivedSol, pnlSol: pnlActual, amountRaw: soldRaw.toString(), balanceRaw: totalRaw.toString(),
+          pnlSol: pnlActual, ...sale.fields, amountRaw: soldRaw.toString(), balanceRaw: totalRaw.toString(),
           quoteOut: Number(quote) / 1e9, realSolReserves: null, attempts: attempt, slippageBps: slip,
-          simulationResult: "ok", unitsConsumed: null, priceSource: "chain-meta",
+          simulationResult: "ok", unitsConsumed: null, priceSource: "chain-meta", reconciled: true,
         });
         log(`  sold (reconciled after confirm error): ${pnlActual >= 0 ? "+" : ""}${pnlActual.toFixed(4)} SOL`);
-        const remaining = totalRaw - soldRaw;
-        if (remaining > 0n) {
-          pos.tokens = remaining;
-          pos.entrySolSol = roundSol(entrySol - shareEntry);
-          pos.attempts = 0;
-          pos.nextSellAt = 0;
-          log(`  remaining ${(Number(remaining) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens kept for the next cycle`);
+        if (!sale.closed) {
+          Object.assign(pos, sale.remainder, { attempts: 0, nextSellAt: 0 });
+          log(`  remaining ${(Number(pos.tokens) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens kept for the next cycle`);
         } else {
           positions.delete(mint);
         }
@@ -1094,7 +1087,16 @@ async function finish(reason = stopReason || "stopped") {
   const openAtStop = [...positions.entries()].map(([mint, pos]) => ({ mint, spentSol: pos.entrySolSol ?? BUY_SOL }));
   for (const [mint, pos] of [...positions]) {
     stuck.add(`${mint.slice(0, 12)}: open at stop`);
-    journal.write({ type: "stuck", sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, reason: "open at stop", attempts: pos.attempts || 0 });
+    if (LIVE) {
+      // The bot stops managing this position (the next session only touches its own buys), so for
+      // the limits it is an assumed loss — the daily loss limit must see it after a restart today.
+      recordStuck({
+        journal, recordResult, mint, pos, buySol: BUY_SOL, reason: "open at stop",
+        fields: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, attempts: pos.attempts || 0 },
+      });
+    } else {
+      journal.write({ type: "stuck", sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, reason: "open at stop", attempts: pos.attempts || 0 });
+    }
     session.drop(`${mint.slice(0, 12)}: still open at stop`);
     positions.delete(mint);
   }

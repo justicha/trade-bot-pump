@@ -62,9 +62,10 @@ function buy(ata) {
   };
 }
 
-// A sell of the whole balance: the wallet delta is +`delta` lamports (net of the fee). The token
-// ATA stays open (the bot never closes it), so its rent does not move.
-function sell(delta) {
+// A sell: the wallet delta is +`delta` lamports (net of the fee); the token balance goes
+// `before` -> `after` (default: the whole balance). The token ATA stays open (the bot never closes
+// it), so its rent does not move.
+function sell(delta, before = TOKENS, after = 0n) {
   return {
     transaction: { message: { staticAccountKeys: [owner, ATA, mint, other] } },
     meta: {
@@ -72,8 +73,8 @@ function sell(delta) {
       fee: FEE,
       preBalances: [START, RENT, 0, 0],
       postBalances: [START + delta, RENT, 0, 0],
-      preTokenBalances: [tok(TOKENS)],
-      postTokenBalances: [tok(0)],
+      preTokenBalances: [tok(before)],
+      postTokenBalances: [tok(after)],
     },
   };
 }
@@ -87,6 +88,9 @@ export const connection = {
     if (sig === "BUY_ATA_ABSENT") return buy("absent");
     if (sig === "SELL") return sell(RECV);
     if (sig === "SELL_DUST") return sell(-FEE); // proceeds 0: the wallet only paid the fee
+    // Two-part sale of the same position: half the tokens for half of RECV, twice.
+    if (sig === "SELL_HALF_1") return sell(RECV / 2, TOKENS, TOKENS / 2n);
+    if (sig === "SELL_HALF_2") return sell(RECV / 2, TOKENS / 2n, 0n);
     throw new Error(`unexpected signature ${sig}`);
   },
 };
