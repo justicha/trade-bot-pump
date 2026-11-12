@@ -79,6 +79,14 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `BUY_SLIPPAGE_BPS` | `SLIPPAGE_BPS` | — | Headroom on `max_sol_cost` |
 | `LIVE_CONFIRM_AMM` | unset | — | `yes` allows the **UNVERIFIED** PumpSwap sell in live mode |
 
+## Token ATA closing (live)
+
+| Variable | Code default | Range | Meaning |
+|---|---|---|---|
+| `ATA_CLOSE` | on | — | `no`/`0`/`false`/`off` disables closing the empty token ATA after a full live sale |
+| `CLOSE_ATA_CU_LIMIT` | `10000` | `≥ 0` | Compute-unit limit of the close transaction (per `closeAccount`) |
+| `CLOSE_ATA_BATCH` | `8` | `1–12` | `closeAccount` instructions per transaction in `scripts/close-empty-atas.mjs` |
+
 ## Research, shadow, replay
 
 | Variable | Default | Meaning |

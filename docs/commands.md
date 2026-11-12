@@ -79,6 +79,7 @@
 | `node bots/graduation-sniper/shadow.mjs` | теневой (бумажный) прогон вариантов graduation |
 | `node scripts/analyze-graduation.mjs [журнал]` | отчёт по теневому прогону |
 | `node scripts/sell-all.mjs` | перечислить все токены на кошельке; с `--live` — продать по одному |
+| `node scripts/close-empty-atas.mjs` | вернуть ренту из пустых токен-аккаунтов: по умолчанию только план (список и сумма ренты); отправка — только `--live` + `LIVE_CONFIRM=yes`; ненулевые аккаунты и WSOL не трогает; пишет `ata_sweep` |
 | `node scripts/session-total.mjs [журнал]` | сложить итоги сессий из журнала |
 | `node scripts/export-compact.mjs [sessionId]` | компактная выгрузка одной сессии |
 | `node scripts/dump-tx.mjs <подпись>` | разобрать одну транзакцию |

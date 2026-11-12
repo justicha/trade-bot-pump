@@ -200,6 +200,37 @@ LIVE a failed simulation blocks the entry; in DRY it never blocks and only recor
 `expectedExitSol`, `unitsConsumed`, `logs` on failure, and `balanceSol` when the dry check is skipped for low balance. A LIVE block is
 journaled as a `skip` line carrying the `preBuySim` reason (DRY never blocks).
 
+### Closing the token ATA (rent back)
+
+Every live buy of a new mint locks the token ATA rent-exempt deposit (~0.00207 SOL, about 10% of a
+0.02 SOL stake). After a confirmed and booked full live sale the bot closes the now-empty ATA in a
+separate background transaction and gets the rent back; the sale never depends on the close. The
+close is not part of the sell transaction because: (1) a `closeAccount` on a non-empty account fails,
+so one stray token (dust / airdrop) would take the whole sale down; (2) graduation sells in parts,
+so the sale is not always known to be full at build time; (3) the rent would otherwise enter the sell
+wallet delta and force `sellProceeds` / `pnlSol` to change; (4) the close needs its own small CU
+limit and must not pay the trading `CU_LIMIT`.
+
+It never closes a non-empty account and never burns tokens. Each mint is attempted at most once per
+session; at stop the bot waits for outstanding closes for at most 30 s. `pnlSol` and `COSTS_SCHEME`
+are unchanged; the session summary gains "ATA rent locked" (paid - reclaimed), "ATA rent reclaimed"
+and "ATA close fees", and "NET after costs incl. rent" reconciles with the wallet delta.
+
+The `ata_close` journal row (one per attempt):
+
+| Field | Value |
+|---|---|
+| `mint`, `venue`, `mode: "LIVE"` | the sale that produced the close |
+| `sessionId`, `paramsHash`, `gitSha` | sniper and graduation (copy-trader has none) |
+| `closed`, `reason` | `closed` / `absent` / `not-empty` / `sim-fail` / `send-fail` / `error` / `not-owner` / `unknown-program` |
+| `sig`, `rentReclaimedSol`, `closeFeeSol` | `sig` only when sent; amounts 0 / null when not closed |
+| `ata`, `tokenProgram`, `unitsConsumed` | account address, program, CU from the simulation |
+| `rentSource`, `feeActual` | only when `closed`: `chain-meta` or `account-balance`; `false` = fee estimated |
+| `balanceRaw` / `error` / `logs` / `maybeLanded` / `reconciled` | per situation |
+
+The close costs about 20 000 lamports at `CU_PRICE` 1.5M (5 000 signature + 10 000 x 1.5) against
+2 074 080 lamports of rent (about 1%). **Not verified on a real transaction yet.**
+
 Rotation: ticks rotate by size and are drained at stop (`SNIPER_DRAIN_MAX_SEC`); raw captures rotate
 hourly by local hour (`data/raw/YYYY-MM-DD-HH.jsonl.gz`).
 
