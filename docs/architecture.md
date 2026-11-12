@@ -174,6 +174,32 @@ lines written from this change on. Older v2.2 sale lines do not carry it; for th
 reconstructed as `guardPnlSol = pnlSol + buyFeeSol + sellFeeSol`. A non-finite `guardPnlSol`
 (null/NaN) falls back to classification by `pnlSol`.
 
+### costsScheme v2.3 (2026-11-12)
+
+Only dry graduation changed: an exit after migration is priced from the PumpSwap pool quote, and the
+`ratio` is already net of venue fees, so the cost model charges no repeated pump fee, only assumed
+slippage and the two transaction fees. Live lines are still accounted as in `v2.2`. Dry `v2.2` and
+`v2.3` lines must not be mixed (~2% per trade). The journal gains a `prebuy_sim` line and a `stuck`
+variant with reason `"dry: no AMM quote"`.
+
+### Graduation shadow: SHADOW_COSTS_SCHEME v4-amm-exit
+
+The graduation shadow lab now closes a migrated position in one of three ways, recorded in
+`exitVenue`: `curve`, `amm` or `amm-unpriced`. New trade fields: `exitVenue`, `migrated`, `tokens`,
+`ammSolOut`, `ammFeeBps`, `ammQuoteAgeMs`, and `params` (variant `J`). An `amm-unpriced` exit has
+`netSol` / `netPct` / `ratio` / `exitPrice` = null and `unconfirmed: true`; it is NOT included in
+the averages. `SHADOW_COSTS_SCHEME` moved from `v3-single-slip` to `v4-amm-exit`; do not mix `v3`
+and `v4` lines (`v3` overstated migrated mints).
+
+### Pre-buy simulation
+
+Before buying, graduation simulates a buy+sell in a single transaction (`lib/prebuy-sim.mjs`). In
+LIVE a failed simulation blocks the entry; in DRY it never blocks and only records the outcome in a
+`prebuy_sim` journal line: `preBuySim` (`ok` / `fail:<reason>` / `skipped:low-balance` /
+`skipped:balance-unavailable` / `skipped:error`), `blocked`, `mode`, `tokens`, `maxSolCost`,
+`expectedExitSol`, `unitsConsumed`, and, on failure, `logs` and `balanceSol`. A LIVE block is
+journaled as a `skip` line carrying the `preBuySim` reason (DRY never blocks).
+
 Rotation: ticks rotate by size and are drained at stop (`SNIPER_DRAIN_MAX_SEC`); raw captures rotate
 hourly by local hour (`data/raw/YYYY-MM-DD-HH.jsonl.gz`).
 

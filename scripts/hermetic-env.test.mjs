@@ -18,12 +18,17 @@ const poisonEnv = {
   SNIPER_BUY_SOL: "abc",
   LIVE_CONFIRM_AMM: "yes",
   DRY_SELL: "yes",
+  CU_LIMIT: "120000",
+  SLIPPAGE_ASSUMED_BPS: "77",
+  GRAD_MIN_FILL_PCT: "11",
+  SHADOW_BUY_SOL: "0.5",
 };
 
 const targets = [
   "scripts/env-inline.test.mjs",
   "scripts/journal.test.mjs",
   "scripts/pump-errors.test.mjs",
+  "scripts/gshadow-amm.test.mjs",
 ];
 
 let leaked = 0;
@@ -48,7 +53,7 @@ for (const rel of targets) {
 // RPC_URL overwritten to the throwaway value and the secret/settings vars stripped (never inherited).
 {
   const code =
-    "await import('./scripts/lib/test-env.mjs'); console.log(JSON.stringify({ rpc: process.env.RPC_URL, helius: process.env.HELIUS_API_KEY ?? null, amm: process.env.LIVE_CONFIRM_AMM ?? null, dry: process.env.DRY_SELL ?? null }))";
+    "await import('./scripts/lib/test-env.mjs'); console.log(JSON.stringify({ rpc: process.env.RPC_URL, helius: process.env.HELIUS_API_KEY ?? null, amm: process.env.LIVE_CONFIRM_AMM ?? null, dry: process.env.DRY_SELL ?? null, cuLimit: process.env.CU_LIMIT ?? null, cuPrice: process.env.CU_PRICE ?? null, minFill: process.env.GRAD_MIN_FILL_PCT ?? null }))";
   const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
     cwd: repo,
     encoding: "utf8",
@@ -62,6 +67,9 @@ for (const rel of targets) {
   assert.equal(got.helius, null, "HELIUS_API_KEY must be stripped");
   assert.equal(got.amm, null, "LIVE_CONFIRM_AMM must be stripped");
   assert.equal(got.dry, null, "DRY_SELL must be stripped");
+  assert.equal(got.cuLimit, null, "CU_LIMIT must be stripped");
+  assert.equal(got.cuPrice, null, "CU_PRICE must be stripped");
+  assert.equal(got.minFill, null, "GRAD_MIN_FILL_PCT must be stripped");
 }
 
 assert.equal(leaked, 0, `${leaked} of ${targets.length} child tests leaked/failed under a poisoned parent env`);

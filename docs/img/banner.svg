@@ -1,66 +1,119 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="bannerTitle bannerDesc">
-  <title id="bannerTitle">pump-bot — баннер проекта</title>
-  <desc id="bannerDesc">Тёмно-синий баннер: бирюзовая кривая bonding curve с градиентом и мягким свечением уходит вправо и выравнивается, янтарная точка отмечает вход, круглый жёлтый значок с буквой p. Заголовок pump-bot, подзаголовок «боты для pump.fun на Solana, сначала dry-run» и два бейджа: «DRY-RUN по умолчанию» и «исследовательский инструмент».</desc>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="bannerTitle bannerDesc">
+  <title id="bannerTitle">pump-bot — торговые боты для pump.fun на Solana</title>
+  <desc id="bannerDesc">Тёмный баннер с сеткой. Слева крупная надпись pump-bot, подзаголовок «торговые боты для pump.fun · Solana» и три бейджа: «DRY-RUN по умолчанию», «Solana», «pump.fun → PumpSwap». Справа схема жизни токена: неоново-зелёная bonding curve растёт по мере заполнения от 0 до 100 процентов, заштрихованная полоса 75–90 процентов отмечает, где входит бот (янтарная точка), пунктир graduation на 100 процентах (около 85 SOL) с пульсирующим кольцом, после него бирюзовая линия цены в пуле PumpSwap. Внизу мелко: не финансовый совет, прибыль не гарантирована.</desc>
   <defs>
-    <linearGradient id="bgFill" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0b1220"/>
-      <stop offset="0.55" stop-color="#0c1626"/>
-      <stop offset="1" stop-color="#0b1220"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070d18"/>
+      <stop offset="0.6" stop-color="#0b1424"/>
+      <stop offset="1" stop-color="#08101d"/>
     </linearGradient>
-    <linearGradient id="curveStroke" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#2dd4bf"/>
-      <stop offset="0.55" stop-color="#5eead4"/>
-      <stop offset="1" stop-color="#2dd4bf"/>
-    </linearGradient>
-    <linearGradient id="curveArea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.34"/>
-      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
-    </linearGradient>
-    <radialGradient id="tealGlow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.30"/>
+    <radialGradient id="glowL" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22c55e" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#22c55e" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowR" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.22"/>
       <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
     </radialGradient>
-    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%">
-      <feGaussianBlur stdDeviation="7" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
-      <path d="M64 0H0V64" fill="none" stroke="#1a2b45" stroke-width="1"/>
+    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f0fdf4"/>
+      <stop offset="0.55" stop-color="#bbf7d0"/>
+      <stop offset="1" stop-color="#5eead4"/>
+    </linearGradient>
+    <linearGradient id="curve" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="1" stop-color="#4ade80"/>
+    </linearGradient>
+    <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4ade80" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#4ade80" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#14233a" stroke-width="1"/>
     </pattern>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#fbbf24" fill-opacity="0.07"/>
+      <path d="M0 0V8" stroke="#fbbf24" stroke-opacity="0.22" stroke-width="2"/>
+    </pattern>
+    <filter id="glow" x="-20%" y="-40%" width="140%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="blur" x="-10%" y="-30%" width="120%" height="160%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <path id="life" d="M640 270 L682 260.5 L724 248.8 L766 234.6 L808 218.1 L850 199.3 L892 178.1 L934 154.6 L976 128.7 L1018 100.5 L1060 70 L1080 78 L1100 73 L1120 89 L1140 84 L1160 99 L1180 94 L1200 107 L1220 102 L1236 111"/>
   </defs>
 
-  <rect width="1280" height="320" fill="url(#bgFill)"/>
-  <rect width="1280" height="320" fill="url(#grid)" opacity="0.75"/>
-  <circle cx="980" cy="150" r="250" fill="url(#tealGlow)"/>
+  <!-- background -->
+  <rect width="1280" height="320" fill="url(#bg)"/>
+  <rect width="1280" height="320" fill="url(#grid)" opacity="0.8"/>
+  <circle cx="220" cy="150" r="260" fill="url(#glowL)"/>
+  <circle cx="1060" cy="110" r="300" fill="url(#glowR)"/>
 
-  <path d="M470 248 C 620 248, 690 216, 800 170 S 1010 96, 1100 92 C 1160 90, 1200 94, 1244 98 L 1244 264 L 470 264 Z" fill="url(#curveArea)"/>
-  <path d="M470 248 C 620 248, 690 216, 800 170 S 1010 96, 1100 92 C 1160 90, 1200 94, 1244 98" fill="none" stroke="url(#curveStroke)" stroke-width="6" stroke-linecap="round" filter="url(#softGlow)"/>
+  <!-- left: name, subtitle, badges -->
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
+    <text x="64" y="74" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" letter-spacing="3" fill="#4ade80">SOLANA · PUMP.FUN · NODE.JS</text>
+    <text x="60" y="148" font-size="80" font-weight="800" letter-spacing="-2" fill="#4ade80" opacity="0.45" filter="url(#blur)">pump-bot</text>
+    <text x="60" y="148" font-size="80" font-weight="800" letter-spacing="-2" fill="url(#title)">pump-bot</text>
+    <text x="64" y="188" font-size="24" fill="#c7d6e8">торговые боты для <tspan fill="#4ade80" font-weight="700">pump.fun</tspan> · Solana</text>
 
-  <g fill="#0b1220" stroke="#2dd4bf" stroke-width="3">
-    <circle cx="800" cy="170" r="7"/>
-    <circle cx="1100" cy="92" r="7"/>
+    <g font-size="14" font-weight="600">
+      <rect x="64" y="210" width="210" height="34" rx="17" fill="#0b2a1a" stroke="#4ade80" stroke-width="1.5"/>
+      <circle cx="82" cy="227" r="5" fill="#4ade80"/>
+      <text x="94" y="232" fill="#86efac">DRY-RUN по умолчанию</text>
+
+      <rect x="284" y="210" width="92" height="34" rx="17" fill="#0a2629" stroke="#2dd4bf" stroke-width="1.5"/>
+      <circle cx="302" cy="227" r="5" fill="#2dd4bf"/>
+      <text x="314" y="232" fill="#5eead4">Solana</text>
+
+      <rect x="386" y="210" width="202" height="34" rx="17" fill="#271c07" stroke="#fbbf24" stroke-width="1.5"/>
+      <circle cx="404" cy="227" r="5" fill="#fbbf24"/>
+      <text x="416" y="232" fill="#fcd34d">pump.fun → PumpSwap</text>
+    </g>
+
+    <text x="64" y="284" font-size="14" fill="#7f93a8">исследовательский инструмент · не финансовый совет · прибыль не гарантирована</text>
   </g>
-  <g fill="#2dd4bf">
-    <circle cx="800" cy="170" r="3"/>
-    <circle cx="1100" cy="92" r="3"/>
-  </g>
-  <circle cx="978" cy="135" r="6" fill="#fbbf24"/>
 
-  <circle cx="1140" cy="222" r="30" fill="#131f33" stroke="#fbbf24" stroke-width="2.5"/>
-  <text x="1140" y="233" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="30" font-weight="700" fill="#fbbf24">p</text>
-
-  <text x="64" y="124" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="62" font-weight="800" fill="#e6f1ff" letter-spacing="-1">pump-bot</text>
-  <text x="66" y="164" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="20" fill="#9fb3c8">боты для pump.fun на Solana · сначала dry-run</text>
-
-  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="15" font-weight="600">
-    <rect x="64" y="196" width="232" height="34" rx="17" fill="#0e2a28" stroke="#2dd4bf" stroke-width="1.5"/>
-    <text x="180" y="218" text-anchor="middle" fill="#5eead4">DRY-RUN по умолчанию</text>
-    <rect x="312" y="196" width="292" height="34" rx="17" fill="#241a08" stroke="#fbbf24" stroke-width="1.5"/>
-    <text x="458" y="218" text-anchor="middle" fill="#fbbf24">исследовательский инструмент</text>
+  <!-- right: life of a token -->
+  <rect x="616" y="22" width="636" height="276" rx="16" fill="#0a1322" fill-opacity="0.82" stroke="#1d3150" stroke-width="1.5"/>
+  <rect x="1060" y="56" width="176" height="214" fill="#2dd4bf" fill-opacity="0.06"/>
+  <rect x="955" y="56" width="63" height="214" fill="url(#hatch)"/>
+  <path d="M640 270H1236" stroke="#2a4163" stroke-width="1.5"/>
+  <g stroke="#1a2b45" stroke-width="1">
+    <path d="M640 220H1236M640 170H1236M640 120H1236"/>
   </g>
 
-  <text x="64" y="272" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" fill="#7f93a8">не финансовый совет · прибыль не гарантирована</text>
+  <path d="M640 270 L682 260.5 L724 248.8 L766 234.6 L808 218.1 L850 199.3 L892 178.1 L934 154.6 L976 128.7 L1018 100.5 L1060 70 L1060 270 Z" fill="url(#area)"/>
+  <path d="M640 270 L682 260.5 L724 248.8 L766 234.6 L808 218.1 L850 199.3 L892 178.1 L934 154.6 L976 128.7 L1018 100.5 L1060 70" fill="none" stroke="url(#curve)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  <path d="M1060 70 L1080 78 L1100 73 L1120 89 L1140 84 L1160 99 L1180 94 L1200 107 L1220 102 L1236 111" fill="none" stroke="#22d3ee" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+
+  <path d="M1060 52V270" stroke="#e6f1ff" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="5 5"/>
+  <circle cx="1060" cy="70" r="9" fill="none" stroke="#e6f1ff" stroke-width="2" opacity="0.8">
+    <animate attributeName="r" values="9;20;9" dur="2.4s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.8;0;0.8" dur="2.4s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="1060" cy="70" r="6" fill="#e6f1ff"/>
+
+  <circle cx="984" cy="123.3" r="13" fill="#fbbf24" fill-opacity="0.18"/>
+  <circle cx="984" cy="123.3" r="7" fill="#fbbf24" stroke="#0a1322" stroke-width="2"/>
+
+  <circle r="4.5" fill="#f0fdf4" filter="url(#glow)">
+    <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
+      <mpath href="#life" xlink:href="#life"/>
+    </animateMotion>
+  </circle>
+
+  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600">
+    <text x="652" y="46" fill="#4ade80">bonding curve</text>
+    <text x="1060" y="44" text-anchor="middle" fill="#e6f1ff">graduation</text>
+    <text x="1170" y="44" text-anchor="middle" fill="#22d3ee">PumpSwap</text>
+    <text x="938" y="118" text-anchor="end" fill="#fcd34d">вход бота</text>
+    <g font-weight="500" fill="#8aa0b8">
+      <text x="640" y="288">0%</text>
+      <text x="850" y="288" text-anchor="middle">50%</text>
+      <text x="986" y="288" text-anchor="middle" fill="#fcd34d">75–90%</text>
+      <text x="1066" y="288">100% ≈ 85 SOL</text>
+    </g>
+  </g>
 </svg>

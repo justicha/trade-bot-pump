@@ -89,6 +89,8 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `LAB_TAKE_PROFIT` / `LAB_STOP_LOSS` / `LAB_TIMEOUT_SEC` / `LAB_TIME_STOP_SEC` | unset | Exit overrides on top of every variant |
 | `SHADOW_BUY_SOL` / `SHADOW_SL` / `SHADOW_HOLD_SEC` / `SHADOW_MAX_SEC` | `0.02` / `0.7` / `300` / unset | Graduation shadow lab |
 | `SHADOW_MAX_MINTS` | `20000` | Shadow lab memory bound; only fully spent mints are ever evicted |
+| `SHADOW_STALE_SEC` | `15` | Seconds of silence on a mint with an open position before re-checking whether its curve finished |
+| `SHADOW_AMM_POLL_MS` | `5000` | Minimum interval between pool quotes for a migrated position |
 | `REPLAY_MIN_TRADES` / `REPLAY_TEST_FRACTION` / `REPLAY_RESAMPLES` | `300` / `0.7` / `2000` | Replay strictness |
 | `SLIPPAGE_ASSUMED_BPS` | `50` | Extra slippage assumed by the cost model (`lib/fees.mjs`, `lib/pessimistic.mjs`) |
 

@@ -1,6 +1,7 @@
 // Hermetic test bootstrap. Import this FIRST in any test that (transitively) loads lib/config.mjs
 // or spawns a bot, before any other repo import. It makes a test independent of the developer's
-// machine: ROOT points at a fresh temp dir (so ROOT/.env is never read) and RPC_URL gets a
+// machine: process.env is stripped down to a small system allowlist (so neither secrets nor the
+// developer's bot settings leak in), then ROOT points at a fresh temp dir and RPC_URL gets a
 // throwaway value (lib/config.mjs aborts the process without a http(s) RPC_URL).
 //
 // The repo-local .env and keys/default.json must not be required for `npm test` to pass.
@@ -9,27 +10,29 @@ import os from "node:os";
 import path from "node:path";
 import { Keypair } from "@solana/web3.js";
 
+// The only environment variables a test process may keep. Compared case-insensitively
+// (k.toUpperCase()) because Windows env names vary in case ("ComSpec", "Path", ...).
+const SYSTEM_ALLOW = new Set([
+  "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC",
+  "TEMP", "TMP", "USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "NODE_OPTIONS",
+]);
+
+// Strip every non-system variable so a test sees only code defaults plus what it sets explicitly.
+// A real RPC URL (with an api-key) and the developer's bot settings never leak into a test or a
+// spawned bot. Pass anything a child needs explicitly via cleanEnv({ ... }).
+for (const k of Object.keys(process.env)) {
+  if (!SYSTEM_ALLOW.has(k.toUpperCase())) delete process.env[k];
+}
+
 process.env.ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "test-root-"));
 process.env.RPC_URL = "https://example.invalid";
 
-// Never inherit settings/secrets from the developer's shell: a real RPC URL (with an api-key)
-// must not leak into tests or spawned bots. Pass these explicitly via cleanEnv({ ... }) when a
-// child actually needs them.
-for (const k of ["HELIUS_API_KEY", "WS_URL", "LIVE_CONFIRM", "LIVE_CONFIRM_AMM", "DRY_SELL", "SELL_ON_EXIT"]) {
-  delete process.env[k];
-}
-
-// A fresh child env for spawn/spawnSync: only a whitelist of system variables that are actually
-// present in process.env, plus the test's own ROOT and RPC_URL, plus `extra` (which wins last).
-// Nothing else from the developer's shell leaks into a spawned bot.
-const SYSTEM_ALLOW = new Set([
-  "PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC",
-  "TEMP", "TMP", "USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "NODE_OPTIONS",
-]);
+// A fresh child env for spawn/spawnSync: the same system allowlist (case-insensitive), plus the
+// test's own ROOT and RPC_URL, plus `extra` (which wins last). Nothing else leaks into a child.
 export function cleanEnv(extra = {}) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (SYSTEM_ALLOW.has(k) && v !== undefined) env[k] = v;
+    if (SYSTEM_ALLOW.has(k.toUpperCase()) && v !== undefined) env[k] = v;
   }
   if (process.env.ROOT !== undefined) env.ROOT = process.env.ROOT;
   if (process.env.RPC_URL !== undefined) env.RPC_URL = process.env.RPC_URL;

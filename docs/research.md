@@ -66,9 +66,9 @@ the graduation fill band instead of producing nonsense prices.
 
 ## Graduation shadow lab
 
-`bots/graduation-sniper/shadow.mjs` is the graduation counterpart of the lab. Nine variants
+`bots/graduation-sniper/shadow.mjs` is the graduation counterpart of the lab. Ten variants
 (`A` baseline, `B` holders 7, `C` holders 15, `D` max fill 95, `E` max fill 97, `F` exit check,
-`G` B+E+F, `H` TP 1.3, `I` enter after migration) share one candidate stream and one virtual wallet
+`G` B+E+F, `H` TP 1.3, `I` enter after migration, `J` the live config) share one candidate stream and one virtual wallet
 each.
 
 `scripts/analyze-graduation.mjs` prints, per variant: `n`, win %, mean/median net %, profit factor,
@@ -76,6 +76,31 @@ max drawdown, the TP/SL/timeout/STUCK mix and a 95% bootstrap CI (only for n ≥
 series is split in half by time: the first half is the fit window, the second is the hold-out.
 Acceptance rule: the lower CI bound on the **second** half must be above zero, in the pessimistic
 model. Variant `I` reports "no data" because the trade stream carries no AMM price.
+
+### Variant J — the live config
+
+`J` paper-trades the live graduation entry band, reading the same `GRAD_*` variables the real bot
+uses via a short-name chain: `MIN_FILL ‖ GRAD_MIN_FILL_PCT`, `MAX_FILL ‖ GRAD_MAX_FILL_PCT`,
+`MIN_HOLDERS ‖ GRAD_MIN_HOLDERS`, plus `GRAD_TAKE_PROFIT`, `GRAD_STOP_LOSS` and `GRAD_TIMEOUT_SEC`
+(defaults 92/97/7 and 1.5/0.7/300). The shadow stake is set separately with `SHADOW_BUY_SOL`
+(default `0.02`).
+
+Pitfalls:
+- The short names `MIN_FILL` / `MAX_FILL` / `MIN_HOLDERS` are read BEFORE the `GRAD_*` names, and
+  `MIN_FILL` also moves variants `A`-`I`, so changing it for `J` changes the others too.
+- `J` does not reuse `GRAD_BUY_SOL`: if the stake in `.env` is not `0.02`, set `SHADOW_BUY_SOL`
+  manually.
+- `J` does not model `MAX_POSITIONS`, cooldown, the Mayhem/Token-2022 filters, the exit-ratio gate
+  or the pre-buy simulation of the live bot, so `J` is an upper bound on the number of entries.
+
+```powershell
+$env:SHADOW_MAX_SEC = "21600"   # 6 hours; without the variable — until Ctrl+C
+node bots/graduation-sniper/shadow.mjs
+node scripts/analyze-graduation.mjs
+```
+
+The startup line must read `candidate threshold 75% | J live config: fill 75-90%, holders>=5,
+TP 1.5, SL 0.7, hold 300s`. If it shows `92-97 / 7`, the `GRAD_*` variables were not read.
 
 ## How to run a real study
 
