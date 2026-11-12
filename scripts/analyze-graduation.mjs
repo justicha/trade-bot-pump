@@ -83,8 +83,28 @@ function reportGroup(scheme, list) {
     console.log(`WARNING: уникальных mints ${mints.size} < ${MIN_INDEPENDENT_MINTS} — наблюдения сильно коррелированы, вердикт не делать`);
   }
 
+  // Exit venues (v4-amm-exit rows): where each position was priced. A migrated position without a
+  // pool quote has NO result (netPct null) — it is counted, shown, and kept OUT of every average:
+  // Number(null) is 0, and averaging it in would silently book an unknown outcome as break-even.
+  const venues = new Map();
+  for (const t of list) if (t.exitVenue) venues.set(t.exitVenue, (venues.get(t.exitVenue) || 0) + 1);
+  if (venues.size) {
+    console.log(`exit venues: ${["curve", "amm", "amm-unpriced"].filter((k) => venues.has(k)).map((k) => `${k}=${venues.get(k)}`).join(" ")}`);
+  }
+  const priced = (t) => t.netPct !== null && t.netPct !== undefined && Number.isFinite(Number(t.netPct));
+  const unpriced = list.filter((t) => !priced(t));
+  if (unpriced.length) {
+    const perV = new Map();
+    for (const t of unpriced) perV.set(t.variant, (perV.get(t.variant) || 0) + 1);
+    console.log(
+      `UNPRICED: ${unpriced.length} of ${list.length} trade(s) have no result (curve completed, no pool quote) — excluded from the statistics below: ${[...perV].sort().map(([v, n]) => `${v}=${n}`).join(" ")}`,
+    );
+    console.log("          these positions could NOT be sold at a known price; the table is optimistic by exactly that much");
+  }
+
   const byVariant = new Map();
   for (const t of list) {
+    if (!priced(t)) continue;
     if (!byVariant.has(t.variant)) byVariant.set(t.variant, []);
     byVariant.get(t.variant).push(t);
   }

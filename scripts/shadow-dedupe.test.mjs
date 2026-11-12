@@ -38,6 +38,7 @@ const env = cleanEnv({
   SHADOW_MAX_MINTS: "2", // the cap is hit on purpose: 1 traded mint + 3 filler mints
   SHADOW_SL: "0", // no stop-loss: the exit is a plain timeout
   SHADOW_HOLD_SEC: "1", // close fast: a live position is (correctly) never evictable
+  GRAD_TIMEOUT_SEC: "1", // the same for variant J, which holds for the LIVE timeout (300s by default)
   SHADOW_MAX_SEC: "10",
   CU_PRICE: "1500000",
   CU_LIMIT: "300000",
@@ -69,11 +70,12 @@ const trades = records.filter((x) => x.type === "gshadow_trade");
 // would be trivial (the state was simply never evicted).
 asrt(/mintState cap 2: pruned [1-9]/.test(out), `the cap pruned a spent mint: "${(out.match(/mintState cap.*/) || [""])[0]}"`);
 
-asrt(opens.length === 8, `one open per variant, no duplicates after the mint reappeared (got ${opens.length})`);
+// 9 since task 5: A–H plus J ("live config").
+asrt(opens.length === 9, `one open per variant, no duplicates after the mint reappeared (got ${opens.length})`);
 const openKeys = opens.map((o) => `${o.variant}:${o.mint}`);
 asrt(new Set(openKeys).size === openKeys.length, "no duplicated (variant,mint) gshadow_open");
-asrt(new Set(opens.map((o) => o.variant)).size === 8, "all eight variants opened once");
-asrt(trades.length === 8, `each of those positions is closed once (got ${trades.length})`);
+asrt(new Set(opens.map((o) => o.variant)).size === 9, "all nine variants opened once");
+asrt(trades.length === 9, `each of those positions is closed once (got ${trades.length})`);
 asrt(
   trades.every((t) => t.reason === "timeout"),
   `the positions closed by timeout before the cap ran, got ${JSON.stringify([...new Set(trades.map((t) => t.reason))])}`,

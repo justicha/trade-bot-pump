@@ -60,7 +60,7 @@ const code = await new Promise((resolve) => {
 asrt(code === 0, `the shadow lab exited 0 (got ${code}); stderr: ${err.split(/\r?\n/)[0] || ""}`);
 
 const trades = readJournal(dir).filter((x) => x.type === "gshadow_trade");
-asrt(trades.length === 8, `8 stop trades (got ${trades.length})`);
+asrt(trades.length === 9, `9 stop trades: A–H plus J, the live config (got ${trades.length})`);
 const t = trades[0];
 console.log(JSON.stringify({ ratio: t.ratio, entryPrice: t.entryPrice, exitPrice: t.exitPrice, netPct: t.netPct, slipBps: t.slipBps, costsScheme: t.costsScheme }));
 
@@ -68,7 +68,9 @@ asrt(t.exitPrice === t.entryPrice, `the exit price equals the entry price (${t.e
 asrt(t.ratio === 1, `a flat round trip has ratio 1, not 1/(1+slip) — got ${t.ratio}`);
 asrt(t.netPct === -7.63, `flat round trip nets -7.63% (fees+one slip+tx), got ${t.netPct}`);
 asrt(
-  typeof t.costsScheme === "string" && t.costsScheme.startsWith("v3-single-slip"),
+  // v4-amm-exit keeps the v3-single-slip arithmetic for curve exits (the numbers above are the
+  // same); only the label moved because migrated positions are priced differently now.
+  typeof t.costsScheme === "string" && t.costsScheme.startsWith("v4-amm-exit") && t.exitVenue === "curve" && t.migrated === false,
   `the line carries the new accounting scheme, got ${t.costsScheme}`,
 );
 asrt(t.slipBps === 54, `the reported slippage is 50 assumed + 4 size = 54 bps, got ${t.slipBps}`);

@@ -54,7 +54,7 @@ function fakeKey(seed, salt = 0) {
   return encodeB58(bytes);
 }
 
-const MINT = fakeKey(500, 1);
+export const MINT = fakeKey(500, 1);
 
 function tradePayload({ mint, user, sol, token, isBuy, rSol, vTok }) {
   const buf = Buffer.alloc(405);

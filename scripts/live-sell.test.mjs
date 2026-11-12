@@ -169,7 +169,9 @@ const count = (src, re) => (src.match(re) || []).length;
   asrt(count(live, /applyLiveSell\(pos, /g) === 2, "graduation: normal + reconciled sale use applyLiveSell");
   asrt(count(live, /session\.sell\(sale\.acc\.ledger\.receivedSol, sale\.acc\.ledger\.pnlSol, sale\.acc\.costs\)/g) === 2, "graduation: ledger gets gross figures + real fees (both paths)");
   asrt(count(live, /\.\.\.sale\.fields/g) === 2, "graduation: both sell rows carry the shared live fields");
-  asrt(count(sell, /roundTripCosts\(/g) === 1 && /roundTripCosts\(\{ buySol: entrySol, ratio: mult \}\)/.test(sell), "graduation: roundTripCosts only in the DRY branch");
+  // Task 5 / P4: the dry branch moved to netRatioExitCosts (no double pump fee); the live paths
+  // still carry no estimated costs at all.
+  asrt(count(src, /roundTripCosts\(/g) === 0 && count(sell, /netRatioExitCosts\(\{ entrySol, ratio: mult \}\)/g) === 1, "graduation: no roundTripCosts; the DRY branch uses netRatioExitCosts once");
   asrt(!/pumpFeeBps: 0/.test(src) && !/splitEntryForSell/.test(src), "graduation: no estimated live costs, no hand-rolled entry split");
   asrt(count(src, /\.\.\.entry, \/\/ entrySolSol, entrySource, buyFeeSol/g) === 2, "graduation: both buy paths store every entry fact (incl. buyFeeSol)");
   asrt(count(sell, /Object\.assign\(pos, sale\.remainder, \{ attempts: 0, nextSellAt: 0 \}\)/g) === 2, "graduation: a partial sale keeps tokens, entry share and buy-fee share");

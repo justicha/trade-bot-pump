@@ -160,7 +160,8 @@ asrt(near(liveSellAccounting({ buySol: BUY_SOL, receivedSol: 0.12, soldRaw: 1n, 
   asrt((src.match(/roundTripCosts\(/g) || []).length === 2 && (src.match(/roundTripCosts\(\{ buySol: BUY_SOL, ratio \}\)/g) || []).length === 2, "sniper: dry-run cost model untouched (2 call sites, none in live)");
 }
 // The scheme stamp moved (live accounting changed) but keeps the "v2" family prefix the readers use.
-asrt(COSTS_SCHEME.startsWith("v2.2"), `COSTS_SCHEME bumped to v2.2, got "${COSTS_SCHEME}"`);
+// v2.3 (task 5) changed only the graduation DRY exit; the live arithmetic tested here is v2.2's.
+asrt(COSTS_SCHEME.startsWith("v2.3") && /pnlSol net of both network fees/.test(COSTS_SCHEME), `COSTS_SCHEME is v2.3 and still describes the live model, got "${COSTS_SCHEME}"`);
 // buyIx comment tells the truth about `amount`; the bytes are pinned by scripts/buyix-layout.test.mjs.
 {
   const pf = fs.readFileSync(path.join(here, "..", "lib", "pumpfun.mjs"), "utf8");

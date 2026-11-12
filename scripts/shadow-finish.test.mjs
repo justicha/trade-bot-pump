@@ -65,13 +65,14 @@ asrt((r.out.match(/SHADOW STOP/g) || []).length === 1, `the stop summary is prin
 
 const opens = r.records.filter((x) => x.type === "gshadow_open");
 const trades = r.records.filter((x) => x.type === "gshadow_trade");
-asrt(opens.length === 8, `8 variants opened a position (got ${opens.length})`);
-asrt(trades.length === 8, `every open position is journaled as a trade at the stop (got ${trades.length})`);
+// 9 since task 5: A–H plus J ("live config", lib/grad-config.mjs defaults: fill 92–97, holders >= 7).
+asrt(opens.length === 9, `9 variants opened a position (got ${opens.length})`);
+asrt(trades.length === 9, `every open position is journaled as a trade at the stop (got ${trades.length})`);
 asrt(
   trades.every((t) => t.reason === "manual stop"),
   `stop trades use reason "manual stop", got ${JSON.stringify([...new Set(trades.map((t) => t.reason))])}`,
 );
-asrt(new Set(trades.map((t) => t.variant)).size === 8, "all eight variants are represented among the stop trades");
+asrt(new Set(trades.map((t) => t.variant)).size === 9, "all nine variants are represented among the stop trades");
 asrt(
   trades.every((t) => opens.some((o) => o.variant === t.variant && o.mint === t.mint)),
   "each stop trade matches a position that was open",

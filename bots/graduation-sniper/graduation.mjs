@@ -31,7 +31,8 @@ import { previewExit, readExecution, simulateTx } from "../../lib/exec.mjs";
 import { checkBuyGate } from "../../lib/buy-gate.mjs";
 import { exitDepth } from "../../lib/buy-checks.mjs";
 import { checkMintExtensions, mayhemReason } from "../../lib/token-safety.mjs";
-import { simulateCurveSell } from "../../lib/prebuy-sim.mjs";
+import { preBuyCheck, simulateCurveSell } from "../../lib/prebuy-sim.mjs";
+import { readGradStrategy } from "../../lib/grad-config.mjs";
 import { DEFAULT_DAILY_LOSS_LIMIT_SOL, dailyLossBlocked, netSolForDay } from "../../lib/daily-loss.mjs";
 import { exitDecision, positionsToSell } from "../../lib/exit-plan.mjs";
 import { mskDateKey } from "../../lib/time.mjs";
@@ -62,7 +63,8 @@ import {
   userAtaIx,
 } from "../../lib/pumpfun.mjs";
 import { connection, getSOLBalance, sendTxWithRetry, rpcStats } from "../../lib/rpc.mjs";
-import { roundTripCosts } from "../../lib/fees.mjs";
+import { netRatioExitCosts } from "../../lib/fees.mjs";
+import { ammSellQuote } from "../../lib/pumpswap.mjs";
 import { SessionLedger } from "../../lib/session.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
 import { applyLiveSell, balanceBeforeSell, liveEntry } from "../../lib/live-pnl.mjs";
@@ -73,14 +75,20 @@ import { SolanaWs } from "../../lib/ws.mjs";
 // Numeric config via numOr: an invalid value (e.g. copied from .env.example with an inline
 // comment) fails loudly with the variable name instead of silently becoming NaN.
 const BUY_SOL = numOr(process.env.GRAD_BUY_SOL, 0.1, "GRAD_BUY_SOL");
-const MIN_FILL_PCT = numOr(process.env.MIN_FILL || process.env.GRAD_MIN_FILL_PCT, 92, "MIN_FILL/GRAD_MIN_FILL_PCT");
-const MAX_FILL_PCT = numOr(process.env.MAX_FILL || process.env.GRAD_MAX_FILL_PCT, 97, "MAX_FILL/GRAD_MAX_FILL_PCT");
-const MIN_HOLDERS = numOr(process.env.MIN_HOLDERS || process.env.GRAD_MIN_HOLDERS, 7, "MIN_HOLDERS/GRAD_MIN_HOLDERS");
+// Band and exits come from lib/grad-config.mjs — the same reader the shadow lab's variant J uses,
+// so the paper "live config" can never drift from what this bot trades. Env chain and defaults are
+// unchanged: MIN_FILL || GRAD_MIN_FILL_PCT (92), MAX_FILL || GRAD_MAX_FILL_PCT (97),
+// MIN_HOLDERS || GRAD_MIN_HOLDERS (7), GRAD_TAKE_PROFIT (1.5), GRAD_STOP_LOSS (0.7),
+// GRAD_TIMEOUT_SEC (300).
+const GRAD_STRATEGY = readGradStrategy();
+const MIN_FILL_PCT = GRAD_STRATEGY.minFillPct;
+const MAX_FILL_PCT = GRAD_STRATEGY.maxFillPct;
+const MIN_HOLDERS = GRAD_STRATEGY.minHolders;
 // 0 = disabled. The stream has no balances, so a non-zero value can never be verified yet.
 const MAX_TOP10_SHARE = numOr(process.env.MAX_TOP10_SHARE, 0, "MAX_TOP10_SHARE");
-const TAKE_PROFIT = numOr(process.env.GRAD_TAKE_PROFIT, 1.5, "GRAD_TAKE_PROFIT");
-const STOP_LOSS = numOr(process.env.GRAD_STOP_LOSS, 0.7, "GRAD_STOP_LOSS");
-const TIMEOUT_SEC = numOr(process.env.GRAD_TIMEOUT_SEC, 300, "GRAD_TIMEOUT_SEC");
+const TAKE_PROFIT = GRAD_STRATEGY.takeProfit;
+const STOP_LOSS = GRAD_STRATEGY.stopLoss;
+const TIMEOUT_SEC = GRAD_STRATEGY.timeoutSec;
 const MAX_POSITIONS = numOr(process.env.GRAD_MAX_POSITIONS, 3, "GRAD_MAX_POSITIONS");
 const COOLDOWN_SEC = numOr(process.env.GRAD_COOLDOWN_SEC, 30, "GRAD_COOLDOWN_SEC");
 const POLL_MS = 3000;
@@ -416,13 +424,44 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     }
     journal.write({ ...candidate, action: "enter", exitRatio, reason: null });
 
-    // Before spending anything, prove the exit: sell the whole would-be position on the curve in a
-    // simulation. A curve that cannot pay the sell now will not pay it after the buy either.
-    const wouldBuyTokens = calcBuyTokens(state, BUY_SOL);
-    const preSell = await simulateCurveSell({ wallet, mintPk, state, tokens: wouldBuyTokens });
-    if (!preSell.ok) {
+    // The buy arguments, computed ONCE: the simulation below and the real buy use the same numbers.
+    const expectedTokens = calcBuyTokens(state, BUY_SOL);
+    const minTokens = (expectedTokens * BigInt(10000 - BUY_SLIPPAGE_BPS)) / 10000n;
+    // Slippage headroom on max_sol_cost: without it any upward tick means Custom 6002.
+    const maxSolCost = solToLamports(BUY_SOL * (1 + BUY_SLIPPAGE_BPS / 10000));
+    // Never build a buy with a stale fee recipient: retry the global read right here.
+    await ensureGlobalFeeState().catch((e) => log(`  fee state refresh failed: ${e.message}`));
+
+    // Before spending anything, prove the exit: simulate BUY + SELL of the same tokens in ONE
+    // transaction (lib/prebuy-sim.mjs). A sell alone can never pass — the wallet holds no tokens
+    // before the buy (that was "6023 NotEnoughTokensToSell" on every candidate: the bot never
+    // bought). LIVE: a failed simulation blocks the buy. DRY RUN: informational only, journaled
+    // as `preBuySim`, and skipped when the wallet could not even afford the simulated buy.
+    const pre = await preBuyCheck({
+      live: LIVE,
+      maxSolCost,
+      getBalanceSol: () => getSOLBalance(wallet.publicKey),
+      simulate: () => simulateCurveSell({ wallet, mintPk, state, tokens: minTokens, buy: { solAmount: BUY_SOL, maxSolCost } }),
+    });
+    const preSell = pre.sim;
+    journal.write({
+      ...candidate,
+      type: "prebuy_sim",
+      mode: LIVE ? "LIVE" : "DRY",
+      preBuySim: pre.preBuySim,
+      blocked: pre.block,
+      tokens: minTokens.toString(),
+      maxSolCost: Number(maxSolCost) / 1e9,
+      expectedExitSol: preSell?.quote != null ? Number(preSell.quote) / 1e9 : null,
+      unitsConsumed: preSell?.units ?? null,
+      // Program logs only when the simulation failed: that is where the reason lives.
+      logs: preSell && !preSell.ok ? preSell.logs : undefined,
+      balanceSol: pre.balanceSol,
+    });
+    if (pre.block) {
       skipBuy(candidate, `${BUY_SKIP_REASON.curveSellSimulation}: ${preSell.reason}`, {
-        tokens: wouldBuyTokens.toString(),
+        preBuySim: pre.preBuySim,
+        tokens: minTokens.toString(),
         expectedExitSol: preSell.quote != null ? Number(preSell.quote) / 1e9 : null,
         logs: preSell.logs,
         unitsConsumed: preSell.units ?? null,
@@ -434,7 +473,12 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
       for (const line of preSell.logs) log(`    ${line}`);
       return;
     }
-    log(`  exit simulation ok: ${(Number(preSell.quote) / 1e9).toFixed(6)} SOL for ${wouldBuyTokens.toString()} tokens`);
+    if (pre.preBuySim === "ok") {
+      log(`  buy+sell simulation ok: exit ${(Number(preSell.quote) / 1e9).toFixed(6)} SOL for ${minTokens.toString()} tokens`);
+    } else {
+      // DRY RUN only (LIVE returned above): the entry is NOT refused.
+      log(`  [DRY RUN] pre-buy simulation ${pre.preBuySim} — informational, entry not blocked`);
+    }
 
 
 
@@ -467,12 +511,8 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
       return;
     }
 
-    const expectedTokens = calcBuyTokens(state, BUY_SOL);
-    const minTokens = (expectedTokens * BigInt(10000 - BUY_SLIPPAGE_BPS)) / 10000n;
-    // Slippage headroom on max_sol_cost: without it any upward tick means Custom 6002.
-    const maxSolCost = solToLamports(BUY_SOL * (1 + BUY_SLIPPAGE_BPS / 10000));
-    // Never send a live buy with a stale fee recipient: retry the global read right here.
-    await ensureGlobalFeeState().catch((e) => log(`  fee state refresh failed: ${e.message}`));
+    // expectedTokens / minTokens / maxSolCost and the fee state: computed above, before the
+    // simulation, so the simulated buy and this one are built from the same numbers.
     const ixs = [
       ...computeBudgetIxs(),
       userAtaIx(wallet.publicKey, mintPk),
@@ -730,20 +770,69 @@ async function dryRunAmmProbe(mint, mintPk, pos) {
   }
 }
 
-async function sellPosition(mint, mintPk, pos, ratio) {
+// `final`: the last call for this position (session stop) — no retry is possible after it.
+async function sellPosition(mint, mintPk, pos, ratio, { final = false } = {}) {
   if (DRY_RUN) {
     // DRY_SELL=yes: also simulate the REAL PumpSwap exit (journal: sell_sim / sell_attempt / sell_dry).
     if (DRY_SELL) await dryRunAmmProbe(mint, mintPk, pos);
-    const mult = ratio ?? (pos.lastPrice && pos.entryPrice ? pos.lastPrice / pos.entryPrice : 1);
     const entrySol = pos.entrySolSol ?? BUY_SOL;
-    const pnlSol = entrySol * (mult - 1);
-    const costs = roundTripCosts({ buySol: entrySol, ratio: mult });
+    let mult = ratio;
+    let venue = "curve";
+    if (mult == null) {
+      // The curve is complete / gone: its last price is not an exit price (it is the highest the
+      // curve ever had, and nothing can be sold on it). Price the paper exit from the PumpSwap
+      // pool instead — read-only (getAccountInfo / getTokenAccountBalance). It used to be valued at
+      // pos.lastPrice of the dead curve, which overstated every migrated position.
+      if (!final && (pos.nextSellAt || 0) > Date.now()) return;
+      venue = "pumpswap";
+      const q = await ammSellQuote(connection, mintPk, pos.tokens).catch(() => null);
+      if (!q || !(q.solOut > 0n)) {
+        // No pool / no quote: NOT a sale. Same patience as the live path (SELL_MAX_ATTEMPTS with
+        // backoff), then the position is reported as stuck — without a result and, this being a
+        // dry run, without an assumed loss for the limits.
+        const attempt = (pos.attempts || 0) + 1;
+        pos.attempts = attempt;
+        if (!final && attempt < SELL_MAX_ATTEMPTS) {
+          const backoffMs = 2000 * 2 ** (attempt - 1);
+          pos.nextSellAt = Date.now() + backoffMs;
+          log(`  [DRY RUN] no PumpSwap quote for ${mint.slice(0, 12)} — attempt ${attempt}/${SELL_MAX_ATTEMPTS}, next try in ${Math.round(backoffMs / 1000)}s; position kept`);
+          return;
+        }
+        stuck.add(`${mint.slice(0, 12)}: dry: no AMM quote`);
+        journal.write({
+          type: "stuck",
+          sessionId: SESSION_ID,
+          paramsHash: PARAMS_HASH,
+          gitSha: GIT_SHA,
+          mode: "DRY",
+          mint,
+          venue,
+          reason: "dry: no AMM quote",
+          attempts: attempt,
+          maxAttempts: SELL_MAX_ATTEMPTS,
+          tokens: (pos.tokens ?? 0n).toString(),
+          entrySolSol: entrySol,
+        });
+        session.drop(`${mint.slice(0, 12)}: dry: no AMM quote (curve complete, pool not priced)`);
+        log(`  [DRY RUN] ${mint.slice(0, 12)}: curve complete and no PumpSwap quote — NOT booked as a sale (stuck, no result)`);
+        positions.delete(mint);
+        return;
+      }
+      // What the pool pays for the position (after the pool's own fees) over the entry.
+      mult = Number(q.solOut) / (entrySol * 1e9);
+      log(`  [DRY RUN] PumpSwap quote: ${(Number(q.solOut) / 1e9).toFixed(9)} SOL for ${pos.tokens.toString()} tokens (pool fees ${q.feeBps} bps inside)`);
+    }
+    // `mult` is already NET of the venue fees on both venues: calcSellSol(tokens) / entry on the
+    // curve (tokens bought after pump's 1%, proceeds after pump's 1%), pool quote / entry on
+    // PumpSwap. Only the assumed slippage and the two network fees are costs on top of it —
+    // charging pump 1% + 1% again (as before) took about 2% off every dry trade.
+    const { pnlSol, receivedSol, costs } = netRatioExitCosts({ entrySol, ratio: mult });
     recordResult(pnlSol);
-    session.sell(entrySol + pnlSol, pnlSol, costs);
+    session.sell(receivedSol, pnlSol, costs);
     totalTrades++;
     totalPnl += pnlSol;
     if (pnlSol > 0) wins++;
-    log(`  [DRY RUN] sold: ${mult >= 1 ? "+" : ""}${((mult - 1) * 100).toFixed(1)}% (${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL)`);
+    log(`  [DRY RUN] sold on ${venue}: ${mult >= 1 ? "+" : ""}${((mult - 1) * 100).toFixed(1)}% (${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL before slippage/network costs ${costs.costSol.toFixed(6)})`);
     positions.delete(mint);
     return;
   }
@@ -1049,14 +1138,10 @@ async function finish(reason = stopReason || "stopped") {
           continue;
         }
         if (DRY_RUN && ratio == null) {
-          if (pos.lastPrice == null) {
-            log(`  ${mint.slice(0, 12)}: no price at stop, dropping`);
-            session.drop(`${mint.slice(0, 12)}: no price at stop`);
-            positions.delete(mint);
-            continue;
-          }
-          log(`  ${mint.slice(0, 12)}: curve gone, valuing at last known price (DRY RUN)`);
-          await sellPosition(mint, mintPk, pos, pos.lastPrice / pos.entryPrice);
+          // The curve is complete / gone. The paper exit is priced from the PumpSwap pool, or not
+          // booked at all (it used to be valued at the dead curve's last price). `final`: no retry.
+          log(`  ${mint.slice(0, 12)}: curve complete/gone — pricing the exit from the PumpSwap pool (DRY RUN)`);
+          await sellPosition(mint, mintPk, pos, null, { final: true });
         } else {
           await sellPosition(mint, mintPk, pos, ratio); // real path: curve, or PumpSwap when complete
         }

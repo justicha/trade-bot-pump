@@ -10,6 +10,14 @@
 //   "reappear" — the same, then three filler mints push mintState past SHADOW_MAX_MINTS, then the
 //                first mint trades again: it must NOT be opened a second time.
 //
+//   "migrate"  — the 93% entry, then a trade that fills the curve to 100%: the curve is finished and
+//                the stream goes silent (scripts/gshadow-amm.test.mjs).
+//   "live-band" — three mints for the per-variant bands and the event handling:
+//                BAND_MINT  6 buyers, the 6th at 80%  -> only variant J (live band 75–90) may open;
+//                HIGH_MINT  17 buyers, then 93%       -> A–H open, J must not (above its MAX_FILL);
+//                MULTI_MINT ONE transaction with a sell event (60%) and then a buy event (93%):
+//                           both events must be processed, and only the buy counts as a holder.
+//
 // Fill percentages are of the 85 SOL real graduation reserve (lib/curve.mjs gradFillPct).
 import { EventEmitter } from "node:events";
 
@@ -92,7 +100,10 @@ function tradePayload({ mint, user, realSol, isBuy = true, ts = 1_760_000_000 })
 const OK = (signature, logs) => ({ context: { slot: 0 }, value: { signature, err: null, logs } });
 const DATA = (p) => `Program data: ${p.toString("base64")}`;
 
-const FIRST_MINT = fakeKey(101, 7);
+export const FIRST_MINT = fakeKey(101, 7);
+export const BAND_MINT = fakeKey(202, 7);
+export const HIGH_MINT = fakeKey(303, 7);
+export const MULTI_MINT = fakeKey(404, 7);
 
 export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || "single" } = {}) {
   const out = [];
@@ -110,6 +121,28 @@ export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || 
     });
   };
 
+  if (scenario === "live-band") {
+    for (let i = 1; i <= 5; i++) push(BAND_MINT, i * 10); // 5 buyers, 10..50%
+    push(BAND_MINT, 80, { delayMs: 120 }); // the 6th buyer, inside 75–90
+    for (let i = 1; i <= 16; i++) push(HIGH_MINT, i * 4); // 16 buyers, 4..64%
+    push(HIGH_MINT, 93, { delayMs: 120 }); // above J's MAX_FILL, inside the lab's 92+
+    // One transaction, two trade events of the same mint: a SELL at 60% and then a BUY at 93%.
+    // The instruction log says "Buy" for the whole tx on purpose: the holder count must follow each
+    // event's own is_buy flag.
+    seq += 1;
+    out.push({
+      delayMs: 120,
+      payload: OK(`sig-shadow-${seq}`, [
+        `Program ${PUMP} invoke [1]`,
+        "Program log: Instruction: Buy",
+        DATA(tradePayload({ mint: MULTI_MINT, user: fakeKey(7_001, 5), realSol: 0.6 * REAL_SOL_100, isBuy: false })),
+        DATA(tradePayload({ mint: MULTI_MINT, user: fakeKey(7_002, 5), realSol: 0.93 * REAL_SOL_100, isBuy: true })),
+        `Program ${PUMP} success`,
+      ]),
+    });
+    return out;
+  }
+
   // 16 distinct buyers below MIN_FILL: the mint accumulates holders without entering, which is what
   // lets the holder-gated variants (B 7, C 15, G 7) open on the crossing event.
   for (let i = 1; i <= 16; i++) push(FIRST_MINT, i * 5);
@@ -117,6 +150,10 @@ export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || 
   push(FIRST_MINT, 93, { delayMs: 120 }); // >= MIN_FILL (92): every variant decides here
   // "flat" stops right here on purpose: no later price event, so the exit price IS the entry price
   // and the gross ratio must be exactly 1 — that is how the buy-slippage accounting is measured.
+  if (scenario === "migrate") {
+    push(FIRST_MINT, 100, { delayMs: 120 }); // the trade that completes the curve; nothing follows
+    return out;
+  }
   if (scenario !== "flat") push(FIRST_MINT, 96, { delayMs: 120 }); // a later price, so the exit is not exactly at entry
 
   if (scenario === "reappear") {
