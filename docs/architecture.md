@@ -197,7 +197,7 @@ Before buying, graduation simulates a buy+sell in a single transaction (`lib/pre
 LIVE a failed simulation blocks the entry; in DRY it never blocks and only records the outcome in a
 `prebuy_sim` journal line: `preBuySim` (`ok` / `fail:<reason>` / `skipped:low-balance` /
 `skipped:balance-unavailable` / `skipped:error`), `blocked`, `mode`, `tokens`, `maxSolCost`,
-`expectedExitSol`, `unitsConsumed`, and, on failure, `logs` and `balanceSol`. A LIVE block is
+`expectedExitSol`, `unitsConsumed`, `logs` on failure, and `balanceSol` when the dry check is skipped for low balance. A LIVE block is
 journaled as a `skip` line carrying the `preBuySim` reason (DRY never blocks).
 
 Rotation: ticks rotate by size and are drained at stop (`SNIPER_DRAIN_MAX_SEC`); raw captures rotate

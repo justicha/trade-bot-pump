@@ -33,6 +33,7 @@ import { exitDepth } from "../../lib/buy-checks.mjs";
 import { checkMintExtensions, mayhemReason } from "../../lib/token-safety.mjs";
 import { preBuyCheck, simulateCurveSell } from "../../lib/prebuy-sim.mjs";
 import { readGradStrategy } from "../../lib/grad-config.mjs";
+import { createAtaCloser } from "../../lib/close-ata.mjs";
 import { DEFAULT_DAILY_LOSS_LIMIT_SOL, dailyLossBlocked, netSolForDay } from "../../lib/daily-loss.mjs";
 import { exitDecision, positionsToSell } from "../../lib/exit-plan.mjs";
 import { mskDateKey } from "../../lib/time.mjs";
@@ -227,6 +228,20 @@ const stuck = new Set();
 function log(msg) {
   logger.info(msg);
 }
+
+// After a FULL live sale the empty token ATA is closed to get its rent back (lib/close-ata.mjs):
+// a separate transaction, in the background, best effort — it can never fail or delay a sale, and
+// it does not change any trade's pnlSol. DRY RUN: does nothing.
+const ataCloser = createAtaCloser({
+  connection,
+  wallet,
+  live: LIVE,
+  session,
+  journal,
+  log,
+  warn: (m) => logger.warn(m),
+  meta: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA },
+});
 
 const guard = new TradeGuard();
 
@@ -1008,6 +1023,8 @@ async function sellPosition(mint, mintPk, pos, ratio, { final = false } = {}) {
       log(`  remaining ${(Number(pos.tokens) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens kept for the next cycle`);
     } else {
       positions.delete(mint);
+      // The sale is confirmed and booked: now (and only now) try to close the empty ATA.
+      ataCloser.schedule(mint, { venue });
     }
   } catch (err) {
     // C2: the sell may have landed even though confirmTransaction failed. If the chain shows the
@@ -1040,6 +1057,7 @@ async function sellPosition(mint, mintPk, pos, ratio, { final = false } = {}) {
           log(`  remaining ${(Number(pos.tokens) / 1e6).toLocaleString("en-US", { maximumFractionDigits: 0 })} tokens kept for the next cycle`);
         } else {
           positions.delete(mint);
+          ataCloser.schedule(mint, { venue });
         }
         return;
       }
@@ -1185,6 +1203,9 @@ async function finish(reason = stopReason || "stopped") {
     session.drop(`${mint.slice(0, 12)}: still open at stop`);
     positions.delete(mint);
   }
+  // ATA closes still in flight must be in the ledger before the wallet is read (bounded wait).
+  const closesLeft = (await ataCloser.drain()).pending;
+  if (closesLeft) log(`  ${closesLeft} ATA close(s) still unconfirmed at stop — not in the summary`);
   const endSol = LIVE ? await getSOLBalance(wallet.publicKey).catch(() => null) : null;
   session.report({
     reason,

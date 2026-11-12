@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="bannerTitle bannerDesc">
   <title id="bannerTitle">pump-bot — торговые боты для pump.fun на Solana</title>
-  <desc id="bannerDesc">Тёмный баннер с сеткой. Слева крупная надпись pump-bot, подзаголовок «торговые боты для pump.fun · Solana» и три бейджа: «DRY-RUN по умолчанию», «Solana», «pump.fun → PumpSwap». Справа схема жизни токена: неоново-зелёная bonding curve растёт по мере заполнения от 0 до 100 процентов, заштрихованная полоса 75–90 процентов отмечает, где входит бот (янтарная точка), пунктир graduation на 100 процентах (около 85 SOL) с пульсирующим кольцом, после него бирюзовая линия цены в пуле PumpSwap. Внизу мелко: не финансовый совет, прибыль не гарантирована.</desc>
+  <desc id="bannerDesc">Тёмный баннер с сеткой. Слева крупная надпись pump-bot, подзаголовок «торговые боты для pump.fun · Solana» и три бейджа: «DRY-RUN по умолчанию», «Solana», «pump.fun → PumpSwap». Справа схема жизни токена: неоново-зелёная bonding curve растёт по мере заполнения от 0 до 100 процентов, заштрихованная полоса входа, границы задаёт пользователь (на схеме меняется от ~60 до ~95 процентов) отмечает, где входит бот (янтарная точка), пунктир graduation на 100 процентах (около 85 SOL) с пульсирующим кольцом, после него бирюзовая линия цены в пуле PumpSwap. Внизу мелко: не финансовый совет, прибыль не гарантирована.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#070d18"/>
@@ -78,7 +78,10 @@
   <!-- right: life of a token -->
   <rect x="616" y="22" width="636" height="276" rx="16" fill="#0a1322" fill-opacity="0.82" stroke="#1d3150" stroke-width="1.5"/>
   <rect x="1060" y="56" width="176" height="214" fill="#2dd4bf" fill-opacity="0.06"/>
-  <rect x="955" y="56" width="63" height="214" fill="url(#hatch)"/>
+  <rect x="955" y="56" width="63" height="214" fill="url(#hatch)">
+    <animate attributeName="x" values="955;892;892;955;955" keyTimes="0;0.25;0.5;0.75;1" dur="8s" repeatCount="indefinite" calcMode="linear"/>
+    <animate attributeName="width" values="63;126;147;84;63" keyTimes="0;0.25;0.5;0.75;1" dur="8s" repeatCount="indefinite" calcMode="linear"/>
+  </rect>
   <path d="M640 270H1236" stroke="#2a4163" stroke-width="1.5"/>
   <g stroke="#1a2b45" stroke-width="1">
     <path d="M640 220H1236M640 170H1236M640 120H1236"/>
@@ -112,7 +115,7 @@
     <g font-weight="500" fill="#8aa0b8">
       <text x="640" y="288">0%</text>
       <text x="850" y="288" text-anchor="middle">50%</text>
-      <text x="986" y="288" text-anchor="middle" fill="#fcd34d">75–90%</text>
+      <text x="986" y="288" text-anchor="middle" fill="#fcd34d">↔ настраивается</text>
       <text x="1066" y="288">100% ≈ 85 SOL</text>
     </g>
   </g>

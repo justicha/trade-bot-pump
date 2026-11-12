@@ -38,6 +38,7 @@ import { SessionLedger } from "../../lib/session.mjs";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
 import { applyLiveSell, balanceBeforeSell, liveEntry } from "../../lib/live-pnl.mjs";
+import { createAtaCloser } from "../../lib/close-ata.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -73,6 +74,12 @@ const recentTxs = new Set(); // dedup
 function log(msg) {
   logger.info(msg);
 }
+
+// After a FULL live sale the empty token ATA is closed to get its rent back (lib/close-ata.mjs):
+// a separate transaction, in the background, best effort — it can never fail or delay a sale, and
+// it does not change any trade's pnlSol. A SELL_PCT < 100 sale leaves tokens: nothing is closed.
+// DRY RUN: does nothing.
+const ataCloser = createAtaCloser({ connection, wallet, live: LIVE, session, journal, log, warn: (m) => logger.warn(m) });
 
 const guard = new TradeGuard();
 
@@ -271,6 +278,8 @@ async function copySell(mint, copiedFrom) {
     // SELL_PCT < 100 leaves a remainder: its entry share and its share of the buy fee stay open.
     if (sale.closed) positions.delete(mint);
     else Object.assign(pos, sale.remainder);
+    // Full sale, confirmed and booked: now (and only now) try to close the empty ATA.
+    if (sale.closed) ataCloser.schedule(mint, { venue: "curve" });
   } catch (err) {
     // C2: the sell may have landed even though confirmTransaction failed. If the chain shows the
     // tokens left the wallet, record the sale instead of leaving the position open to be re-sold.
@@ -291,6 +300,7 @@ async function copySell(mint, copiedFrom) {
         log(`  sold (reconciled after confirm error): ${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL`);
         if (sale.closed) positions.delete(mint);
         else Object.assign(pos, sale.remainder);
+        if (sale.closed) ataCloser.schedule(mint, { venue: "curve" });
         return;
       }
     }
@@ -315,6 +325,9 @@ async function finish(reason = stopReason || "stopped") {
     }
   }
   for (const [mint] of [...positions]) session.drop(`${mint.slice(0, 8)}: still open at stop`);
+  // ATA closes still in flight must be in the ledger before the wallet is read (bounded wait).
+  const closesLeft = (await ataCloser.drain()).pending;
+  if (closesLeft) log(`  ${closesLeft} ATA close(s) still unconfirmed at stop — not in the summary`);
   const endSol = LIVE ? await getSOLBalance(wallet.publicKey).catch(() => null) : null;
   // H9: openSpentSol = sum of REMAINING entry shares (partial sells reduce pos.entrySolSol), so
   // the session NET (received - closedSpent) does not mix partial-sell proceeds with open spend.

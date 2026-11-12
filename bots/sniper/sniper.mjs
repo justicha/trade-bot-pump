@@ -47,6 +47,7 @@ import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
 import { applyLiveSell, liveEntry } from "../../lib/live-pnl.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
+import { createAtaCloser } from "../../lib/close-ata.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -210,6 +211,19 @@ const GIT_SHA = gitSha();
 const PARAMS_HASH = paramsHash({
   BUY_SOL, TAKE_PROFIT, STOP_LOSS, TIMEOUT_SEC, MAX_POSITIONS, COOLDOWN_SEC,
   MIN_HOLDERS, MIN_SLOTS, MIN_DELAY_MS, HOLDER_WAIT_SEC, MIN_DEV_BUY, POST_EXIT_SEC, SLIPPAGE_BPS,
+});
+// After a FULL live sale the empty token ATA is closed to get its rent back (lib/close-ata.mjs):
+// a separate transaction, in the background, best effort — it can never fail or delay a sale, and
+// it does not change any trade's pnlSol. DRY RUN: does nothing.
+const ataCloser = createAtaCloser({
+  connection,
+  wallet,
+  live: LIVE,
+  session,
+  journal,
+  log,
+  warn: (m) => logger.warn(m),
+  meta: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA },
 });
 // Launch price of a standard pump.fun curve in RAW units (30 SOL virtual / 1.073e9 tokens).
 // Recorded as the price basis used for the premium metric; source is marked "assumed" because the
@@ -585,6 +599,8 @@ async function executeSell(mint, reason, exitInfo = null) {
     log(`  sold: ${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(1)}% (${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL), held ${holdSec}s  buy ${buyAt.toISOString()} sell ${sellAt.toISOString()}`);
     log(`  session: ${totalTrades} trades, ${wins}W/${totalTrades - wins}L, PnL: ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(4)} SOL`);
     positions.delete(mint);
+    // The sale is confirmed and booked: now (and only now) try to close the empty ATA.
+    ataCloser.schedule(mint, { venue: "curve" });
   } catch (err) {
     // C2: the sell may have landed even though confirmTransaction failed. If the chain shows the
     // tokens left the wallet, record the exit instead of leaving the position open to be re-sold.
@@ -621,6 +637,7 @@ async function executeSell(mint, reason, exitInfo = null) {
         if (pnlSol > 0) wins++;
         positions.delete(mint);
         log(`  sold (reconciled after confirm error): ${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL`);
+        ataCloser.schedule(mint, { venue: "curve" });
         return;
       }
     }
@@ -1020,6 +1037,9 @@ async function finish(reason = stopReason || "stopped") {
     });
     postExit.delete(mint);
   }
+  // ATA closes still in flight must be in the ledger before the wallet is read (bounded wait).
+  const closesLeft = (await ataCloser.drain()).pending;
+  if (closesLeft) log(`  ${closesLeft} ATA close(s) still unconfirmed at stop — not in the summary`);
   const endSol = LIVE ? await getSOLBalance(wallet.publicKey).catch(() => null) : null;
   // RPC health into the summary + a session record so a throttled session can be excluded later.
   const rs = rpcStats.snapshot();

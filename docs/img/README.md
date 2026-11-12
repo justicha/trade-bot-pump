@@ -7,7 +7,7 @@
 
 | Файл | Где используется | Что нарисовано |
 |---|---|---|
-| `banner.svg` | `README.md` | Баннер: тёмный фон с сеткой, неоновая bonding curve до graduation (100% ≈ 85 SOL), полоса входа 75–90%, пул PumpSwap; бейджи DRY-RUN по умолчанию, Solana, pump.fun → PumpSwap |
+| `banner.svg` | `README.md` | Баннер: тёмный фон с сеткой, неоновая bonding curve до graduation (100% ≈ 85 SOL), полоса входа (настраивается, анимирована), пул PumpSwap; бейджи DRY-RUN по умолчанию, Solana, pump.fun → PumpSwap |
 | `flow.svg` | `README.md` | Пять шагов слева направо: наблюдение → фильтры → покупка → выход → журнал |
 | `architecture.svg` | `docs/architecture.md` | Карта модулей: RPC и WebSocket → парсер → расчёты → боты → сборка транзакции → отправка → журнал; сбоку ограничители, логгер, журнал |
 | `modes.svg` | `docs/getting-started.md` | Две дорожки: dry-run (0 транзакций) и live (симуляция, подпись, подтверждение) |

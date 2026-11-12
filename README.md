@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/img/banner.svg" alt="pump-bot — торговые боты для pump.fun на Solana: кривая токена растёт до graduation на 100%, бот входит в полосе 75–90%, дальше цена в пуле PumpSwap; бейджи DRY-RUN по умолчанию, Solana, pump.fun → PumpSwap" width="100%"></p>
+<p align="center"><img src="docs/img/banner.svg" alt="pump-bot — торговые боты для pump.fun на Solana: кривая токена растёт до graduation на 100%, бот входит в полосе заполнения, которую задаёте вы (GRAD_MIN_FILL_PCT–GRAD_MAX_FILL_PCT), дальше цена в пуле PumpSwap; бейджи DRY-RUN по умолчанию, Solana, pump.fun → PumpSwap" width="100%"></p>
 
 <p align="center"><b>Боты для pump.fun (Solana) · dry-run по умолчанию · исследовательский инструмент, а не способ заработка.</b></p>
 
