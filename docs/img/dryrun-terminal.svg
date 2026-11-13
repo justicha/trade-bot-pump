@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="termTitle termDesc">
-  <title id="termTitle">Пример вывода бота в режиме dry-run</title>
-  <desc id="termDesc">Иллюстрация окна терминала. В заголовке написано «пример вывода, не реальные данные». Внутри строки журнала: режим DRY RUN, наблюдение за токеном MINT_EXAMPLE, строка «would buy» с нулевыми заглушками вместо сумм и итоговая сводка сессии с нулями.</desc>
+  <title id="termTitle">Example bot output in dry-run mode</title>
+  <desc id="termDesc">An illustration of a terminal window. The title says example output, not real data. Inside are journal lines: DRY RUN mode, watching the MINT_EXAMPLE token, a would buy line with zero placeholders instead of amounts, and a final session summary with zeros.</desc>
   <defs>
     <linearGradient id="termBg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
@@ -27,7 +27,7 @@
     <circle cx="110" cy="57" r="6" fill="#34d399" opacity="0.85"/>
   </g>
 
-  <text x="560" y="62" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" fill="#8aa0b8">пример вывода, не реальные данные</text>
+  <text x="560" y="62" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" fill="#8aa0b8">example output, not real data</text>
   <text x="1058" y="62" text-anchor="end" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#5b6f86">pump-bot · dry-run</text>
 
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
@@ -41,7 +41,7 @@
 
     <text x="68" y="168" fill="#6f8299">12:00:01</text>
     <text x="146" y="168" fill="#fbbf24">MODE</text>
-    <text x="200" y="168" fill="#fbbf24">DRY RUN — транзакции не подписываются</text>
+    <text x="200" y="168" fill="#fbbf24">DRY RUN — transactions are not signed</text>
 
     <text x="68" y="196" fill="#6f8299">12:00:04</text>
     <text x="146" y="196" fill="#2dd4bf">INFO</text>
@@ -71,5 +71,5 @@
 
   <line x1="68" y1="452" x2="1052" y2="452" stroke="#1e2f45" stroke-width="1"/>
 
-  <text x="68" y="474" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11.5" fill="#6f8299">Иллюстрация. MINT_EXAMPLE, WALLET_EXAMPLE и 0.00 — заглушки: реальные адреса, суммы и цены здесь не показаны.</text>
+  <text x="68" y="474" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11.5" fill="#6f8299">Illustration. MINT_EXAMPLE, WALLET_EXAMPLE and 0.00 are placeholders: no real addresses, amounts or prices are shown here.</text>
 </svg>

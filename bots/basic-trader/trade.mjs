@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Базовый бот: покупка / продажа токена на pump.fun bonding curve
-// Использование:
+// Basic bot: buy / sell a token on the pump.fun bonding curve
+// Usage:
 //   node bots/basic-trader/trade.mjs buy  <mint> <sol_amount>
 //   node bots/basic-trader/trade.mjs sell <mint> <percent|"all">
 //   node bots/basic-trader/trade.mjs price <mint>

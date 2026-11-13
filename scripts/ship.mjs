@@ -1,50 +1,50 @@
-// Безопасный коммит + push: тесты -> проверка секретов -> commit -> push
+// Safe commit + push: tests -> secret check -> commit -> push
 //
-// Логика проверок вынесена в экспортируемые функции (scripts/ship.test.mjs). Сам сценарий
-// (npm test -> add -> проверки -> commit -> push) запускается ТОЛЬКО при прямом вызове
-// `node scripts/ship.mjs ...`; импорт модуля ничего не делает.
+// The check logic lives in exported functions (scripts/ship.test.mjs). The scenario itself
+// (npm test -> add -> checks -> commit -> push) runs ONLY on direct invocation
+// `node scripts/ship.mjs ...`; importing the module does nothing.
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Пути, которые никогда не должны попасть в коммит (добавленными, изменёнными или как новое имя
-// при переименовании). Удаление такого файла — это НЕ утечка, его коммитить можно.
+// Paths that must never get into a commit (added, modified, or as a new name
+// on rename). Deleting such a file is NOT a leak; committing the deletion is fine.
 export const FORBIDDEN = [/(^|\/)\.env$/, /(^|\/)keys\//, /(^|\/)data\//, /test-output\.txt$/,
   /^agents\//, /^\.claude\//, /node_modules\//];
 
-// Ключи в тексте: api-key= / api_key= (это один и тот же ключ Helius в URL) с длинным значением,
-// кроме заглушек YOUR_... и test...; и PRIVATE_KEY = <длинное значение>.
-// Группа 1 — имя, группа 2 — значение (его маскируем, целиком не печатаем никогда).
+// Keys in text: api-key= / api_key= (the same Helius key in the URL) with a long value,
+// except the YOUR_... and test... placeholders; and PRIVATE_KEY = <long value>.
+// Group 1 — the name, group 2 — the value (masked; the full value is never printed).
 const LEAK_PATTERNS = [
   /(api[-_]key=)((?!YOUR_|test)[A-Za-z0-9-]{16,})/gi,
   /(PRIVATE_KEY\s*=\s*)(\S{20,})/g,
 ];
 
-// Список запрещённых путей из переданных.
+// The forbidden paths among the given ones.
 export function forbiddenPaths(paths) {
   return (paths ?? []).filter((f) => FORBIDDEN.some((r) => r.test(f)));
 }
 
-// Заголовок файла в diff: "+++ b/<путь>", "+++ /dev/null" (git может взять путь в кавычки).
-// Добавленная строка кода, которая сама начинается с "++", заголовком НЕ считается — иначе это
-// был бы способ спрятать ключ от проверки.
+// File header in a diff: "+++ b/<path>", "+++ /dev/null" (git may quote the path).
+// An added code line that itself starts with "++" is NOT a header — otherwise that
+// would be a way to hide a key from the check.
 const ADDED_HEADER = /^\+\+\+ ("?[ab]\/|\/dev\/null)/;
 
-// Только добавленные строки diff: начинаются с "+", кроме заголовка файла "+++ b/...".
-// Удаляемые строки ("-...") ключом в коммите не являются: коммит их как раз убирает.
+// Only added diff lines: start with "+", except the "+++ b/..." file header.
+// Removed lines ("-...") are not a key in the commit: the commit removes them.
 export function addedLines(diffText) {
   return String(diffText ?? "")
     .split(/\r?\n/)
     .filter((l) => l.startsWith("+") && !ADDED_HEADER.test(l));
 }
 
-// Маска: имя как есть, из значения — первые 4 символа и "***".
+// Mask: the name as-is, from the value — the first 4 chars and "***".
 export function maskSecret(value) {
   return String(value).slice(0, 4) + "***";
 }
 
-// Совпадения с ключами в строках (обычно — результат addedLines). Возвращает ТОЛЬКО
-// замаскированные значения: [{ match: "api-key=abcd***" }, ...]. Сам ключ не возвращается.
+// Key matches in lines (usually the result of addedLines). Returns ONLY
+// masked values: [{ match: "api-key=abcd***" }, ...]. The key itself is never returned.
 export function findLeaks(lines) {
   const found = [];
   for (const line of lines ?? []) {
@@ -56,10 +56,10 @@ export function findLeaks(lines) {
   return found;
 }
 
-// Разбить `git diff` на куски по файлам: { "путь": "текст diff этого файла" }. Путь берётся из
-// "+++ b/<путь>" (для удалённого файла — "+++ /dev/null", тогда из "--- a/<путь>").
-// Заголовки "---"/"+++" распознаются только до первого "@@" файла: внутри хунка такие строки —
-// это код, и они идут в проверку.
+// Split `git diff` into per-file chunks: { "path": "this file's diff text" }. The path comes from
+// "+++ b/<path>" (for a deleted file — "+++ /dev/null", then from "--- a/<path>").
+// The "---"/"+++" headers are recognized only before a file's first "@@": inside a hunk those lines
+// are code, and they go to the check.
 export function diffByFile(diffText) {
   const out = {};
   let cur = null;
@@ -88,7 +88,7 @@ export function diffByFile(diffText) {
   return out;
 }
 
-// Утечки по файлам: только добавленные строки. [{ file, match }].
+// Leaks per file: only added lines. [{ file, match }].
 export function findLeaksInDiff(diffText) {
   const res = [];
   for (const [file, chunk] of Object.entries(diffByFile(diffText))) {
@@ -99,10 +99,10 @@ export function findLeaksInDiff(diffText) {
 
 const gitIn = (cwd) => (...a) => spawnSync("git", a, { encoding: "utf8", cwd });
 
-// Что сейчас в индексе.
-//   all     — все пути (включая удаления): для проверки «нечего коммитить»
-//   checked — только Added/Copied/Modified/Renamed; для R git отдаёт НОВЫЙ путь
-// -M: переименования распознаются явно, независимо от diff.renames в настройках пользователя.
+// What is in the index right now.
+//   all     — all paths (including deletions): for the "nothing to commit" check
+//   checked — only Added/Copied/Modified/Renamed; for R git returns the NEW path
+// -M: renames are recognized explicitly, regardless of diff.renames in the user's config.
 export function stagedPaths(cwd = process.cwd()) {
   const git = gitIn(cwd);
   const list = (...extra) =>
@@ -110,7 +110,7 @@ export function stagedPaths(cwd = process.cwd()) {
   return { all: list(), checked: list("--diff-filter=ACMR") };
 }
 
-// Список файлов коммита со статусом: [{ status: "A"|"M"|"D"|"R"|..., path, from? }].
+// The commit's file list with status: [{ status: "A"|"M"|"D"|"R"|..., path, from? }].
 export function stagedStatus(cwd = process.cwd()) {
   const out = gitIn(cwd)("diff", "--cached", "-M", "--name-status").stdout;
   return out
@@ -123,7 +123,7 @@ export function stagedStatus(cwd = process.cwd()) {
     });
 }
 
-// Diff индекса без контекста (для поиска ключей в добавленных строках).
+// The index diff without context (to find keys in added lines).
 export function stagedDiff(cwd = process.cwd()) {
   return gitIn(cwd)("diff", "--cached", "-M", "-U0").stdout;
 }
@@ -136,44 +136,44 @@ function main() {
   const git = gitIn(process.cwd());
   const die = (t) => { console.error("STOP: " + t); process.exit(1); };
 
-  if (!msg) die('нужно сообщение: npm run ship -- "что изменил"');
+  if (!msg) die('need a message: npm run ship -- "what changed"');
 
   const branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.trim();
-  if (!branch) die("это не git-репозиторий");
+  if (!branch) die("this is not a git repository");
   if (["main", "master"].includes(branch) && !allowMain)
-    die(`ты на ${branch}. Создай ветку (git switch -c fix/xxx) или добавь --main`);
+    die(`you are on ${branch}. Create a branch (git switch -c fix/xxx) or add --main`);
 
-  console.log(`Ветка: ${branch}\nЗапускаю npm test ...`);
+  console.log(`Branch: ${branch}\nRunning npm test ...`);
   const t = spawnSync("npm test", { stdio: "inherit", shell: true });
-  if (t.status !== 0) die("npm test не зелёный, push отменён");
+  if (t.status !== 0) die("npm test is not green, push cancelled");
 
   git("add", "-A");
   const staged = stagedPaths();
-  if (!staged.all.length) die("нечего коммитить");
+  if (!staged.all.length) die("nothing to commit");
 
   const bad = forbiddenPaths(staged.checked);
   const leaks = findLeaksInDiff(stagedDiff());
   if (bad.length || leaks.length) {
     git("reset");
     const why = [
-      ...(bad.length ? ["пути: " + bad.join(", ")] : []),
-      ...(leaks.length ? ["похоже на ключ: " + leaks.map((l) => `${l.file}: ${l.match}`).join("; ")] : []),
+      ...(bad.length ? ["paths: " + bad.join(", ")] : []),
+      ...(leaks.length ? ["looks like a key: " + leaks.map((l) => `${l.file}: ${l.match}`).join("; ")] : []),
     ].join(" | ");
-    die("в коммит попало запрещённое (" + why + "). Всё отменено, ничего не отправлено.");
+    die("the commit contains forbidden files (" + why + "). Everything cancelled, nothing sent.");
   }
 
   const files = stagedStatus();
-  console.log(`Файлов в коммите: ${files.length}`);
+  console.log(`Files in the commit: ${files.length}`);
   for (const f of files) console.log(`  ${f.status}  ${f.from ? `${f.from} -> ${f.path}` : f.path}`);
   const c = git("commit", "-m", msg);
   if (c.status !== 0) die(c.stderr || c.stdout);
   const p = spawnSync("git", ["push", "-u", "origin", branch], { stdio: "inherit" });
-  if (p.status !== 0) die("push не прошёл (проверь вход в GitHub и git remote -v)");
-  console.log("Готово: отправлено в origin/" + branch);
+  if (p.status !== 0) die("push failed (check your GitHub login and git remote -v)");
+  console.log("Done: pushed to origin/" + branch);
 }
 
-// Прямой вызов (`node scripts/ship.mjs`, `npm run ship`) — запускаем сценарий; импорт — нет.
-// Пути сравниваются после resolve (на Windows — без учёта регистра: c:\ и C:\ — один путь).
+// A direct call (`node scripts/ship.mjs`, `npm run ship`) runs the scenario; an import does not.
+// Paths are compared after resolve (on Windows — case-insensitively: c:\ and C:\ are one path).
 function isMain() {
   if (!process.argv[1]) return false;
   const norm = (p) => {

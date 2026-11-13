@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="gradTitle gradDesc">
-  <title id="gradTitle">Схема graduation-снайпера</title>
-  <desc id="gradDesc">Поток bots/graduation-sniper/graduation.mjs: реальное заполнение кривой, число держателей, предварительная проверка выхода, симуляция и покупка, цена входа из сделки, затем take profit или stop loss или таймаут, продажа частями в пределах реальных резервов, ограниченные повторы, состояние STUCK и отдельный путь PumpSwap.</desc>
+  <title id="gradTitle">Graduation sniper flow diagram</title>
+  <desc id="gradDesc">The bots/graduation-sniper/graduation.mjs flow: the real curve fill, the holder count, the pre-exit check, simulation and buy, the entry price from the trade, then take profit or stop loss or timeout, partial sells within the real reserves, bounded retries, the STUCK state and a separate PumpSwap path.</desc>
   <defs>
     <linearGradient id="grBg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
@@ -20,7 +20,7 @@
   <rect width="1200" height="620" fill="url(#grBg)"/>
   <rect width="1200" height="620" fill="url(#grGrid)" opacity="0.5"/>
 
-  <text x="32" y="40" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#e6f1ff">graduation.mjs — заполнение по реальным резервам, ограниченные выходы</text>
+  <text x="32" y="40" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#e6f1ff">graduation.mjs — real-reserve fill, bounded exits</text>
 
   <g filter="url(#grShadow)">
     <rect x="32" y="64" width="266" height="64" rx="12" fill="#141d2b" stroke="#3b5578" stroke-width="1.6"/>
@@ -40,51 +40,51 @@
   </g>
 
   <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
-    <text x="48" y="92" font-size="14" font-weight="600" fill="#dbe7f5">Покупка на кривой</text>
-    <text x="48" y="114" font-size="11.5" fill="#8aa0b8">резервы из события сделки</text>
+    <text x="48" y="92" font-size="14" font-weight="600" fill="#dbe7f5">Buy on the curve</text>
+    <text x="48" y="114" font-size="11.5" fill="#8aa0b8">reserves from the trade event</text>
 
-    <text x="48" y="172" font-size="14" font-weight="600" fill="#dbe7f5">Реальное заполнение</text>
+    <text x="48" y="172" font-size="14" font-weight="600" fill="#dbe7f5">Real fill</text>
     <text x="48" y="194" font-size="11.5" fill="#8aa0b8">rSol / 85 SOL × 100</text>
     <text x="48" y="212" font-size="11.5" fill="#8aa0b8">MIN_FILL 92 … MAX_FILL 97</text>
 
-    <text x="48" y="266" font-size="14" font-weight="600" fill="#dbe7f5">Держатели из потока</text>
-    <text x="48" y="288" font-size="11.5" fill="#8aa0b8">MIN_HOLDERS (7) разных</text>
+    <text x="48" y="266" font-size="14" font-weight="600" fill="#dbe7f5">Holders from the stream</text>
+    <text x="48" y="288" font-size="11.5" fill="#8aa0b8">MIN_HOLDERS (7) distinct</text>
 
-    <text x="48" y="346" font-size="14" font-weight="600" fill="#dbe7f5">Проверка выхода</text>
-    <text x="48" y="368" font-size="11.5" fill="#8aa0b8">обратный путь ≥ EXIT_MIN_RATIO (0.9)</text>
-    <text x="48" y="386" font-size="11.5" fill="#8aa0b8">и кривая может выплатить</text>
+    <text x="48" y="346" font-size="14" font-weight="600" fill="#dbe7f5">Exit check</text>
+    <text x="48" y="368" font-size="11.5" fill="#8aa0b8">round trip ≥ EXIT_MIN_RATIO (0.9)</text>
+    <text x="48" y="386" font-size="11.5" fill="#8aa0b8">and the curve can pay</text>
 
-    <text x="48" y="440" font-size="14" font-weight="600" fill="#fbbf24">Симуляция → покупка</text>
-    <text x="48" y="462" font-size="10.5" fill="#c9b48a">GRAD_BUY_SOL · BUY_SLIPPAGE_BPS · лимиты</text>
+    <text x="48" y="440" font-size="14" font-weight="600" fill="#fbbf24">Simulation → buy</text>
+    <text x="48" y="462" font-size="10.5" fill="#c9b48a">GRAD_BUY_SOL · BUY_SLIPPAGE_BPS · limits</text>
 
-    <text x="48" y="520" font-size="14" font-weight="600" fill="#dbe7f5">Цена входа</text>
-    <text x="48" y="542" font-size="10.5" fill="#8aa0b8">факт: сколько SOL ушло и токенов пришло</text>
+    <text x="48" y="520" font-size="14" font-weight="600" fill="#dbe7f5">Entry price</text>
+    <text x="48" y="542" font-size="10.5" fill="#8aa0b8">fact: how much SOL left and how many tokens came</text>
 
-    <text x="356" y="172" font-size="13.5" font-weight="600" fill="#dbe7f5">Пропуск: вне коридора</text>
-    <text x="356" y="194" font-size="11" fill="#8aa0b8">слишком рано</text>
-    <text x="356" y="210" font-size="11" fill="#8aa0b8">или последние % до миграции</text>
+    <text x="356" y="172" font-size="13.5" font-weight="600" fill="#dbe7f5">Skip: outside the corridor</text>
+    <text x="356" y="194" font-size="11" fill="#8aa0b8">too early</text>
+    <text x="356" y="210" font-size="11" fill="#8aa0b8">or the last % before migration</text>
 
-    <text x="356" y="266" font-size="13.5" font-weight="600" fill="#dbe7f5">Пропуск: мало держателей</text>
-    <text x="356" y="288" font-size="11" fill="#8aa0b8">со временем может дорости</text>
+    <text x="356" y="266" font-size="13.5" font-weight="600" fill="#dbe7f5">Skip: too few holders</text>
+    <text x="356" y="288" font-size="11" fill="#8aa0b8">may grow over time</text>
 
-    <text x="356" y="346" font-size="13.5" font-weight="600" fill="#dbe7f5">Пропуск: выход в минус</text>
-    <text x="356" y="368" font-size="11" fill="#8aa0b8">в журнал с exitRatio</text>
-    <text x="356" y="384" font-size="11" fill="#8aa0b8">и причиной</text>
+    <text x="356" y="346" font-size="13.5" font-weight="600" fill="#dbe7f5">Skip: negative exit</text>
+    <text x="356" y="368" font-size="11" fill="#8aa0b8">to the journal with exitRatio</text>
+    <text x="356" y="384" font-size="11" fill="#8aa0b8">and the reason</text>
 
-    <text x="628" y="520" font-size="13.5" font-weight="600" fill="#dbe7f5">TP / SL / таймаут</text>
-    <text x="628" y="542" font-size="11" fill="#8aa0b8">TP 1.5 · SL 0.7 · таймаут 300 с</text>
+    <text x="628" y="520" font-size="13.5" font-weight="600" fill="#dbe7f5">TP / SL / timeout</text>
+    <text x="628" y="542" font-size="11" fill="#8aa0b8">TP 1.5 · SL 0.7 · timeout 300 s</text>
 
-    <text x="628" y="440" font-size="13.5" font-weight="600" fill="#fbbf24">План продажи</text>
-    <text x="628" y="462" font-size="11" fill="#c9b48a">части ≤ 0.95 × реальных резервов</text>
+    <text x="628" y="440" font-size="13.5" font-weight="600" fill="#fbbf24">Sell plan</text>
+    <text x="628" y="462" font-size="11" fill="#c9b48a">parts ≤ 0.95 × real reserves</text>
 
-    <text x="628" y="346" font-size="13.5" font-weight="600" fill="#dbe7f5">Симуляция → отправка</text>
-    <text x="628" y="368" font-size="10.5" fill="#8aa0b8">до 3 попыток: 500 → 1000 → 2000 bps</text>
+    <text x="628" y="346" font-size="13.5" font-weight="600" fill="#dbe7f5">Simulation → send</text>
+    <text x="628" y="368" font-size="10.5" fill="#8aa0b8">up to 3 attempts: 500 → 1000 → 2000 bps</text>
 
     <text x="628" y="252" font-size="13.5" font-weight="600" fill="#fbbf24">STUCK</text>
-    <text x="628" y="274" font-size="11" fill="#c9b48a">стоп повторов · alert в сводке</text>
+    <text x="628" y="274" font-size="11" fill="#c9b48a">retry stop · alert in the summary</text>
 
-    <text x="628" y="158" font-size="13.5" font-weight="600" fill="#dbe7f5">Путь PumpSwap</text>
-    <text x="628" y="180" font-size="10.5" fill="#8aa0b8">LIVE_CONFIRM_AMM=yes (не проверен)</text>
+    <text x="628" y="158" font-size="13.5" font-weight="600" fill="#dbe7f5">PumpSwap path</text>
+    <text x="628" y="180" font-size="10.5" fill="#8aa0b8">LIVE_CONFIRM_AMM=yes (unverified)</text>
   </g>
 
   <g stroke="#2dd4bf" stroke-width="2" fill="none" marker-end="url(#grArrow)">
@@ -103,7 +103,7 @@
     <path d="M738 224 V 194"/>
   </g>
 
-  <text x="32" y="592" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">Итог сессии: Ctrl+C закрывает позиции, печатает сводку (баланс кошелька, комиссии неудачных транзакций, список STUCK) и снимает замок.</text>
-  <text x="32" y="612" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#6f8299">Позицию из STUCK закрывают вручную: scripts/rescue-sell.mjs. Полные имена переменных (GRAD_*, BUY_SLIPPAGE_BPS, LIVE_CONFIRM_AMM) — в docs/bots.md.</text>
+  <text x="32" y="592" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">Session summary: Ctrl+C closes positions, prints a summary (wallet balance, failed-transaction fees, the STUCK list) and releases the lock.</text>
+  <text x="32" y="612" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#6f8299">A STUCK position is closed manually: scripts/rescue-sell.mjs. Full variable names (GRAD_*, BUY_SLIPPAGE_BPS, LIVE_CONFIRM_AMM) are in docs/bots.md.</text>
 </svg>
 

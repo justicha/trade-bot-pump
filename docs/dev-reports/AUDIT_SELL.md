@@ -1,165 +1,165 @@
-# AUDIT_SELL — как graduation-sniper продаёт после миграции (Шаг 1)
+# AUDIT_SELL — how the graduation sniper sells after migration (Step 1)
 
-Дата: 2026-11-10. Коммит: `85a6963`. Метод: только чтение кода + офлайн-разбор `data/txcache`
-(сеть не использовалась, ключи не читались, транзакции не отправлялись, код не менялся).
+Date: 2026-11-10. Commit: `85a6963`. Method: code read-only + an offline review of `data/txcache`
+(no network, no keys read, no transactions sent, no code changed).
 
-Ссылки на строки — по состоянию на `85a6963`.
-
----
-
-## 0. Краткие выводы
-
-1. **Venue выбирается в двух независимых местах** — `bots/graduation-sniper/graduation.mjs` и
-   `scripts/rescue-sell.mjs` — с одинаковой логикой, но разными ветками отказа.
-2. **STUCK ставится в 6 местах**, и в трёх из них это не ошибка продажи, а отказ от попытки.
-   Главный: гейт `LIVE_CONFIRM_AMM` (`graduation.mjs:553`) вызывает `markStuck` на `attempts = 0`,
-   то есть позиция удаляется **до** использования `SELL_MAX_ATTEMPTS` — это и есть «тихий STUCK».
-3. **`ammSellIx` — 21 аккаунт, дискриминатор `33e685a4017f83ad`**. Дискриминатор **проверен офлайн**:
-   `sha256("global:sell")[0..8]` совпадает побайтово (см. §3).
-4. **Раскладка аккаунтов НЕ подтверждена** и, судя по реальным данным, **неполная**: в кэше лежат
-   4 настоящие AMM-инструкции `buy_exact_quote_in`, и у каждой **30 аккаунтов**, включая
-   `global_volume_accumulator`, `user_volume_accumulator`, `fee_config`, `fee_program` + 7 хвостовых.
-   В нашей sell-сборке этих аккаунтов нет (это ровно предупреждение BUG 13).
-5. **Дублирование полное**: `canonicalPool`, `readI128`, `decodePool`, `decodeGlobalConfig`,
-   `pickProtocolFeeRecipient`, `ammSellIx` и три PDA-константы существуют в двух копиях
-   (`lib/pumpswap.mjs` и `scripts/rescue-sell.mjs`) и **идентичны построчно**.
-6. **Симуляция перед отправкой уже есть** в обоих путях (`simulateTx`), но журнал пишет результат
-   только при провале; записи «симуляция прошла, ожидаю X SOL» перед отправкой нет.
-7. **`readExecution` считает аренду закрытого WSOL-ATA как выручку** (+0.00203928 SOL к `solReceivedSol`),
-   а AMM-ветка создаёт и закрывает WSOL-ATA в той же транзакции → PnL по AMM-продаже будет завышен,
-   если этого не вычесть (родственно BUG 09, который отложен).
-8. **IDL-файла в репозитории нет.** Все утверждения «по официальному pump-amm IDL» — комментарии;
-   проверить байты и порядок аккаунтов из репозитория нельзя (см. §6, чего не хватает).
+Line references are as of `85a6963`.
 
 ---
-## 1. Как выбирается venue
 
-### 1.1 Бот (`bots/graduation-sniper/graduation.mjs`)
+## 0. Short conclusions
 
-Точка входа — `checkExit()` (`:429`). Она вызывается из `monitorPositions()` (`:710`) каждые
-`POLL_MS = 3000` мс и из `finish()` при остановке (`:763`).
+1. **The venue is chosen in two independent places** — `bots/graduation-sniper/graduation.mjs` and
+   `scripts/rescue-sell.mjs` — with the same logic but different refusal branches.
+2. **STUCK is set in 6 places**, and in three of them it is not a sell error but a refusal to try.
+   The main one: the `LIVE_CONFIRM_AMM` gate (`graduation.mjs:553`) calls `markStuck` with `attempts = 0`,
+   so the position is deleted **before** `SELL_MAX_ATTEMPTS` is used — this is the silent STUCK.
+3. **`ammSellIx` is 21 accounts, discriminator `33e685a4017f83ad`**. The discriminator is **verified offline**:
+   `sha256("global:sell")[0..8]` matches byte-for-byte (see §3).
+4. **The account layout is NOT confirmed** and, judging by real data, **incomplete**: the cache holds
+   4 real `buy_exact_quote_in` AMM instructions, each with **30 accounts**, including
+   `global_volume_accumulator`, `user_volume_accumulator`, `fee_config`, `fee_program` + 7 tail accounts.
+   Our sell build has none of these accounts (exactly the BUG 13 warning).
+5. **The duplication is total**: `canonicalPool`, `readI128`, `decodePool`, `decodeGlobalConfig`,
+   `pickProtocolFeeRecipient`, `ammSellIx` and three PDA constants exist in two copies
+   (`lib/pumpswap.mjs` and `scripts/rescue-sell.mjs`) and are **identical line by line**.
+6. **A pre-send simulation already exists** on both paths (`simulateTx`), but the journal writes the result
+   only on failure; there is no pre-send record of simulation passed, expecting X SOL.
+7. **`readExecution` counts the rent of a closed WSOL-ATA as revenue** (+0.00203928 SOL to `solReceivedSol`),
+   and the AMM branch creates and closes the WSOL-ATA in the same transaction → the AMM-sell PnL will be overstated,
+   unless it is subtracted (related to BUG 09, which is deferred).
+8. **There is no IDL file in the repository.** All by-the-official-pump-amm-IDL claims are comments;
+   the bytes and account order cannot be verified from the repository (see §6, what is missing).
 
-| Условие на кривой (`getBondingCurveState`, `:437`) | Что делает бот |
+---
+## 1. How the venue is chosen
+
+### 1.1 The bot (`bots/graduation-sniper/graduation.mjs`)
+
+The entry point is `checkExit()` (`:429`). It is called from `monitorPositions()` (`:710`) every
+`POLL_MS = 3000` ms and from `finish()` on stop (`:763`).
+
+| Curve condition (`getBondingCurveState`, `:437`) | What the bot does |
 |---|---|
-| `state` есть, `!state.complete` | считает `ratio = calcSellSol(tokens) / entryLamports` и решает TP / SL / timeout (`:457`, `:460`, `:463`) → `sellPosition()` |
-| `!state` | `:438` → лог «bonding curve gone (graduated?) — PumpSwap route» → `sellPosition()` |
-| `state.complete` | `:443` → лог «*** GRADUATED! *** selling on PumpSwap» → `sellPosition()` |
+| `state` exists, `!state.complete` | computes `ratio = calcSellSol(tokens) / entryLamports` and decides TP / SL / timeout (`:457`, `:460`, `:463`) → `sellPosition()` |
+| `!state` | `:438` → logs bonding curve gone (graduated?) — PumpSwap route → `sellPosition()` |
+| `state.complete` | `:443` → logs *** GRADUATED! *** selling on PumpSwap → `sellPosition()` |
 
-Дальше **внутри** `sellPosition()` (`:489`) venue решается заново, уже по данным кошелька (`:524`):
+Then **inside** `sellPosition()` (`:489`) the venue is decided again, from the wallet data (`:524`):
 
 ```
 state && !state.complete   -> venue = "curve"      (:527)
-иначе                      -> venue = "pumpswap"   (:551)
+otherwise                  -> venue = "pumpswap"   (:551)
 ```
 
 * **curve**: `planSellParts(state, total, { capRatio: 0.95, minPartRaw: 1_000_000n })` (`:529`).
-  Если `parts.length === 0` → STUCK (§2, п.1). Иначе продаётся **первая часть** (`:534`), остаток
-  остаётся в позиции (`:545` только логирует).
-* **pumpswap**: гейт (`:553`) → `ammSellQuote(connection, mint, total)` (`:557`); `null` → STUCK (§2, п.3);
-  иначе `ammSellIx` + `computeBudgetIxs` + идемпотентный WSOL-ATA + `closeAccount` (`:565-570`).
+  If `parts.length === 0` → STUCK (§2, item 1). Otherwise the **first part** is sold (`:534`), the rest
+  stays in the position (`:545` only logs).
+* **pumpswap**: the gate (`:553`) → `ammSellQuote(connection, mint, total)` (`:557`); `null` → STUCK (§2, item 3);
+  otherwise `ammSellIx` + `computeBudgetIxs` + the idempotent WSOL-ATA + `closeAccount` (`:565-570`).
 
 ### 1.2 Rescue (`scripts/rescue-sell.mjs`)
 
-`quoteVenue()` (`:163`) — та же развилка, но с другим набором исходов:
+`quoteVenue()` (`:163`) — the same fork, but with a different set of outcomes:
 
-| Условие | Результат |
+| Condition | Result |
 |---|---|
 | `state && !state.complete` | `venue: "curve"`, `sellable: parts.length > 0` (`:177`, `:180`) |
-| нет/битый пул (`!pi \|\| pi.data.length < 287`) | `venue: "none"`, `sellable: false` (`:189`) |
-| пул есть, vault не читаются | `venue: "pool"`, `sellable: false`, note `vaults unreadable` (`:196`) |
-| пул есть, vault читаются | `venue: "pool"`, `sellable: true`, `expectedSol` (`:208-215`) |
+| no/broken pool (`!pi \|\| pi.data.length < 287`) | `venue: "none"`, `sellable: false` (`:189`) |
+| pool exists, vaults unreadable | `venue: "pool"`, `sellable: false`, note `vaults unreadable` (`:196`) |
+| pool exists, vaults readable | `venue: "pool"`, `sellable: true`, `expectedSol` (`:208-215`) |
 
-### 1.3 Расхождения curve/pool между ботом и rescue
+### 1.3 curve/pool differences between the bot and rescue
 
-| Аспект | Бот | Rescue |
+| Aspect | Bot | Rescue |
 |---|---|---|
-| Пул есть, но vault не читаются | `ammSellQuote` → `null` → **STUCK `no venue`** | `venue: "pool"`, `sellable: false`, отдельный текст |
-| Сколько частей кривой продаётся | **только первая** (`:534`), остаток ждёт следующего цикла | **все части по порядку** (`:291-310`) |
-| Ретраи `getBondingCurveState` | 1 попытка | 3 попытки (`:165`) |
-| `getAccountInfo(AMM_GLOBAL_CONFIG)` | `.catch(() => null)` (`pumpswap.mjs:133`) | **без `.catch`** (`:201`) → исключение уронит цикл |
+| Pool exists, vaults unreadable | `ammSellQuote` → `null` → **STUCK `no venue`** | `venue: "pool"`, `sellable: false`, a separate text |
+| How many curve parts are sold | **only the first** (`:534`), the rest waits for the next cycle | **all parts in order** (`:291-310`) |
+| `getBondingCurveState` retries | 1 attempt | 3 attempts (`:165`) |
+| `getAccountInfo(AMM_GLOBAL_CONFIG)` | `.catch(() => null)` (`pumpswap.mjs:133`) | **without `.catch`** (`:201`) → an exception will drop the loop |
 
 ---
 
-## 2. Условия STUCK (все места)
+## 2. STUCK conditions (all places)
 
-| # | Строка | Условие | Журнал | Позиция |
+| # | Line | Condition | Journal | Position |
 |---|---|---|---|---|
-| 1 | `:531` | кривая не может выплатить ни одной части (`plan.parts.length === 0`) | `stuck` + `attempts` | удаляется |
-| 2 | `:554` | `LIVE && LIVE_CONFIRM_AMM !== "yes"` **и** кривая complete | `stuck`, `attempts: 0` | удаляется |
-| 3 | `:559` | `ammSellQuote` вернул `null` (нет пула / vault не читаются) | `stuck`, `attempts: 0` | удаляется |
-| 4 | `:597` | симуляция провалилась и `attempt >= SELL_MAX_ATTEMPTS` | `sell_attempt` + `stuck` | удаляется |
-| 5 | `:701` | отправка провалилась и `attempt >= SELL_MAX_ATTEMPTS` | `sell_failed` + `stuck` | удаляется |
-| 6 | `:775` | остановка сессии, позиция осталась открытой | `stuck` (`reason: "open at stop"`) | удаляется |
+| 1 | `:531` | the curve cannot pay a single part (`plan.parts.length === 0`) | `stuck` + `attempts` | deleted |
+| 2 | `:554` | `LIVE && LIVE_CONFIRM_AMM !== "yes"` **and** the curve is complete | `stuck`, `attempts: 0` | deleted |
+| 3 | `:559` | `ammSellQuote` returned `null` (no pool / vaults unreadable) | `stuck`, `attempts: 0` | deleted |
+| 4 | `:597` | the simulation failed and `attempt >= SELL_MAX_ATTEMPTS` | `sell_attempt` + `stuck` | deleted |
+| 5 | `:701` | the send failed and `attempt >= SELL_MAX_ATTEMPTS` | `sell_failed` + `stuck` | deleted |
+| 6 | `:775` | the session stopped and the position was still open | `stuck` (`reason: "open at stop"`) | deleted |
 
-Проблемы, которые это создаёт:
+Problems this creates:
 
-* **п.2 и п.3 не являются «попытками»**: `pos.attempts` не инкрементируется, `pos.nextSellAt` не
-  ставится, `SELL_MAX_ATTEMPTS` не применяется. Позиция исчезает из `positions` на первом же
-  обнаружении миграции (в реальном журнале: buy `16:52:45` → stuck `16:53:03`, `attempts: 0`).
-* **формулировка «retries stopped» ложна** для п.2/п.3: повторов не было вообще (`:485`).
-* **учёт**: `markStuck` вызывает `session.drop()` (`:474`), `spentSol` остаётся, `receivedSol` — нет,
-  поэтому в отчёте (`lib/session.mjs:138`) такая позиция выглядит как полный минус, хотя токены
-  лежат в кошельке и чего-то стоят.
-* **причина не в журнале как данные**: `reason` — строка, в ней нет ни venue, ни суммы токенов,
-  ни логов симуляции (только `tokens` и `attempts`).
+* **items 2 and 3 are not attempts**: `pos.attempts` is not incremented, `pos.nextSellAt` is not
+  set, `SELL_MAX_ATTEMPTS` does not apply. The position vanishes from `positions` on the very first
+  migration detection (in a real journal: buy `16:52:45` → stuck `16:53:03`, `attempts: 0`).
+* **the retries stopped wording is false** for items 2/3: there were no retries at all (`:485`).
+* **accounting**: `markStuck` calls `session.drop()` (`:474`), `spentSol` stays, `receivedSol` does not,
+  so in the report (`lib/session.mjs:138`) such a position looks like a full loss, although the tokens
+  sit in the wallet and are worth something.
+* **the reason is not in the journal as data**: `reason` is a string with no venue, no token amount,
+  no simulation logs (only `tokens` and `attempts`).
 
 ---
-## 3. Что передаётся в `ammSellIx` и откуда
+## 3. What is passed into `ammSellIx` and from where
 
-`lib/pumpswap.mjs:145`. Аргументы: `(user, baseMint, pool, p, g, baseAmountIn, minQuoteOut)`.
+`lib/pumpswap.mjs:145`. Arguments: `(user, baseMint, pool, p, g, baseAmountIn, minQuoteOut)`.
 
-### 3.1 Данные инструкции (24 байта)
+### 3.1 Instruction data (24 bytes)
 
-| Смещение | Поле | Источник |
+| Offset | Field | Source |
 |---|---|---|
-| `0..8` | дискриминатор `33e685a4017f83ad` | константа в коде (`:175`) |
-| `8..16` | `base_amount_in` (u64 LE) | `total` — баланс токенов из `getTokenAccountBalance` (`graduation.mjs:516-517`) |
+| `0..8` | discriminator `33e685a4017f83ad` | a constant in the code (`:175`) |
+| `8..16` | `base_amount_in` (u64 LE) | `total` — the token balance from `getTokenAccountBalance` (`graduation.mjs:516-517`) |
 | `16..24` | `min_quote_amount_out` (u64 LE) | `quote * (10000 - slip) / 10000`, `slip = min(SELL_MAX_SLIPPAGE, 500 * 2^(attempt-1))` (`:511`, `:563`) |
 
-**Офлайн-проверка дискриминатора (выполнена в этом аудите, без сети):**
+**Offline discriminator check (done in this audit, no network):**
 
 ```
-sha256("global:sell")[0..8]               = 33e685a4017f83ad   <- совпадает с кодом
+sha256("global:sell")[0..8]               = 33e685a4017f83ad   <- matches the code
 sha256("global:buy")[0..8]                = 66063d1201daebea
-sha256("global:buy_exact_quote_in")[0..8] = c62e1552b4d9e870   <- совпадает с 4 реальными tx в data/txcache
+sha256("global:buy_exact_quote_in")[0..8] = c62e1552b4d9e870   <- matches the 4 real tx in data/txcache
 ```
 
-Третья строка важна: она доказывает, что (а) кэш содержит настоящие инструкции PumpSwap,
-(б) правило Anchor-дискриминатора здесь работает, значит и первая строка не «выдумана по памяти».
+The third line matters: it proves that (a) the cache holds real PumpSwap instructions,
+(b) the Anchor-discriminator rule works here, so the first line is not invented from memory.
 
-### 3.2 21 аккаунт
+### 3.2 The 21 accounts
 
-| # | Аккаунт | W/S | Источник значения |
+| # | Account | W/S | Value source |
 |---|---|---|---|
 | 0 | `pool` | w | `canonicalPool(mint)` — PDA `["pool", u16(0), pool_authority, mint, WSOL]` (`:58`) |
 | 1 | `user` | sw | `wallet.publicKey` |
 | 2 | `global_config` | r | PDA `["global_config"]` (`:48`) |
-| 3 | `base_mint` | r | аргумент |
+| 3 | `base_mint` | r | an argument |
 | 4 | `quote_mint` | r | `p.quoteMint` — `decodePool` @75 |
 | 5 | `user_base_token_account` | w | ATA(baseMint, user, Token-2022) |
 | 6 | `user_quote_token_account` | w | ATA(quoteMint, user, SPL Token) |
 | 7 | `pool_base_token_account` | w | `p.baseVault` @139 |
 | 8 | `pool_quote_token_account` | w | `p.quoteVault` @171 |
-| 9 | `protocol_fee_recipient` | w | **`pickProtocolFeeRecipient(g, p.isMayhem)` — случайный из списка** (`:108`) |
+| 9 | `protocol_fee_recipient` | w | **`pickProtocolFeeRecipient(g, p.isMayhem)` — a random one from the list** (`:108`) |
 | 10 | `protocol_fee_recipient_token_account` | w | ATA(quoteMint, feeRecipient, SPL Token) |
 | 11 | `base_token_program` | r | `TOKEN_2022_PROGRAM` |
 | 12 | `quote_token_program` | r | `TOKEN_PROGRAM` (WSOL) |
-| 13 | `system_program` | r | константа |
-| 14 | `associated_token_program` | r | константа |
+| 13 | `system_program` | r | a constant |
+| 14 | `associated_token_program` | r | a constant |
 | 15 | `event_authority` | r | PDA `["__event_authority"]` (`:49`) |
 | 16 | `program` | r | `PUMPSWAP_PROGRAM` |
 | 17 | `coin_creator_vault_ata` | w | ATA(quoteMint, creatorAuth, **allowOwnerOffCurve = true**) |
 | 18 | `coin_creator_vault_authority` | r | PDA `["creator_vault", p.coinCreator]` (`:147`) |
-| 19 | `fee_config` | r | PDA `["fee_config", PUMPSWAP_PROGRAM]` в программе `pfee…` (`:50`) |
+| 19 | `fee_config` | r | PDA `["fee_config", PUMPSWAP_PROGRAM]` in the `pfee…` program (`:50`) |
 | 20 | `fee_program` | r | `pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ` |
 
-Источники `p` (PoolState, `decodePool` `:71`): `baseMint@43`, `quoteMint@75`, `baseVault@139`,
+`p` sources (PoolState, `decodePool` `:71`): `baseMint@43`, `quoteMint@75`, `baseVault@139`,
 `quoteVault@171`, `coinCreator@211`, `isMayhem@243`, `isCashback@244`, `virtualQuoteReserves@245` (i128),
-`creatorFeeBps@261`. Источники `g` (GlobalConfig, `decodeGlobalConfig` `:92`): `lpFeeBps@40`,
+`creatorFeeBps@261`. `g` sources (GlobalConfig, `decodeGlobalConfig` `:92`): `lpFeeBps@40`,
 `protocolFeeBps@48`, `protocolFeeRecipients[8]@57`, `coinCreatorFeeBps@313`, `reservedFeeRecipient@385`,
 `reservedFeeRecipients[8]@418`, `buybackFeeRecipients[8]@675`.
 
-### 3.3 Котировка (`ammSellQuote`, `:117`)
+### 3.3 The quote (`ammSellQuote`, `:117`)
 
 ```
 gross  = quoteVaultBalance + virtualQuoteReserves            (:129)
@@ -168,251 +168,251 @@ feeBps = lpFee + protocolFee + (pool.creatorFeeBps ?? coinCreatorFeeBps)   (:136
 net    = out * (10000 - feeBps) / 10000                      (:137)
 ```
 
-Это **не проверено** против реальной математики программы (нет sell-tx для сверки).
-Если формула завышает `net`, транзакция отвалится на симуляции по `min_quote_amount_out` (безопасно,
-но продажа не пройдёт). `TODO(verify)`.
+This is **not verified** against the program's real math (there is no sell-tx to compare).
+If the formula overstates `net`, the transaction will drop on simulation on `min_quote_amount_out` (safe,
+but the sale will not go through). `TODO(verify)`.
 
-### 3.4 Офлайн-сверка с реальными транзакциями (`data/txcache`, 4 файла)
+### 3.4 Offline comparison against real transactions (`data/txcache`, 4 files)
 
-Реальная инструкция `buy_exact_quote_in` (диск `c62e1552b4d9e870`), 30 аккаунтов, один и тот же каркас:
+The real `buy_exact_quote_in` instruction (discriminator `c62e1552b4d9e870`), 30 accounts, one shared frame:
 
-| Индекс | Что | Комментарий |
+| Index | What | Comment |
 |---|---|---|
-| 0 | pool | совпадает у двух tx с одинаковым базовым mint |
+| 0 | pool | matches across two tx with the same base mint |
 | 1 | user (signer) | |
-| 2 | `global_config` | **наш PDA подтверждён** |
+| 2 | `global_config` | **our PDA confirmed** |
 | 3 | WSOL (quote mint) | |
-| 4 | base mint | во всех 4 случаях **не pump-mint** (два `…bonk`) |
+| 4 | base mint | in all 4 cases **not a pump-mint** (two `…bonk`) |
 | 11 | SPL TOKEN | |
-| 12 | Token-2022 | порядок **обратный** нашей sell-сборке (у нас 11 = 2022) |
+| 12 | Token-2022 | the order is **reversed** vs our sell build (ours has 11 = 2022) |
 | 13 | SYSTEM | |
 | 14 | ATA program | |
-| 15 | `event_authority` | **наш PDA подтверждён** |
+| 15 | `event_authority` | **our PDA confirmed** |
 | 16 | PumpSwap program | |
-| 19 | **`global_volume_accumulator`** | PDA `["global_volume_accumulator"]` — **совпал** |
-| 20 | **`user_volume_accumulator`** | PDA `["user_volume_accumulator", user]` — **совпал** для всех 4 |
-| 21 | `fee_config` | **наш PDA подтверждён** |
+| 19 | **`global_volume_accumulator`** | PDA `["global_volume_accumulator"]` — **matched** |
+| 20 | **`user_volume_accumulator`** | PDA `["user_volume_accumulator", user]` — **matched** for all 4 |
+| 21 | `fee_config` | **our PDA confirmed** |
 | 22 | `fee_program` | |
-| 23..29 | 7 хвостовых аккаунтов | в нашей сборке отсутствуют |
+| 23..29 | 7 tail accounts | absent in our build |
 
-Выводы, которые можно и нельзя делать:
+Conclusions that can and cannot be drawn:
 
-* **Можно**: дискриминатор sell верен; PDA `global_config`, `event_authority`, `fee_config` верны;
-  правило PDA для volume-accumulator подтверждено на реальных данных.
-* **Можно**: у развёрнутой программы v1-инструкция несёт volume-accumulator аккаунты, которых в
-  нашей 21-аккаунтной сборке нет → высокая вероятность, что `sell` без них не пройдёт
-  (это и есть BUG 13, но теперь с фактами, а не с гипотезой).
-* **Нельзя**: утверждать, что порядок 11/12 у sell такой же, как у `buy_exact_quote_in` — это
-  разные инструкции. Для sell в кэше **нет ни одной транзакции**.
-* **Нельзя** использовать эти 4 пула для проверки `canonicalPool`: базовые mint'ы не pump, похоже
-  на пулы с собственным `pool_authority` → `canonicalPool()` даёт 0/4 совпадений, но это **не**
-  доказательство ошибки. Проверка `canonicalPool` требует одного запроса по известному
-  выпустившемуся pump-mint (`TODO(verify)`).
+* **Can**: the sell discriminator is correct; the `global_config`, `event_authority`, `fee_config` PDAs are correct;
+  the PDA rule for the volume-accumulator is confirmed on real data.
+* **Can**: in the deployed program the v1 instruction carries volume-accumulator accounts that
+  our 21-account build lacks → a high chance that `sell` without them will not go through
+  (that is BUG 13, but now with facts, not a hypothesis).
+* **Cannot**: claim that the 11/12 order for sell is the same as for `buy_exact_quote_in` — these
+  are different instructions. The cache has **not a single** sell transaction.
+* **Cannot** use these 4 pools to check `canonicalPool`: the base mints are not pump, they look
+  like pools with their own `pool_authority` → `canonicalPool()` gives 0/4 matches, but that is **not**
+  proof of a bug. Checking `canonicalPool` needs one query for a known
+  graduated pump-mint (`TODO(verify)`).
 
 ---
-## 4. `lib/pumpswap.mjs` vs `scripts/rescue-sell.mjs` — что совпадает и что расходится
+## 4. `lib/pumpswap.mjs` vs `scripts/rescue-sell.mjs` — what matches and what diverges
 
-| Функция / константа | lib | rescue | Идентичность |
+| Function / constant | lib | rescue | Identity |
 |---|---|---|---|
-| `canonicalPool` | `:58` | `:109` | **идентична** |
-| `readI128` | `:66` | `:117` | **идентична** |
-| `decodePool` | `:71` | `:124` | **идентична** (все смещения) |
-| `decodeGlobalConfig` | `:92` | `:142` | **идентична** |
-| `pickProtocolFeeRecipient` | `:108` | `:156` | **идентична** |
-| `ammSellIx` | `:145` | `:219` | **идентична**: те же 21 аккаунт в том же порядке, те же 24 байта; отличие только косметическое (в rescue `creatorVaultAta` вынесен в переменную `:225`) |
-| `AMM_GLOBAL_CONFIG` / `AMM_EVENT_AUTH` / `AMM_FEE_CONFIG` / `AMM_FEE_PROGRAM` | `:47-53` | `:46-52` | **идентичны** |
-| `TOKEN_PROGRAM` | экспортируется (`:55`) | объявлен локально (`:54`) | дубль |
-| Котировка пула | `ammSellQuote` (`:117`) | инлайн в `quoteVenue` (`:191-206`) | формула одинаковая; rescue **не** оборачивает `getAccountInfo(AMM_GLOBAL_CONFIG)` в `.catch` |
-| Ошибка «пул есть, vault нет» | `null` → `no venue` | `sellable:false` + текст | разное поведение |
-| Перевод SOL→lamports для `min_out` | `BigInt(quote)` из `solOut` | `BigInt(Math.floor(expectedSol * 1e9))` (`:313`) | rescue теряет точность на float |
+| `canonicalPool` | `:58` | `:109` | **identical** |
+| `readI128` | `:66` | `:117` | **identical** |
+| `decodePool` | `:71` | `:124` | **identical** (all offsets) |
+| `decodeGlobalConfig` | `:92` | `:142` | **identical** |
+| `pickProtocolFeeRecipient` | `:108` | `:156` | **identical** |
+| `ammSellIx` | `:145` | `:219` | **identical**: the same 21 accounts in the same order, the same 24 bytes; the only difference is cosmetic (in rescue `creatorVaultAta` is extracted into a variable `:225`) |
+| `AMM_GLOBAL_CONFIG` / `AMM_EVENT_AUTH` / `AMM_FEE_CONFIG` / `AMM_FEE_PROGRAM` | `:47-53` | `:46-52` | **identical** |
+| `TOKEN_PROGRAM` | exported (`:55`) | declared locally (`:54`) | a duplicate |
+| Pool quote | `ammSellQuote` (`:117`) | inlined in `quoteVenue` (`:191-206`) | the formula is the same; rescue does **not** wrap `getAccountInfo(AMM_GLOBAL_CONFIG)` in `.catch` |
+| The pool-exists-vault-missing error | `null` → `no venue` | `sellable:false` + a text | different behaviour |
+| SOL→lamports conversion for `min_out` | `BigInt(quote)` from `solOut` | `BigInt(Math.floor(expectedSol * 1e9))` (`:313`) | rescue loses precision on the float |
 
-Итого: **~150 строк продублированы построчно**. Любая правка раскладки должна делаться в двух
-местах — это и есть причина Шага 2.
+Total: **~150 lines are duplicated line by line**. Any layout change must be made in two
+places — that is the reason for Step 2.
 
 ---
 
-## 5. Что уже есть для «проверяемой продажи» и чего нет
+## 5. What already exists for a verifiable sale and what does not
 
-| Требование Шага 3/4 | Состояние |
+| Step 3/4 requirement | State |
 |---|---|
-| Симуляция перед отправкой | **есть** в боте (`:575` для curve и pool) и в rescue (`:303`, `:323`) |
-| Не отправлять при ошибке симуляции | **есть**: `if (!sim.ok) { ... return; }` |
-| Ошибка симуляции в журнал целиком | **частично**: пишется `error: describeTxError(sim.err)` (`:593`), но **не** пишутся `sim.logs` (а именно там причина: `Program log: …`) и `unitsConsumed` |
-| Ожидаемый выход в журнал **до** отправки | **нет**: `quoteOut` попадает только в запись после отправки (`trade`) или в запись провала (`sell_attempt`) |
-| `DRY_SELL=yes` (симулировать, писать, не отправлять) | **нет** |
-| Не удалять позицию до исчерпания попыток | **нет** для п.2/п.3 (§2) |
-| Понятный статус вместо «retries stopped» | **нет**: текст статический (`:485`) |
-| Учёт аренды закрытого WSOL-ATA | **нет**: `solReceivedSol = solDelta / 1e9` (`exec.mjs:38`), а AMM-ветка создаёт+закрывает ATA в одной tx → `+0.00203928 SOL` к «выручке» |
+| Pre-send simulation | **exists** in the bot (`:575` for curve and pool) and in rescue (`:303`, `:323`) |
+| Do not send on a simulation error | **exists**: `if (!sim.ok) { ... return; }` |
+| The simulation error in full into the journal | **partially**: it writes `error: describeTxError(sim.err)` (`:593`), but it does **not** write `sim.logs` (that is where the cause is: `Program log: …`) nor `unitsConsumed` |
+| The expected output into the journal **before** the send | **no**: `quoteOut` only lands in the post-send record (`trade`) or the failure record (`sell_attempt`) |
+| `DRY_SELL=yes` (simulate, write, do not send) | **no** |
+| Do not delete the position until attempts run out | **no** for items 2/3 (§2) |
+| A clear status instead of retries stopped | **no**: the text is static (`:485`) |
+| Accounting for the closed WSOL-ATA rent | **no**: `solReceivedSol = solDelta / 1e9` (`exec.mjs:38`), and the AMM branch creates+closes the ATA in one tx → `+0.00203928 SOL` to revenue |
 
 ---
 
-## 6. Чего не хватает (не выдумываю)
+## 6. What is missing (not inventing)
 
-1. **Нет IDL-файла в репозитории.** Ни `pump_amm.json`, ни `pump.json`. Все «21 аккаунт по IDL» —
-   комментарии. Независимо проверить список/порядок аккаунтов `sell` из репозитория **невозможно**.
-   Варианты для человека: (а) положить `pump_amm.json` (официальный `@pump-fun/pump-sdk/idl/`) в
-   `data/idl/` и разрешить тест-парсер IDL; (б) одна **read-only** симуляция на реальном mint
-   (не отправка) и прислать логи.
-2. **Нет ни одной реальной sell-транзакции** ни в `data/txcache`, ни в журналах — только `buy_exact_quote_in`.
-3. **Нет подтверждения `canonicalPool`** на pump-mint (см. §3.4).
-4. **Неизвестно назначение 7 хвостовых аккаунтов** реальной инструкции и не сопоставлены `[17]`/`[18]`
-   с `coin_creator_vault_*`.
-5. **Неизвестна математика выхода AMM** (формула §3.3 не сверена).
+1. **There is no IDL file in the repository.** Neither `pump_amm.json` nor `pump.json`. All the 21-accounts-by-IDL —
+   are comments. Independently verifying the `sell` account list/order from the repository is **impossible**.
+   Options for a human: (a) put `pump_amm.json` (the official `@pump-fun/pump-sdk/idl/`) into
+   `data/idl/` and enable an IDL test parser; (b) one **read-only** simulation on a real mint
+   (not a send) and send the logs.
+2. **There is not a single real sell transaction** in `data/txcache` or the journals — only `buy_exact_quote_in`.
+3. **No `canonicalPool` confirmation** on a pump-mint (see §3.4).
+4. **The purpose of the 7 tail accounts** of the real instruction is unknown, and `[17]`/`[18]`
+   to `coin_creator_vault_*`.
+5. **The AMM exit math is unknown** (the §3.3 formula is unverified).
 
-Всё перечисленное — `TODO(verify)` и не блокирует шаги 2, 4, 5; **блокирует** обещание «бот сам
-продаст после миграции» (шаг 3 без п.1/п.2 из этого списка даст только честный отказ симуляции).
+All of the above is `TODO(verify)` and does not block steps 2, 4, 5; it **blocks** the promise the bot will sell
+after migration (step 3 without items 1/2 from this list yields only an honest simulation refusal).
 
 ---
 
-## 7. План следующих шагов (ничего ещё не сделано)
+## 7. The plan for the next steps (nothing done yet)
 
-| Шаг | Файлы | Суть | Риск |
+| Step | Files | Essence | Risk |
 |---|---|---|---|
-| 2 | `lib/pumpswap.mjs`, `scripts/rescue-sell.mjs` | rescue импортирует `canonicalPool`, `decodePool`, `decodeGlobalConfig`, `pickProtocolFeeRecipient`, `ammSellIx`, `TOKEN_PROGRAM` из `lib/pumpswap.mjs`; локальные копии удаляются. Раскладка не меняется. | низкий: поведение идентично, покрывается новым тестом на равенство |
-| 3 | `graduation.mjs` | перед `sendTxWithRetry` для venue `pumpswap`: журнал `sell_sim` с `ok`, `quoteOut`, `unitsConsumed`, `logs` — **до** отправки; при `!ok` полный дамп и `return`. Флаг `DRY_SELL=yes`: только в LIVE-режиме, симуляция + журнал, отправки нет. | средний: затрагивает live-путь → закрывается тестом с мок-RPC |
-| 4 | `graduation.mjs` | гейт/нет пула больше не удаляют позицию: инкремент `attempts`, бэкофф `nextSellAt`, `stuck` только при `attempt >= SELL_MAX_ATTEMPTS`; в `reason` — venue, токены, причина; текст ALERT без «retries stopped» для п.2/п.3. | средний: меняет поведение монитора (позиция «висит» дольше) |
-| 5 | `scripts/pumpswap-ix.test.mjs` (новый) | байтовое сравнение `ammSellIx` на фиксированных `g`/`p`, список и порядок 21 аккаунта; тест выбора venue с мок-`connection`. | низкий |
-| 6 | `AUDIT_SELL.md` | инструкция для человека: как прогнать `DRY_SELL=yes`, что включить для live, какие `TODO(verify)` закрыть. | — |
+| 2 | `lib/pumpswap.mjs`, `scripts/rescue-sell.mjs` | rescue imports `canonicalPool`, `decodePool`, `decodeGlobalConfig`, `pickProtocolFeeRecipient`, `ammSellIx`, `TOKEN_PROGRAM` from `lib/pumpswap.mjs`; the local copies are deleted. The layout does not change. | low: behaviour is identical, covered by a new equality test |
+| 3 | `graduation.mjs` | before `sendTxWithRetry` for venue `pumpswap`: journal `sell_sim` with `ok`, `quoteOut`, `unitsConsumed`, `logs` — **before** the send; on `!ok` a full dump and `return`. The `DRY_SELL=yes` flag: only in LIVE mode, simulation + journal, no send. | medium: touches the live path → covered by a test with a mock RPC |
+| 4 | `graduation.mjs` | the gate/no-pool no longer delete the position: `attempts` increments, `nextSellAt` backoff, `stuck` only when `attempt >= SELL_MAX_ATTEMPTS`; `reason` holds venue, tokens, cause; the ALERT text without retries stopped for items 2/3. | medium: changes the monitor behaviour (the position hangs longer) |
+| 5 | `scripts/pumpswap-ix.test.mjs` (new) | a byte comparison of `ammSellIx` on fixed `g`/`p`, the list and order of the 21 accounts; a venue-selection test with a mock `connection`. | low |
+| 6 | `AUDIT_SELL.md` | instructions for a human: how to run `DRY_SELL=yes`, what to enable for live, which `TODO(verify)` to close. | — |
 
 ---
 
-## 8. TODO(verify) — только то, что нельзя проверить без человека/сети
+## 8. TODO(verify) — only what cannot be verified without a human/network
 
-| # | Что | Как проверить |
+| # | What | How to verify |
 |---|---|---|
-| V1 | Раскладка `sell` (21 аккаунт) соответствует развёрнутой программе | ~~Одна `simulateTransaction`~~ — **начала проходить**: симуляция `HbZM3fVa…pump` дошла до последней проверки программы (см. §12), все CPI до неё прошли |
-| V2 | Нужны ли `global_volume_accumulator` + `user_volume_accumulator` в `sell` (BUG 13) | Пока **нет**: программа не пожаловалась на их отсутствие (падение позже, на `pool_v2`). Требуется успешная симуляция целиком |
-| V3 | `canonicalPool()` даёт верный адрес для pump-mint | **Подтверждено** симуляцией: `canonicalPool(HbZM3fVa…pump) = 86rSR66f…xqS7`, аккаунт существует и раскодировался (§12) |
-| V4 | Формула `ammSellQuote` совпадает с программой (fee split, virtual reserves) | Сравнить `net` с логами успешной sell-симуляции / реальной sell-tx |
-| V5 | `createCloseAccount` не завышает PnL (аренда ATA) | Вычесть аренду из `solReceivedSol` и подтвердить арифметику на реальной tx |
-| V6 | Порядок 11/12 (`base_token_program`, `quote_token_program`) у `sell` | **Подтверждено**: `TransferChecked` Token-2022 (аккаунт 11) и SPL Token (12) прошли в симуляции |
-| V7 | `pool_v2` — какой аккаунт и по каким сидам | **Сиды подтверждены официальным SDK** `@pump-fun/pump-sdk@4.3.1`: `PDA(["pool-v2", baseMint])`, передаётся как remaining account продажи (см. §13). Осталось подтвердить симуляцией |
+| V1 | The `sell` layout (21 accounts) matches the deployed program | ~~One `simulateTransaction`~~ — **started passing**: the `HbZM3fVa…pump` simulation reached the program's last check (see §12), all CPIs before it passed |
+| V2 | Whether `global_volume_accumulator` + `user_volume_accumulator` are needed in `sell` (BUG 13) | So far **no**: the program did not complain about their absence (it falls later, on `pool_v2`). A fully successful simulation is needed |
+| V3 | `canonicalPool()` gives the right address for a pump-mint | **Confirmed** by simulation: `canonicalPool(HbZM3fVa…pump) = 86rSR66f…xqS7`, the account exists and decoded (§12) |
+| V4 | The `ammSellQuote` formula matches the program (fee split, virtual reserves) | Compare `net` against the logs of a successful sell simulation / a real sell-tx |
+| V5 | `createCloseAccount` does not overstate PnL (the ATA rent) | Subtract the rent from `solReceivedSol` and confirm the arithmetic on a real tx |
+| V6 | The 11/12 order (`base_token_program`, `quote_token_program`) for `sell` | **Confirmed**: `TransferChecked` Token-2022 (account 11) and SPL Token (12) passed in the simulation |
+| V7 | `pool_v2` — which account and by which seeds | **The seeds are confirmed by the official SDK** `@pump-fun/pump-sdk@4.3.1`: `PDA(["pool-v2", baseMint])`, passed as a remaining account of the sell (see §13). Still to be confirmed by simulation |
 
 
 ---
 
-## 9. Что изменено (шаги 2–7) — сверка с §2 и §5
+## 9. What changed (steps 2–7) — cross-checked against §2 and §5
 
-| # | Было | Стало |
+| # | Was | Became |
 |---|---|---|
-| 2 | `canonicalPool`, `decodePool`, `decodeGlobalConfig`, `pickProtocolFeeRecipient`, `ammSellIx` + PDA-константы дублировались в `lib/pumpswap.mjs` и `scripts/rescue-sell.mjs` | один модуль `lib/pumpswap-sell.mjs`; `lib/pumpswap.mjs` реэкспортирует, `scripts/rescue-sell.mjs` импортирует. Раскладка аккаунтов и байты **не менялись** |
-| 2 | в rescue локальный `TOKEN_PROGRAM`, `getAccountInfo(AMM_GLOBAL_CONFIG)` без `.catch`, `min_out` через `Math.floor(expectedSol*1e9)` | общий `TOKEN_PROGRAM`, `.catch(() => null)`, `min_out` из BigInt-лампортов (`expectedLamports`) |
-| 3 | журнал писал только текст ошибки симуляции, без логов; при удачной симуляции — ничего | новый `lib/amm-sell.mjs`: перед отправкой пишутся `sell_sim` (ожидаемый SOL, `min_out`, CU, логи) или `sell_attempt` (ошибка + **все** логи + `unitsConsumed` + сырой `err`) |
-| 3 | флага не было | `DRY_SELL=yes` — сборка + симуляция + журнал (`sell_dry`), `sendTransaction` не вызывается ни при каких условиях |
-| 4 | гейт `LIVE_CONFIRM_AMM` и «нет пула» вызывали `markStuck` на `attempts = 0` → позиция исчезала | `deferSell()`: `attempts += 1`, бэкофф `2s·2^(n-1)`, позиция **остаётся**; `stuck` только при `attempt >= SELL_MAX_ATTEMPTS`. Гейт по-прежнему запрещает отправку при `LIVE_CONFIRM_AMM !== "yes"` |
-| 4 | `ALERT … retries stopped` без причины и счётчика | `STUCK (venue=… attempts=N/3): причина — retries stopped after N/3 attempts`; фраза только когда попытки реально кончились |
-| 4 | `solReceivedSol = solDelta` (аренда WSOL-ATA попадала в выручку) | аренда вычитается, если WSOL-счёт существовал **до** tx и закрыт в нём: `rentReturnedSol` в результате, `solReceivedSol` — только выручка |
-| 5 | тестов на sell-инструкцию не было | `scripts/pumpswap-sell.test.mjs` (24 байта, `33e685a4017f83ad`, 21 аккаунт, порядок/флаги, PDA) и `scripts/amm-sell.test.mjs` (гейт, нет пула, логи симуляции, `sell_sim` до отправки, `DRY_SELL` не отправляет) — сеть и `sendTransaction` замоканы |
+| 2 | `canonicalPool`, `decodePool`, `decodeGlobalConfig`, `pickProtocolFeeRecipient`, `ammSellIx` + the PDA constants were duplicated in `lib/pumpswap.mjs` and `scripts/rescue-sell.mjs` | one module `lib/pumpswap-sell.mjs`; `lib/pumpswap.mjs` re-exports, `scripts/rescue-sell.mjs` imports. The account layout and bytes **did not change** |
+| 2 | in rescue a local `TOKEN_PROGRAM`, `getAccountInfo(AMM_GLOBAL_CONFIG)` without `.catch`, `min_out` via `Math.floor(expectedSol*1e9)` | a shared `TOKEN_PROGRAM`, `.catch(() => null)`, `min_out` from BigInt lamports (`expectedLamports`) |
+| 3 | the journal wrote only the simulation error text, no logs; on a successful simulation — nothing | a new `lib/amm-sell.mjs`: before the send it writes `sell_sim` (expected SOL, `min_out`, CU, logs) or `sell_attempt` (the error + **all** logs + `unitsConsumed` + the raw `err`) |
+| 3 | there was no flag | `DRY_SELL=yes` — build + simulation + journal (`sell_dry`), `sendTransaction` is never called under any condition |
+| 4 | the `LIVE_CONFIRM_AMM` gate and no pool called `markStuck` at `attempts = 0` → the position vanished | `deferSell()`: `attempts += 1`, backoff `2s·2^(n-1)`, the position **stays**; `stuck` only when `attempt >= SELL_MAX_ATTEMPTS`. The gate still forbids sending when `LIVE_CONFIRM_AMM !== "yes"` |
+| 4 | `ALERT … retries stopped` without a reason and a counter | `STUCK (venue=… attempts=N/3): cause — retries stopped after N/3 attempts`; the phrase only when the attempts really ran out |
+| 4 | `solReceivedSol = solDelta` (the WSOL-ATA rent landed in revenue) | the rent is subtracted if the WSOL account existed **before** the tx and is closed in it: `rentReturnedSol` in the result, `solReceivedSol` is revenue only |
+| 5 | there were no tests for the sell instruction | `scripts/pumpswap-sell.test.mjs` (24 bytes, `33e685a4017f83ad`, 21 accounts, order/flags, PDA) and `scripts/amm-sell.test.mjs` (the gate, no pool, simulation logs, `sell_sim` before the send, `DRY_SELL` does not send) — the network and `sendTransaction` are mocked |
 
-Новые типы записей в журнале: `sell_sim`, `sell_dry`, `sell_deferred` (плюс прежние
+New journal record types: `sell_sim`, `sell_dry`, `sell_deferred` (plus the previous
 `sell_attempt`, `sell_failed`, `stuck`, `trade`).
 
 ---
 
-## 10. Как проверить
+## 10. How to verify
 
-### 10.1 DRY_SELL без `--live` (безопасно, денег не тратит)
+### 10.1 DRY_SELL without `--live` (safe, spends no money)
 
-Бот в DRY RUN ничего не покупает по-настоящему, но при `DRY_SELL=yes` для каждой позиции, чья
-bonding curve завершилась, он **соберёт и симулирует настоящую PumpSwap-продажу** и запишет
-результат в журнал.
+In DRY RUN the bot buys nothing for real, but with `DRY_SELL=yes` for every position whose
+bonding curve completed, it **builds and simulates a real PumpSwap sell** and writes
+the result into the journal.
 
 ```
 $env:DRY_SELL="yes"; npm run graduation
 ```
 
-`LIVE_CONFIRM` и `LIVE_CONFIRM_AMM` в этом режиме не нужны: отправлять нечего, гейт проверяется
-только на боевом пути.
+`LIVE_CONFIRM` and `LIVE_CONFIRM_AMM` are not needed in this mode: there is nothing to send, the gate is checked
+only on the live path.
 
-Что смотреть в `data/journal/<дата>.jsonl`:
+What to look for in `data/journal/<date>.jsonl`:
 
-| `type` | Когда появляется | Ключевые поля |
+| `type` | When it appears | Key fields |
 |---|---|---|
-| `sell_sim` | симуляция прошла | `mint`, `expectedSol`, `minOut`, `unitsConsumed`, `logs` |
-| `sell_attempt` | симуляция не прошла | `error`, `logs` (полные), `unitsConsumed`, `errorRaw` |
-| `sell_dry` | отправка запрещена флагом | `reason: "DRY_SELL=yes"` |
+| `sell_sim` | the simulation passed | `mint`, `expectedSol`, `minOut`, `unitsConsumed`, `logs` |
+| `sell_attempt` | the simulation failed | `error`, `logs` (full), `unitsConsumed`, `errorRaw` |
+| `sell_dry` | the send is forbidden by the flag | `reason: "DRY_SELL=yes"` |
 
-Быстрый фильтр по нужным mint:
+A quick filter for the mints you need:
 
 ```
 Select-String -Path data\journal\*.jsonl -Pattern '"type":"sell_(sim|attempt|dry)"' |
   ForEach-Object { $_.Line } | Select-String -Pattern '322es1iMfE|48e5Btne|HbZM3fVa'
 ```
 
-Минты из журнала STUCK, на которых это имеет смысл:
+The mints from the STUCK journal where this makes sense:
 `322es1iMfEghyuqi6Hby3eLkMsbfAKBCacmiZqG8pump`,
 `48e5BtneVunFTZDo96TvEPsG3YquCSizMoowUaTZpump`,
 `HbZM3fVa7XWGbLPzvdZykDX1mtjPJw9UUE8fVg3Wpump`.
 
-### 10.2 Проба одной симуляции (V1/V2/V3/V4)
+### 10.2 Probing one simulation (V1/V2/V3/V4)
 
 ```
 node scripts/probe-sell-sim.mjs --mint 322es1iMfEghyuqi6Hby3eLkMsbfAKBCacmiZqG8pump
 ```
 
-Ключ нужен только для чтения баланса и ATA; транзакция **не отправляется**, флага `--live` у
-скрипта нет. Он печатает `err`, `describeTxError`, `unitsConsumed` и все логи, а также пишет
-`data/probe/sell-sim-<mint>-<ts>.json` (раскладка 21 аккаунта, резервы, котировка).
-Присланный файл закрывает V1/V2/V4: `err: null` означает, что раскладка принята программой.
-Если токенов этого mint в кошельке нет: `--tokens <raw>` подставит количество.
+The key is needed only to read the balance and ATA; the transaction is **not sent**, the script has no `--live`
+flag. It prints `err`, `describeTxError`, `unitsConsumed` and all the logs, and also writes
+`data/probe/sell-sim-<mint>-<ts>.json` (the 21-account layout, reserves, the quote).
+The sent file closes V1/V2/V4: `err: null` means the layout was accepted by the program.
+If the wallet has no tokens of this mint: `--tokens <raw>` substitutes the amount.
 
-### 10.3 DRY_SELL на боевом пути (симуляция есть, отправки нет)
+### 10.3 DRY_SELL on the live path (simulation, no send)
 
 ```
 $env:LIVE_CONFIRM="yes"; $env:LIVE_CONFIRM_AMM="yes"; $env:DRY_SELL="yes"; npm run graduation -- --live
 ```
 
-Внимание: `DRY_SELL` отключает только **продажу через PumpSwap**. Покупки в LIVE остаются
-настоящими. Запуск нужен, чтобы увидеть `sell_sim` для реальной позиции.
+Note: `DRY_SELL` disables only the **PumpSwap sell**. LIVE buys stay
+real. The run is needed to see `sell_sim` for a real position.
 
-### 10.4 Что делает человек, чтобы включить реальную продажу после миграции
+### 10.4 What a human does to enable a real post-migration sell
 
-1. Положить IDL: `data/idl/pump_amm.json` (официальный `@pump-fun/pump-sdk/idl/`).
-   Без него раскладка аккаунтов остаётся «списанной», а не проверенной (V1/V2/V6).
-2. Прогнать 10.2 по одному-двум mint'ам и прислать JSON. `err: null` → раскладка верна;
-   `InstructionError` + `Custom` в логах → не хватает аккаунта (например v2-инструкция с
-   volume accumulator) либо расходится котировка.
-3. Если симуляция `Ok`, но `expectedSol` заметно отличается от реального вывода — это V4
-   (формула `ammSellQuote`), правится отдельно.
-4. Прогнать 10.3 на дешёвой позиции и убедиться, что в журнале есть `sell_sim` и нет `trade`.
-5. Только после этого — живой выход одной позиции:
+1. Put the IDL in place: `data/idl/pump_amm.json` (the official `@pump-fun/pump-sdk/idl/`).
+   Without it the account layout stays copied rather than verified (V1/V2/V6).
+2. Run 10.2 on one or two mints and send the JSON. `err: null` → the layout is correct;
+   `InstructionError` + `Custom` in the logs → an account is missing (for example a v2 instruction with
+   a volume accumulator) or the quote diverges.
+3. If the simulation is `Ok` but `expectedSol` clearly differs from the real output — that is V4
+   (the `ammSellQuote` formula), fixed separately.
+4. Run 10.3 on a cheap position and confirm the journal has `sell_sim` and no `trade`.
+5. Only after that — a live exit of one position:
    `$env:LIVE_CONFIRM="yes"; $env:LIVE_CONFIRM_AMM="yes"; npm run graduation -- --live`,
-   затем смотреть в журнале `trade` с `venue: "pumpswap"`.
-6. Сверить `solReceived` c `quoteOut` и `rentReturnedSol` (V5): расхождение ≈0.00204 SOL значит,
-   что аренда всё ещё считается выручкой.
-7. Держать `LIVE_CONFIRM_AMM=yes` в `.env` постоянно — решение человека, не дефолт кода.
+   then look in the journal for `trade` with `venue: "pumpswap"`.
+6. Compare `solReceived` with `quoteOut` and `rentReturnedSol` (V5): a ≈0.00204 SOL gap means
+   the rent is still counted as revenue.
+7. Keeping `LIVE_CONFIRM_AMM=yes` in `.env` permanently is a human's decision, not a code default.
 
-`scripts/rescue-sell.mjs` использует тот же модуль и тот же гейт: без `LIVE_CONFIRM_AMM=yes` он
-не отправляет AMM-продажу, но теперь показывает цену и не падает на нечитаемом global config.
+`scripts/rescue-sell.mjs` uses the same module and the same gate: without `LIVE_CONFIRM_AMM=yes` it
+does not send an AMM sell, but now shows the price and does not crash on an unreadable global config.
 
 ---
 
-## 11. Что нужно положить в проект
+## 11. What needs to be put into the project
 
-| Файл | Зачем |
+| File | Why |
 |---|---|
-| `data/idl/pump_amm.json` | единственный способ проверить V1/V2/V6 без реальной транзакции; после появления можно добавить тест-парсер IDL и сверять раскладку автоматически |
-| результат `data/probe/sell-sim-*.json` | закрывает V1/V2/V4 фактическими логами симуляции |
+| `data/idl/pump_amm.json` | the only way to verify V1/V2/V6 without a real transaction; once present, an IDL test parser can be added to check the layout automatically |
+| result `data/probe/sell-sim-*.json` | closes V1/V2/V4 with the actual simulation logs |
 
-Пока этих файлов нет, все утверждения о раскладке `sell` остаются `TODO(verify)` и в коде
-помечены именно так: `lib/pumpswap-sell.mjs`, `lib/amm-sell.mjs`, `lib/exec.mjs`.
+Until these files exist, all claims about the `sell` layout stay `TODO(verify)`, and in the code
+they are marked exactly so: `lib/pumpswap-sell.mjs`, `lib/amm-sell.mjs`, `lib/exec.mjs`.
 
 ---
 
-## 12. Хвост аккаунтов 23–29 в кэше и `pool_v2` (Custom 6062)
+## 12. The 23–29 account tail in the cache and `pool_v2` (Custom 6062)
 
-Повод: симуляция продажи упала с `Custom 6062` —
+Trigger: the sell simulation fell with `Custom 6062` —
 `AnchorError … sell.rs:520. Error Code: InvalidPoolV2. Error Message: pool_v2 remaining account is missing or invalid.`
-Ниже — офлайн-разбор `data/txcache` (сеть не использовалась).
+Below is an offline review of `data/txcache` (no network used).
 
-### 12.1 Что есть в кэше
+### 12.1 What is in the cache
 
-45 файлов, **8** инструкций pump-amm: 4 top-level `buy_exact_quote_in`
-(`c62e1552b4d9e870`) и 4 inner с `e445a52e51cb9a1d`. **Ни одной `sell`** (`33e685a4017f83ad`).
+45 files, **8** pump-amm instructions: 4 top-level `buy_exact_quote_in`
+(`c62e1552b4d9e870`) and 4 inner with `e445a52e51cb9a1d`. **Not a single `sell`** (`33e685a4017f83ad`).
 
-Четыре транзакции покупки (по 30 аккаунтов), хвост 23–29:
+Four buy transactions (30 accounts each), the 23–29 tail:
 
-| # | `2J7G…` mint `CsXAT9bd…bonk` | `w3wr…` тот же mint | `4g5e…` mint `BWRfm9hQ…BAGS` | `XYqs…` тот же mint |
+| # | `2J7G…` mint `CsXAT9bd…bonk` | `w3wr…` the same mint | `4g5e…` mint `BWRfm9hQ…BAGS` | `XYqs…` the same mint |
 |---|---|---|---|---|
 | 23 | `A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW` | `A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW` | `A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW` | `A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW` |
 | 24 | `4Kj7f6xDK7fY5FTRg54Fv54Fbr8kU6WopqbPpbyTBNaG` | `4Kj7f6xDK7fY5FTRg54Fv54Fbr8kU6WopqbPpbyTBNaG` | `2fvib34wVq9o9r7Lh2859qMXQN8J7F1csu4fKNwESVe4` | `2fvib34wVq9o9r7Lh2859qMXQN8J7F1csu4fKNwESVe4` |
@@ -422,97 +422,97 @@ $env:LIVE_CONFIRM="yes"; $env:LIVE_CONFIRM_AMM="yes"; $env:DRY_SELL="yes"; npm r
 | 28 | `AS8UtAqa2GupxGtSxq1qoXZzpUtj2Xf2FSPpHthKdUYY` | `Dmk8Tjf7xbELmeg4j3v8sCmx7tYNLeNwCxbeBqfia4Py` | `CuTAMm6heSx6SmEJxfxGbRdtkBQmHgYXjDtyQWQQUT9Z` | `DGKJQb7jFBW2LyoMkXeiP3sTwtPdk1v12EPo2Chn8rLC` |
 | 29 | `CuPNrTwAqj3iew3LwWDNxp6GdJcQcQSDjTDf7ZqkYGeJ` | `HbPR3bpDR8WxsqgBu6QUAZcEXhUJrdChvBt7UWyz8M82` | `2F7TtCdYFWf2byGcmWtHxiGTQB16UtB8QEcrH8y68Xxm` | `8DQ7vtN8frGsv7jpH2sUsrdUfXJLTnKcPabjiURhUsYC` |
 
-### 12.2 Сверка с `PDA["pool-v2", baseMint]`
+### 12.2 Checking against `PDA["pool-v2", baseMint]`
 
-| mint | PDA `["pool-v2", baseMint]` (программа `pAMM…`) | Есть в tx? |
+| mint | PDA `["pool-v2", baseMint]` (the `pAMM…` program) | In the tx? |
 |---|---|---|
-| `CsXAT9bdaopT4o6SwJXm195LxGGwS1x8JhBht5WVbonk` | `5qLmRndbmBL8P2N3BJy4tarzoyuq34gjvk1KrL8YyVtv` | **нет** (ни в `2J7G…`, ни в `w3wr…`) |
-| `BWRfm9hQQdqi3TNM3CoyNTWANd375qcrDduEW9cGBAGS` | `4CgJNST7r2cKWiFv7zcozWkvAFqhCahLY1zfbTxnBmLi` | **нет** (ни в `4g5e…`, ни в `XYqs…`) |
+| `CsXAT9bdaopT4o6SwJXm195LxGGwS1x8JhBht5WVbonk` | `5qLmRndbmBL8P2N3BJy4tarzoyuq34gjvk1KrL8YyVtv` | **no** (neither in `2J7G…` nor in `w3wr…`) |
+| `BWRfm9hQQdqi3TNM3CoyNTWANd375qcrDduEW9cGBAGS` | `4CgJNST7r2cKWiFv7zcozWkvAFqhCahLY1zfbTxnBmLi` | **no** (neither in `4g5e…` nor in `XYqs…`) |
 
-Дополнительно проверены варианты сидов — ни один адрес не встречается среди 30 аккаунтов:
+Additional seed variants were checked — no address appears among the 30 accounts:
 `["pool_v2", mint]`, `["pool-v2", pool]`, `["pool-v2", mint, WSOL]`,
 `["pool-v2", poolAuthority, mint, WSOL]`, `["pool-v2", u16(0), poolAuthority, mint, WSOL]`,
-`["pool-v2", pool, mint]` — в программах `pAMM…` и `6EF8…`.
+`["pool-v2", pool, mint]` — in the `pAMM…` and `6EF8…` programs.
 
-**Результат: не совпало.** `pool_v2` в `ammSellIx` не добавлен: подставлять неподтверждённый
-адрес нельзя (это был бы выдуманный аккаунт).
+**Result: no match.** `pool_v2` is not added to `ammSellIx`: substituting an unconfirmed
+address is not allowed (it would be an invented account).
 
-### 12.3 Почему этот хвост в принципе не может быть эталоном
+### 12.3 Why this tail cannot be a reference at all
 
-* Две транзакции с **одним и тем же** mint (`CsXAT9bd…`) совпадают только в [23] и [24];
-  [25]–[29] — разные адреса и разный набор, а не перестановка. Раскладка программы так себя
-  вести не может.
-* `A7hAgCzF…` встречается в **9 из 45** файлов кэша, `2F7TtCdY…` — в **17 из 45**: это общие
-  (роутерные) аккаунты вызывающей стороны, а не per-pool.
-* Вывод: 23–29 — `remaining_accounts`, которые передаёт вызывающая сторона; v1-инструкция
-  `buy_exact_quote_in` их не валидирует. Для `sell` (v2-путь) программа их читает и требует
-  `pool_v2` — но в покупках его нет вообще, поэтому кэш не может подтвердить ни адрес, ни сиды.
+* Two transactions with the **same** mint (`CsXAT9bd…`) match only at [23] and [24];
+  [25]–[29] are different addresses and a different set, not a permutation. The program layout cannot
+  behave that way.
+* `A7hAgCzF…` appears in **9 of 45** cache files, `2F7TtCdY…` in **17 of 45**: these are common
+  (router) accounts of the caller, not per-pool.
+* Conclusion: 23–29 are `remaining_accounts` passed by the caller; the v1
+  `buy_exact_quote_in` instruction does not validate them. For `sell` (the v2 path) the program reads and requires
+  `pool_v2` — but buys do not have it at all, so the cache can confirm neither the address nor the seeds.
 
-### 12.4 Что из хвоста всё-таки объяснено (вопрос из §3.4)
+### 12.4 What is nevertheless explained from the tail (the §3.4 question)
 
-| # | Значение | Что это (проверено выводом PDA) |
+| # | Value | What it is (verified by PDA derivation) |
 |---|---|---|
-| 15 | `GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR` | `PDA["__event_authority"]` в `pAMM…` — совпало |
-| 19 | `C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw` | `PDA["global_volume_accumulator"]` **в `pAMM…`** (не в pump.fun!) — совпало |
-| 20 | `3AK4sQmR…` / `8SyMEec…` / `8zfC5PV…` / `BnSd4t8L…` | `PDA["user_volume_accumulator", user]` в `pAMM…` — свой в каждой tx, совпало |
-| 21 | `5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx` | `PDA["fee_config", pAMM…]` в программе `pfee…` — совпало |
-| 23 | `A7hAgCzFw14…` | ни один проверенный сид не даёт этот адрес; 9/45 файлов → общий аккаунт вызывающей стороны |
-| 24 | `4Kj7f6xDK7…` / `2fvib34wVq…` | стабилен для одного mint (две tx) → mint-scoped, но **не** `pool_v2` ни в одном варианте сидов |
-| 25–29 | … | меняются между двумя tx одного mint → не часть раскладки программы |
+| 15 | `GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR` | `PDA["__event_authority"]` in `pAMM…` — matched |
+| 19 | `C2aFPdENg4A2HQsmrd5rTw5TaYBX5Ku887cWjbFKtZpw` | `PDA["global_volume_accumulator"]` **in `pAMM…`** (not in pump.fun!) — matched |
+| 20 | `3AK4sQmR…` / `8SyMEec…` / `8zfC5PV…` / `BnSd4t8L…` | `PDA["user_volume_accumulator", user]` in `pAMM…` — its own in each tx, matched |
+| 21 | `5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx` | `PDA["fee_config", pAMM…]` in the `pfee…` program — matched |
+| 23 | `A7hAgCzFw14…` | no checked seed yields this address; 9/45 files → a common caller account |
+| 24 | `4Kj7f6xDK7…` / `2fvib34wVq…` | stable for one mint (two tx) → mint-scoped, but **not** `pool_v2` under any seed variant |
+| 25–29 | … | differ between two tx of one mint → not part of the program layout |
 
-Уточнение к §3.4: тогда было написано «`global_volume_accumulator` и `user_volume_accumulator`
-совпали» — теперь видно, что они выводятся **под программой `pAMM…`**, а не под `6EF8…`.
+A clarification to §3.4: it said earlier that `global_volume_accumulator` and `user_volume_accumulator`
+matched — now it is clear they are derived **under the `pAMM…` program**, not under `6EF8…`.
 
-### 12.5 Что дала сама симуляция (`data/probe/sell-sim-HbZM3fVa-…json`)
+### 12.5 What the simulation itself gave (`data/probe/sell-sim-HbZM3fVa-…json`)
 
-| Поле | Значение |
+| Field | Value |
 |---|---|
 | mint | `HbZM3fVa7XWGbLPzvdZykDX1mtjPJw9UUE8fVg3Wpump` |
-| pool (`canonicalPool`) | `86rSR66fVQX8K6pqWuPLXjvUNWFXfdyEiA5LzyUpxqS7` — аккаунт существует, `PoolState` раскодировался |
+| pool (`canonicalPool`) | `86rSR66fVQX8K6pqWuPLXjvUNWFXfdyEiA5LzyUpxqS7` — the account exists, `PoolState` decoded |
 | creator | `xgzHcG76hChWvMungAAjMS41t5AvN1ktVtJghB8C8yp`, `creatorFeeBps=0`, `isMayhem=false`, `isCashback=false` |
-| результат | `InstructionError[3, Custom 6062]`, 68 929 CU |
-| прошли успешно | `pfee GetFeesWithQuoteMint`, `Token-2022 TransferChecked` (базовый mint), два вызова SPL Token |
+| result | `InstructionError[3, Custom 6062]`, 68 929 CU |
+| passed successfully | `pfee GetFeesWithQuoteMint`, `Token-2022 TransferChecked` (the base mint), two SPL Token calls |
 
-Порядок логов важен: программа успела списать токены по нашим аккаунтам и **только в конце**
-(`sell.rs:520`) потребовала `pool_v2`. Значит:
+The log order matters: the program managed to debit the tokens via our accounts and **only at the very end**
+(`sell.rs:520`) required `pool_v2`. So:
 
-* **V1/V3/V6 закрыты положительно** — 21 аккаунт и их порядок (включая 11 = Token-2022,
-  12 = SPL Token) приняты, пул найден верно;
-* **V2 пока в пользу «не нужны»** — на отсутствие volume-accumulator программа не пожаловалась;
-* остаётся **V7**: `pool_v2` как remaining account.
+* **V1/V3/V6 are closed positively** — the 21 accounts and their order (including 11 = Token-2022,
+  12 = SPL Token) are accepted, the pool was found correctly;
+* **V2 so far leans to not needed** — the program did not complain about the missing volume-accumulator;
+* **V7** remains: `pool_v2` as a remaining account.
 
-### 12.6 Что нужно, чтобы закрыть V7 (без гадания)
+### 12.6 What is needed to close V7 (without guessing)
 
-1. `data/idl/pump_amm.json` → тип/структура `PoolV2` и её seeds. Это единственный offline-путь.
-2. Либо одна **read-only** проверка адресов-кандидатов: `getAccountInfo` для
-   `PDA(["pool-v2", mint])` и родственных вариантов на реальном pool — существование аккаунта
-   с owner `pAMM…` подтвердит сиды (сеть, но без отправки транзакций).
-3. Либо одна реальная `sell`-транзакция из сети: в кэше их **нет**, поэтому сверить нечего.
+1. `data/idl/pump_amm.json` → the `PoolV2` type/structure and its seeds. This is the only offline path.
+2. Or one **read-only** check of candidate addresses: `getAccountInfo` for
+   `PDA(["pool-v2", mint])` and related variants on a real pool — the account existing
+   with owner `pAMM…` would confirm the seeds (network, but no transaction sent).
+3. Or one real `sell` transaction from the network: the cache has **none**, so there is nothing to compare.
 
-До этого `pool_v2` в `ammSellIx` **не добавляется**: раскладка остаётся 21 аккаунт, а ошибка 6062
-честно журналируется (`sell_attempt` с полными логами), позиция не теряется благодаря `deferSell`.
+Until then `pool_v2` is **not added** to `ammSellIx`: the layout stays 21 accounts, and the 6062 error
+is honestly journaled (`sell_attempt` with full logs), the position is not lost thanks to `deferSell`.
 
-Тест на совпадение `pool_v2` с хвостом (пункт 4 задания) не добавлен — он был бы проверкой
-заведомо ложного утверждения: совпадения нет. Вместо него факты зафиксированы здесь и в §8 (V7).
+A test that `pool_v2` matches the tail (task item 4) was not added — it would be checking
+a knowingly false claim: there is no match. Instead the facts are recorded here and in §8 (V7).
 
 ---
 
-## 13. Официальный SDK: sell / pool_v2
+## 13. The official SDK: sell / pool_v2
 
-Источник — `@pump-fun/pump-sdk@4.3.1`, установленный **вне репозитория**
-(`<папка-вне-репозитория>/pump-sdk-ref`, `npm ls @pump-fun/pump-sdk` → `4.3.1`). Код бота не
-менялся: это справка, а не патч.
+Source — `@pump-fun/pump-sdk@4.3.1`, installed **outside the repository**
+(`<folder-outside-repo>/pump-sdk-ref`, `npm ls @pump-fun/pump-sdk` → `4.3.1`). The bot code
+did not change: this is a reference, not a patch.
 
-### 13.1 Что нашлось по запросам
+### 13.1 What the searches found
 
-| Запрос | Где | Что |
+| Query | Where | What |
 |---|---|---|
-| `pool-v2` | `src/swap/pda.ts:191` | сид PDA |
-| `poolV2` | `src/swap/pda.ts`, `src/swap/offlinePumpAmm.ts:797`, `:1047` | функция `poolV2Pda` и два места, где она попадает в remaining accounts |
-| `pool_v2` | `src/idl/pump_amm.json` | ошибка `InvalidPoolV2` в таблице ошибок IDL |
-| `remainingAccounts` | `src/swap/offlinePumpAmm.ts` (buy/sell/multi-hop), `src/swap/*.ts` | 37 вхождений: все trade-инструкции собирают их явно |
+| `pool-v2` | `src/swap/pda.ts:191` | the PDA seed |
+| `poolV2` | `src/swap/pda.ts`, `src/swap/offlinePumpAmm.ts:797`, `:1047` | the `poolV2Pda` function and two places where it lands in remaining accounts |
+| `pool_v2` | `src/idl/pump_amm.json` | the `InvalidPoolV2` error in the IDL error table |
+| `remainingAccounts` | `src/swap/offlinePumpAmm.ts` (buy/sell/multi-hop), `src/swap/*.ts` | 37 occurrences: all trade instructions build them explicitly |
 
-### 13.2 Сиды `pool_v2`
+### 13.2 The `pool_v2` seeds
 
 ```ts
 // src/swap/pda.ts:191
@@ -521,46 +521,46 @@ export function poolV2Pda(baseMint: PublicKey): PublicKey {
 }
 ```
 
-То есть `PDA(["pool-v2", baseMint], pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA)` — **ровно то,
-что было выведено в §12.2** (`5qLmRndb…` для `CsXAT9bd…bonk`, `4CgJNST7…` для `BWRfm9hQ…BAGS`).
-Расхождения нет; в покупках его не было потому, что это **remaining account продажи**, а не
-покупки — §12.3 остаётся в силе, кэш его подтвердить не мог.
+That is `PDA(["pool-v2", baseMint], pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA)` — **exactly what
+was derived in §12.2** (`5qLmRndb…` for `CsXAT9bd…bonk`, `4CgJNST7…` for `BWRfm9hQ…BAGS`).
+There is no divergence; buys did not have it because it is a **sell remaining account**, not a
+buy one — §12.3 still holds, the cache could not confirm it.
 
-### 13.3 Аккаунты `sell` (21) — IDL, `src/idl/pump_amm.json`
+### 13.3 The `sell` accounts (21) — the IDL, `src/idl/pump_amm.json`
 
-Дискриминатор IDL: байты `[51,230,133,164,1,127,131,173]` = `33e685a4017f83ad` — совпадает с нашим.
+The IDL discriminator: bytes `[51,230,133,164,1,127,131,173]` = `33e685a4017f83ad` — matches ours.
 
-| # | Аккаунт | writable | signer | В `lib/pumpswap-sell.mjs` |
+| # | Account | writable | signer | In `lib/pumpswap-sell.mjs` |
 |---|---|---|---|---|
-| 0 | `pool` | да | — | совпадает |
-| 1 | `user` | да | да | совпадает |
-| 2 | `global_config` | — | — | совпадает |
-| 3 | `base_mint` | — | — | совпадает |
-| 4 | `quote_mint` | — | — | совпадает |
-| 5 | `user_base_token_account` | да | — | совпадает |
-| 6 | `user_quote_token_account` | да | — | совпадает |
-| 7 | `pool_base_token_account` | да | — | совпадает |
-| 8 | `pool_quote_token_account` | да | — | совпадает |
-| 9 | `protocol_fee_recipient` | **—** | — | **у нас `isWritable: true`** — расхождение |
-| 10 | `protocol_fee_recipient_token_account` | да | — | совпадает |
-| 11 | `base_token_program` | — | — | совпадает (Token-2022) |
-| 12 | `quote_token_program` | — | — | совпадает (SPL Token) |
-| 13 | `system_program` | — | — | совпадает |
-| 14 | `associated_token_program` | — | — | совпадает |
-| 15 | `event_authority` | — | — | совпадает |
-| 16 | `program` | — | — | совпадает |
-| 17 | `coin_creator_vault_ata` | да | — | совпадает |
-| 18 | `coin_creator_vault_authority` | — | — | совпадает |
-| 19 | `fee_config` | — | — | совпадает |
-| 20 | `fee_program` | — | — | совпадает |
+| 0 | `pool` | yes | — | matches |
+| 1 | `user` | yes | yes | matches |
+| 2 | `global_config` | — | — | matches |
+| 3 | `base_mint` | — | — | matches |
+| 4 | `quote_mint` | — | — | matches |
+| 5 | `user_base_token_account` | yes | — | matches |
+| 6 | `user_quote_token_account` | yes | — | matches |
+| 7 | `pool_base_token_account` | yes | — | matches |
+| 8 | `pool_quote_token_account` | yes | — | matches |
+| 9 | `protocol_fee_recipient` | **—** | — | **ours has `isWritable: true`** — a divergence |
+| 10 | `protocol_fee_recipient_token_account` | yes | — | matches |
+| 11 | `base_token_program` | — | — | matches (Token-2022) |
+| 12 | `quote_token_program` | — | — | matches (SPL Token) |
+| 13 | `system_program` | — | — | matches |
+| 14 | `associated_token_program` | — | — | matches |
+| 15 | `event_authority` | — | — | matches |
+| 16 | `program` | — | — | matches |
+| 17 | `coin_creator_vault_ata` | yes | — | matches |
+| 18 | `coin_creator_vault_authority` | — | — | matches |
+| 19 | `fee_config` | — | — | matches |
+| 20 | `fee_program` | — | — | matches |
 
-Итог: **порядок и состав 21 аккаунта верны** (V1/V6 подтверждены ещё и IDL). Единственное
-отличие — флаг writable у `protocol_fee_recipient`; передать read-only аккаунт writable runtime
-обычно разрешает, а `isMut` у программы здесь `false`, так что это косметика, но фиксируется.
+Total: **the order and composition of the 21 accounts are correct** (V1/V6 also confirmed by the IDL). The only
+difference is the writable flag on `protocol_fee_recipient`; passing a read-only account as writable at runtime
+is usually allowed, and the program's `isMut` here is `false`, so it is cosmetic, but it is recorded.
 
-### 13.4 Remaining accounts `sell` — вот чего не хватало
+### 13.4 The `sell` remaining accounts — this is what was missing
 
-`src/swap/offlinePumpAmm.ts`, `sellInstructionsNoPool()` (строки 1039-1104):
+`src/swap/offlinePumpAmm.ts`, `sellInstructionsNoPool()` (lines 1039-1104):
 
 ```ts
 const poolV2PdaKey = poolV2Pda(pool.baseMint);
@@ -580,55 +580,55 @@ remainingAccounts.push(
 );
 ```
 
-| # | Аккаунт | Когда | writable |
+| # | Account | When | writable |
 |---|---|---|---|
-| r0 | `ATA(quote_mint, user_volume_accumulator)` | только `pool.isCashbackCoin` | да |
-| r1 | `PDA(["user_volume_accumulator", user])` | только `pool.isCashbackCoin` | да |
-| r2 | `PDA(["pool-v2", base_mint])` | `pool.coin_creator != 0` | нет |
-| r3 | `buybackFeeRecipient` (случайный из `globalConfig.buybackFeeRecipients`, `src/swap/fees.ts:202`) | всегда | нет |
-| r4 | его ATA по `quote_mint` (`allowOwnerOffCurve = true`) | всегда | да |
+| r0 | `ATA(quote_mint, user_volume_accumulator)` | only `pool.isCashbackCoin` | yes |
+| r1 | `PDA(["user_volume_accumulator", user])` | only `pool.isCashbackCoin` | yes |
+| r2 | `PDA(["pool-v2", base_mint])` | `pool.coin_creator != 0` | no |
+| r3 | `buybackFeeRecipient` (a random one from `globalConfig.buybackFeeRecipients`, `src/swap/fees.ts:202`) | always | no |
+| r4 | its ATA on `quote_mint` (`allowOwnerOffCurve = true`) | always | yes |
 
-Наш `ammSellIx` не передаёт **ни одного** remaining account — отсюда `Custom 6062`
-(`sell.rs:520 InvalidPoolV2`): программа ищет `pool_v2` среди remaining accounts, не находит и
-падает уже после того, как списала токены. На пробе `HbZM3fVa…pump` `coinCreator = xgzHcG76…`
-(не `default`), `isCashback = false`, значит нужны были **r2, r3, r4**.
+Our `ammSellIx` passes **not one** remaining account — hence `Custom 6062`
+(`sell.rs:520 InvalidPoolV2`): the program looks for `pool_v2` among the remaining accounts, does not find it and
+falls after it already debited the tokens. On the `HbZM3fVa…pump` probe `coinCreator = xgzHcG76…`
+(not `default`), `isCashback = false`, so **r2, r3, r4** were needed.
 
-### 13.5 `sell_v2` — альтернатива, которую SDK использует по флагу
+### 13.5 `sell_v2` — the alternative the SDK uses behind a flag
 
 | | `sell` | `sell_v2` |
 |---|---|---|
-| Дискриминатор | `33e685a4017f83ad` | `5df6823ce7e940b2` (= `sha256("global:sell_v2")[0..8]`) |
-| Аккаунтов | 21 | 17 |
-| Отличия | `protocol_fee_recipient`, его ATA, `coin_creator_vault_*`, `fee_program` | вместо них — `user_volume_accumulator` и `buyback_fee_recipient` (его ATA); remaining accounts нет |
-| Когда SDK выбирает | по умолчанию | `{ v2: true }` **и** `supportsTradeV2(pool)` |
+| Discriminator | `33e685a4017f83ad` | `5df6823ce7e940b2` (= `sha256("global:sell_v2")[0..8]`) |
+| Accounts | 21 | 17 |
+| Differences | `protocol_fee_recipient`, its ATA, `coin_creator_vault_*`, `fee_program` | instead of them — `user_volume_accumulator` and `buyback_fee_recipient` (its ATA); no remaining accounts |
+| When the SDK picks it | by default | `{ v2: true }` **and** `supportsTradeV2(pool)` |
 
-`supportsTradeV2(pool) = !pool.isCashbackCoin` (`src/swap/util.ts:42`), т.е. для нашего пула
-(`isCashback = false`) доступны оба варианта. `sell_v2` не требует `pool_v2`, но требует
-`user_volume_accumulator` (writable) и **уже существующий** ATA получателя buyback.
+`supportsTradeV2(pool) = !pool.isCashbackCoin` (`src/swap/util.ts:42`), i.e. for our pool
+(`isCashback = false`) both variants are available. `sell_v2` does not require `pool_v2`, but requires
+`user_volume_accumulator` (writable) and an **already existing** ATA of the buyback recipient.
 
-### 13.6 Прочее из SDK, что стоит знать
+### 13.6 Other SDK facts worth knowing
 
-* Перед sell SDK может вставить `extend_account`, если аккаунт пула короче
-  `POOL_ACCOUNT_NEW_SIZE = 300` байт (`offlinePumpAmm.ts:72`, `withFixPoolInstructions`). Наш
-  `decodePool` работает с порогом 287; если реальный пул короче 300, программе может понадобиться
-  `extend_account` до sell (в пробе этого не потребовалось — ошибка была позже).
-* ATA получателей комиссии SDK всегда выводит с `allowOwnerOffCurve = true` — совпадает с нашей
-  правкой через `ataFor()`.
-* `getFeeRecipient` (`src/swap/fees.ts:186`) совпадает с нашей логикой: mayhem → reserved-список,
-  иначе обычный, выбор случайный.
+* Before a sell the SDK may insert `extend_account` if the pool account is shorter than
+  `POOL_ACCOUNT_NEW_SIZE = 300` bytes (`offlinePumpAmm.ts:72`, `withFixPoolInstructions`). Our
+  `decodePool` works with a 287 threshold; if the real pool is shorter than 300, the program may need
+  `extend_account` before the sell (the probe did not need it — the error came later).
+* The SDK always derives the fee recipients' ATA with `allowOwnerOffCurve = true` — matching our
+  change via `ataFor()`.
+* `getFeeRecipient` (`src/swap/fees.ts:186`) matching our logic: mayhem → the reserved list,
+  otherwise the regular one, chosen randomly.
 
-### 13.7 Что это меняет в TODO(verify)
+### 13.7 What this changes in TODO(verify)
 
-| # | Было | Стало |
+| # | Was | Became |
 |---|---|---|
-| V7 | «какой аккаунт и по каким сидам» | **Сиды подтверждены официальным SDK**: `["pool-v2", baseMint]`. Осталось подтвердить симуляцией, но вопрос «что за аккаунт» закрыт |
-| — | — | Новое: в `sell` нужны ещё **buybackFeeRecipient + его quote-ATA** (всегда) и cashback-пара для cashback-пулов. Это не volume-accumulator из BUG 13 |
-| V2 | «нужен ли volume-accumulator» | Для v1 `sell` — **нет** (его нет ни в IDL, ни в remaining accounts). Для `sell_v2` — да, как именованный аккаунт |
+| V7 | which account and by which seeds | **The seeds are confirmed by the official SDK**: `["pool-v2", baseMint]`. Still to be confirmed by simulation, but the what-account question is closed |
+| — | — | New: `sell` also needs **buybackFeeRecipient + its quote-ATA** (always) and the cashback pair for cashback pools. This is not the BUG 13 volume-accumulator |
+| V2 | whether the volume-accumulator is needed | For v1 `sell` — **no** (it is in neither the IDL nor the remaining accounts). For `sell_v2` — yes, as a named account |
 
-**Код не менялся** (задача — только отчёт). Следующий шаг, отдельным заданием: добавить в
+**The code did not change** (the task is report-only). The next step, as a separate task: add to
 `ammSellIx` remaining accounts `[pool_v2?, buybackFeeRecipient, buybackFeeRecipientAta]`
-(+ cashback-пара при `isCashback`), затем прогнать `scripts/probe-sell-sim.mjs` и убедиться, что
-6062 ушёл.
+(+ the cashback pair when `isCashback`), then run `scripts/probe-sell-sim.mjs` and confirm that
+6062 is gone.
 
 
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="580" viewBox="0 0 1200 580" role="img" aria-labelledby="modesTitle modesDesc">
-  <title id="modesTitle">Режимы работы: dry-run и live</title>
-  <desc id="modesDesc">Две полосы. Бирюзовая DRY-RUN: сигнал, лимиты, расчёт выхода, журнал — и ни одной транзакции. Янтарная LIVE: сигнал, лимиты, симуляция, подпись и отправка, подтверждение, журнал. Подписано, что live включается только двумя переключателями сразу: флагом --live и переменной LIVE_CONFIRM=yes.</desc>
+  <title id="modesTitle">Operating modes: dry-run and live</title>
+  <desc id="modesDesc">Two bands. The teal DRY-RUN: signal, limits, exit calculation, journal — and not one transaction. The amber LIVE: signal, limits, simulation, signing and send, confirmation, journal. It is noted that live turns on only with two switches at once: the --live flag and the LIVE_CONFIRM=yes variable.</desc>
   <defs>
     <linearGradient id="modesBg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
@@ -16,40 +16,40 @@
 
   <rect width="1200" height="580" fill="url(#modesBg)"/>
 
-  <text x="40" y="46" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="21" font-weight="700" fill="#e6f1ff">Режимы: что происходит на самом деле</text>
-  <text x="40" y="72" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" fill="#8aa0b8">режим задаётся в lib/config.mjs: LIVE = есть флаг --live и нет флага --dry-run</text>
+  <text x="40" y="46" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="21" font-weight="700" fill="#e6f1ff">Modes: what actually happens</text>
+  <text x="40" y="72" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" fill="#8aa0b8">the mode is set in lib/config.mjs: LIVE = the --live flag is present and --dry-run is not</text>
 
   <rect x="40" y="96" width="1120" height="192" rx="16" fill="#0d1b18" stroke="#2dd4bf" stroke-width="2"/>
-  <text x="64" y="128" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#2dd4bf">DRY-RUN — по умолчанию, ничего не подписывает</text>
+  <text x="64" y="128" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#2dd4bf">DRY-RUN — default, signs nothing</text>
 
   <g>
     <rect x="64" y="146" width="212" height="80" rx="10" fill="#10241f" stroke="#2dd4bf" stroke-width="1.5"/>
-    <text x="78" y="172" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#dbe7f5">1. Сигнал</text>
-    <text x="78" y="194" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">событие из сети</text>
-    <text x="78" y="212" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">или команда в терминале</text>
+    <text x="78" y="172" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#dbe7f5">1. Signal</text>
+    <text x="78" y="194" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">an event from the network</text>
+    <text x="78" y="212" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">or a command in the terminal</text>
   </g>
   <g>
     <rect x="302" y="146" width="212" height="80" rx="10" fill="#10241f" stroke="#2dd4bf" stroke-width="1.5"/>
-    <text x="316" y="172" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#dbe7f5">2. Лимиты</text>
+    <text x="316" y="172" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#dbe7f5">2. Limits</text>
     <text x="316" y="194" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">MAX_TRADE_SOL</text>
     <text x="316" y="212" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">MAX_SESSION_SOL</text>
   </g>
   <g>
     <rect x="540" y="146" width="212" height="80" rx="10" fill="#10241f" stroke="#2dd4bf" stroke-width="1.5"/>
-    <text x="554" y="172" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#dbe7f5">3. Расчёт выхода</text>
-    <text x="554" y="194" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">цена по кривой, комиссии</text>
-    <text x="554" y="212" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">проскальзывание</text>
+    <text x="554" y="172" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#dbe7f5">3. Exit calculation</text>
+    <text x="554" y="194" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">curve price, fees</text>
+    <text x="554" y="212" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">slippage</text>
   </g>
   <g>
     <rect x="778" y="146" width="212" height="80" rx="10" fill="#10241f" stroke="#2dd4bf" stroke-width="1.5"/>
-    <text x="792" y="172" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#dbe7f5">4. Журнал</text>
+    <text x="792" y="172" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#dbe7f5">4. Journal</text>
     <text x="792" y="194" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">data/journal/*.jsonl</text>
     <text x="792" y="212" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">«would buy / would sell»</text>
   </g>
   <g>
     <rect x="1016" y="146" width="120" height="80" rx="10" fill="#0b1f1c" stroke="#5eead4" stroke-width="1.5" stroke-dasharray="5 4"/>
-    <text x="1076" y="180" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="700" fill="#5eead4">0 транзакций</text>
-    <text x="1076" y="202" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">ключ не нужен</text>
+    <text x="1076" y="180" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="700" fill="#5eead4">0 transactions</text>
+    <text x="1076" y="202" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#8aa0b8">no key needed</text>
   </g>
 
   <g stroke="#2dd4bf" stroke-width="2" fill="none" marker-end="url(#arrowTeal)">
@@ -60,37 +60,37 @@
   </g>
 
   <rect x="40" y="316" width="1120" height="192" rx="16" fill="#1d1608" stroke="#fbbf24" stroke-width="2"/>
-  <text x="64" y="348" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#fbbf24">LIVE — только с двумя переключателями</text>
+  <text x="64" y="348" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#fbbf24">LIVE — only with two switches</text>
 
   <g>
     <rect x="64" y="366" width="166" height="80" rx="10" fill="#241a08" stroke="#fbbf24" stroke-width="1.5"/>
-    <text x="76" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">1. Сигнал</text>
-    <text x="76" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">как в dry-run</text>
+    <text x="76" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">1. Signal</text>
+    <text x="76" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">as in dry-run</text>
   </g>
   <g>
     <rect x="244" y="366" width="166" height="80" rx="10" fill="#241a08" stroke="#fbbf24" stroke-width="1.5"/>
-    <text x="256" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">2. Лимиты</text>
-    <text x="256" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">проверка и стоп сессии</text>
+    <text x="256" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">2. Limits</text>
+    <text x="256" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">the check and the session stop</text>
   </g>
   <g>
     <rect x="424" y="366" width="166" height="80" rx="10" fill="#241a08" stroke="#fbbf24" stroke-width="1.5"/>
-    <text x="436" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">3. Симуляция</text>
-    <text x="436" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">ошибка = не отправляем</text>
+    <text x="436" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">3. Simulation</text>
+    <text x="436" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">an error = we do not send</text>
   </g>
   <g>
     <rect x="604" y="366" width="166" height="80" rx="10" fill="#241a08" stroke="#fbbf24" stroke-width="1.5"/>
-    <text x="616" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">4. Подпись</text>
-    <text x="616" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">ключ и отправка в сеть</text>
+    <text x="616" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">4. Signing</text>
+    <text x="616" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">the key and sending to the network</text>
   </g>
   <g>
     <rect x="784" y="366" width="166" height="80" rx="10" fill="#241a08" stroke="#fbbf24" stroke-width="1.5"/>
-    <text x="796" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">5. Подтверждение</text>
-    <text x="796" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">ждём включения в блок</text>
+    <text x="796" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">5. Confirmation</text>
+    <text x="796" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">waiting for block inclusion</text>
   </g>
   <g>
     <rect x="964" y="366" width="172" height="80" rx="10" fill="#241a08" stroke="#fbbf24" stroke-width="1.5"/>
-    <text x="976" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">6. Журнал</text>
-    <text x="976" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">фактическая цена сделки</text>
+    <text x="976" y="392" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#e6f1ff">6. Journal</text>
+    <text x="976" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="10.5" fill="#c9b48a">the actual trade price</text>
   </g>
 
   <g stroke="#fbbf24" stroke-width="2" fill="none" marker-end="url(#arrowAmber)">
@@ -101,8 +101,8 @@
     <path d="M950 406 H 958"/>
   </g>
 
-  <text x="64" y="480" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#c9b48a">Два переключателя сразу: флаг --live И переменная LIVE_CONFIRM=yes. Одного флага недостаточно — бот остановится до подключения к сети.</text>
-  <text x="64" y="500" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#c9b48a">Если симуляция не прошла, транзакция не отправляется: иначе она заплатит комиссию и упадёт на сети.</text>
+  <text x="64" y="480" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#c9b48a">Two switches at once: the --live flag AND the LIVE_CONFIRM=yes variable. One flag alone is not enough — the bot stops before connecting to the network.</text>
+  <text x="64" y="500" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#c9b48a">If the simulation failed, the transaction is not sent: otherwise it would pay the fee and fall on the network.</text>
 
-  <text x="40" y="548" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">Продажа после миграции на PumpSwap дополнительно требует LIVE_CONFIRM_AMM=yes: этот путь ещё не проверен на реальной транзакции.</text>
+  <text x="40" y="548" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">A post-migration PumpSwap sell additionally requires LIVE_CONFIRM_AMM=yes: this path is not yet verified on a real transaction.</text>
 </svg>

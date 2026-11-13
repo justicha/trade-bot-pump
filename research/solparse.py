@@ -1,4 +1,4 @@
-"""Общие хелперы для разбора транзакций Solana (jsonParsed)."""
+"""Shared helpers for parsing Solana transactions (jsonParsed)."""
 import base64
 import struct
 
@@ -71,7 +71,7 @@ for t in JITO_TIPS:
 
 
 def compute_budget(ixs):
-    """Достаёт CU limit и CU price (micro-lamports) из инструкций ComputeBudget."""
+    """Extracts the CU limit and CU price (micro-lamports) from ComputeBudget instructions."""
     out = {}
     for ix in ixs:
         if ix.get("programId") != "ComputeBudget111111111111111111111111111111":
@@ -91,7 +91,7 @@ def compute_budget(ixs):
 
 
 def program_data_events(logs):
-    """Все base64 'Program data:' payload'ы (Anchor events)."""
+    """All base64 'Program data:' payloads (Anchor events)."""
     out = []
     for line in logs or []:
         if line.startswith("Program data: "):

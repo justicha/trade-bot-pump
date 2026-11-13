@@ -1,20 +1,20 @@
-# Ошибки и что делать
+# Errors and what to do
 
-Ниже — реальные сообщения из кода этого репозитория (тексты скопированы из
-источников, а не пересказаны). Если вашей ошибки нет в списке, начните с раздела
-«Как читать ошибку» в конце.
+Below are the real messages from this repository's code (texts copied from
+the sources, not paraphrased). If your error is not in the list, start with the
+"How to read an error" section at the end.
 
-## Быстрый чек-лист
+## Quick checklist
 
-1. `node -v` — версия 22 или новее?
-2. Существует ли файл `.env` и задан ли в нём `RPC_URL`?
-3. Создан ли кошелёк (`keys/default.json`)?
-4. Не запущен ли уже второй экземпляр того же бота?
-5. Работает ли RPC: видит ли `npm run monitor` новые токены?
+1. `node -v` — version 22 or newer?
+2. Does the `.env` file exist and is `RPC_URL` set in it?
+3. Is a wallet created (`keys/default.json`)?
+4. Is a second instance of the same bot already running?
+5. Is the RPC working: does `npm run monitor` see new tokens?
 
 ---
 
-## Ошибки при запуске
+## Startup errors
 
 ### `[config] ERROR: RPC_URL is required (must start with http:// or https://)...`
 
@@ -22,15 +22,15 @@
 [config] ERROR: RPC_URL is required (must start with http:// or https://). Copy .env.example to .env and set RPC_URL to your own endpoint, e.g. https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 ```
 
-**Причина:** нет файла `.env`, либо `RPC_URL` пустой или не начинается с `http://` /
-`https://`. Публичного адреса по умолчанию в коде нет специально — чтобы бот не
-«делал вид, что работает» на заглушке.
+**Cause:** there is no `.env` file, or `RPC_URL` is empty or does not start with `http://` /
+`https://`. There is deliberately no default public address in the code — so the bot does not
+"pretend to work" on a placeholder.
 
-**Что делать:**
+**What to do:**
 
 ```powershell
 Copy-Item .env.example .env
-notepad .env      # впишите свой RPC_URL
+notepad .env      # enter your RPC_URL
 ```
 
 ### `[config] ERROR: --live requires LIVE_CONFIRM=yes...`
@@ -39,10 +39,10 @@ notepad .env      # впишите свой RPC_URL
 [config] ERROR: --live requires LIVE_CONFIRM=yes. Set it for this run only, e.g. $env:LIVE_CONFIRM="yes"; node bots/graduation-sniper/graduation.mjs --live
 ```
 
-**Причина:** указан флаг `--live`, но второй переключатель не задан. Это защита от
-случайного запуска реальной торговли (например, если команду скопировали из чата).
+**Cause:** the `--live` flag is set, but the second switch is not. This guards against
+accidentally starting real trading (for example, if the command was copied from a chat).
 
-**Что делать:**
+**What to do:**
 
 ```powershell
 $env:LIVE_CONFIRM="yes"; npm run sniper -- --live     # Windows PowerShell
@@ -52,8 +52,8 @@ $env:LIVE_CONFIRM="yes"; npm run sniper -- --live     # Windows PowerShell
 LIVE_CONFIRM=yes npm run sniper -- --live             # macOS / Linux
 ```
 
-Переменная живёт только в текущем окне терминала: после его закрытия снова нужен
-явный `LIVE_CONFIRM`.
+The variable lives only in the current terminal window: after it closes you need an explicit
+`LIVE_CONFIRM` again.
 
 ### `Keypair not found: ...\keys\default.json`
 
@@ -62,17 +62,17 @@ Keypair not found: C:\...\keys\default.json
 Generate with: node lib/wallet.mjs generate [name]
 ```
 
-**Причина:** кошелёк ещё не создан (или файл `keys/default.json` удалён).
+**Cause:** the wallet is not created yet (or `keys/default.json` was deleted).
 
-**Что делать:**
+**What to do:**
 
 ```powershell
 node lib/wallet.mjs generate
 node lib/wallet.mjs show
 ```
 
-Напоминание: если файл потерян, а деньги на кошельке были — восстановить доступ
-нельзя. Резервная копия делается заранее.
+Reminder: if the file is lost and the wallet had money, access cannot be recovered.
+Back it up in advance.
 
 ### `FATAL: another sniper instance is already running`
 
@@ -80,173 +80,173 @@ node lib/wallet.mjs show
 FATAL: another sniper instance is already running (PID 1234, lock data\journal\.sniper.lock). Refusing to start to avoid duplicate trades.
 ```
 
-**Причина:** бот может быть только один на папку журнала. Замок (lock) не даёт двум
-экземплярам писать в один журнал и путать учёт.
+**Cause:** there can be only one bot per journal folder. The lock prevents two
+instances from writing to one journal and mixing up the accounting.
 
-**Что делать:** закройте первый экземпляр (Ctrl+C). Если процесса уже нет (например,
-после перезагрузки), удалите `data/journal/.sniper.lock` вручную — но только
-убедившись, что PID из сообщения действительно не работает.
+**What to do:** close the first instance (Ctrl+C). If the process is already gone (for example,
+after a reboot), delete `data/journal/.sniper.lock` manually — but only
+after making sure the PID in the message is really not running.
 
 ### `lab.mjs is dry-run only: it never sends transactions. Remove --live.`
 
-**Причина:** вы передали `--live` лаборатории. Она принципиально не торгует.
+**Cause:** you passed `--live` to the lab. It deliberately never trades.
 
-**Что делать:** убрать флаг.
+**What to do:** remove the flag.
 
 ### `bigint: Failed to load bindings, pure JS will be used`
 
-**Причина:** у одной из библиотек нет нативной сборки под вашу систему, и она
-переключилась на чистый JavaScript.
+**Cause:** one of the libraries has no native build for your system, and it
+fell back to pure JavaScript.
 
-**Опасно ли:** нет. Это предупреждение, а не ошибка: бот работает так же, только
-чуть медленнее на вычислениях. Делать ничего не нужно.
+**Is it dangerous:** no. This is a warning, not an error: the bot works the same, only
+slightly slower on computations. Nothing to do.
 
-### В консоли «кракозябры» вместо русских букв
+### Mojibake in the console instead of readable letters
 
-**Причина:** кодировка консоли Windows.
+**Cause:** the Windows console codepage.
 
-**Что делать:** выполните `chcp 65001` перед запуском (переключит консоль в UTF-8).
-Это косметика: на работу бота не влияет.
+**What to do:** run `chcp 65001` before starting (switches the console to UTF-8).
+This is cosmetic: it does not affect the bot.
 
 ---
 
-## RPC: лимиты, задержки и «бот молчит»
+## RPC: limits, delays and a silent bot
 
-### Бот запустился, но в консоли ничего не происходит
+### The bot started, but nothing happens in the console
 
-Самая частая причина — **лимиты RPC**, а не «бот сломался». Порядок проверки:
+The most common cause is **RPC limits**, not a broken bot. Check in this order:
 
-1. `npm run monitor` — видны ли новые токены вообще?
-2. Если нет — проверьте `RPC_URL`: публичные адреса обычно не отдают `logsSubscribe`.
-3. Посмотрите квоту в панели провайдера.
-4. Проверьте, не запущен ли второй бот на том же ключе: два потребителя на одном
-   ключе быстро выбирают лимит.
+1. `npm run monitor` — are any new tokens visible at all?
+2. If not — check `RPC_URL`: public endpoints usually do not serve `logsSubscribe`.
+3. Check the quota in the provider's dashboard.
+4. Check that a second bot is not running on the same key: two consumers on one
+   key exhaust the limit quickly.
 
-У снайпера есть защита от «тихой смерти»: раз в 60 секунд печатается строка
-`HEARTBEAT: watchlist=… positions=… opening=…`. Если она есть — процесс жив и просто
-не находит кандидатов. Если её нет — проблема не в логике, а в сети.
+The sniper has a guard against a silent death: once a minute it prints
+`HEARTBEAT: watchlist=… positions=… opening=…`. If it is there — the process is alive and just
+finds no candidates. If it is not there — the problem is the network, not the logic.
 
 ### `429 Too Many Requests` / `max usage reached`
 
-**Причина:** исчерпана квота или частота запросов вашего тарифа.
+**Cause:** the quota or request rate of your plan is exhausted.
 
-**Что делать:** подождать сброса лимита, поднять тариф, сменить endpoint или
-остановить другие программы и ботов, которые используют тот же ключ.
+**What to do:** wait for the limit reset, upgrade the plan, change the endpoint, or
+stop other programs and bots that use the same key.
 
-### `[ws] error: ... 429`, дальше `reconnecting…`
+### `[ws] error: ... 429`, then `reconnecting…`
 
-**Причина:** сервер отклонил WebSocket-подключение — тот же лимит.
+**Cause:** the server rejected the WebSocket connection — the same limit.
 
-**Что делать:** это не падение: клиент сам переподключается с растущей паузой. Если
-так происходит постоянно — меняйте тариф или провайдера.
+**What to do:** this is not a crash: the client reconnects on its own with a growing pause. If
+it happens constantly — change the plan or the provider.
 
 ### `Signature ... has expired: block height exceeded`
 
-**Причина:** узел вернул устаревшую границу действия транзакции (бывает на публичных
-и перегруженных узлах).
+**Cause:** the node returned a stale transaction validity bound (happens on public
+and overloaded nodes).
 
-**Что делать:** код пересчитывает срок от текущей высоты блока; если ошибка
-повторяется — RPC отстаёт, смените его.
+**What to do:** the code recomputes the deadline from the current block height; if the error
+repeats — the RPC is lagging, change it.
 
 ### `ProgramFailedToComplete` / `exceeded CUs meter at BPF instruction`
 
-**Причина:** слишком мало «compute units» (единиц вычислений) на транзакцию.
+**Cause:** too few compute units for the transaction.
 
-**Что делать:** не опускайте `CU_LIMIT` ниже примерно 100000; в `.env.example` стоит
-рабочее значение. Учтите: приоритетная комиссия считается по лимиту, а не по факту,
-поэтому «огромный лимит на всякий случай» стоит денег.
+**What to do:** do not lower `CU_LIMIT` below roughly 100000; `.env.example` ships a
+working value. Note: the priority fee is charged on the limit, not on the actual usage,
+so a huge limit "just in case" costs money.
 
-### `[fee-state]` или ошибки чтения параметров комиссии
+### `[fee-state]` or errors reading the fee parameters
 
-**Причина:** не удалось прочитать служебный аккаунт pump.fun (временная ошибка сети
-или лимит RPC).
+**Cause:** the pump.fun helper account could not be read (a temporary network error
+or an RPC limit).
 
-**Что делать:** подождать или сменить RPC. Код повторяет такой запрос и перепроверяет
-параметры перед реальной покупкой.
+**What to do:** wait or change the RPC. The code retries such a request and re-checks
+the parameters before a real buy.
 
 ---
 
-## Ошибки программы pump.fun (коды)
+## pump.fun program errors (codes)
 
-Коды взяты из официального описания программы (IDL) и встроены в
-`lib/pump-errors.mjs`. В логе они выглядят так: `instruction 2: 6024 Overflow (...)`.
+The codes come from the official program description (IDL) and are embedded in
+`lib/pump-errors.mjs`. In the log they look like: `instruction 2: 6024 Overflow (...)`.
 
-| Код | Название | Что означает | Что делать |
+| Code | Name | What it means | What to do |
 |---|---|---|---|
-| 6000 | `NotAuthorized` | действие запрещено для аккаунта | проверить, какие аккаунты передаются в инструкцию |
-| 6002 | `TooMuchSolRequired` | цена выросла: нужно больше SOL, чем разрешено (`max_sol_cost`) | увеличить `BUY_SLIPPAGE_BPS` или подождать |
-| 6003 | `TooLittleSolReceived` | при продаже вернулось меньше минимума | повысить проскальзывание продажи |
-| 6005 | `BondingCurveComplete` | кривая завершена, ликвидность уехала в PumpSwap | торговать по кривой больше нельзя; путь PumpSwap **непроверенный** |
-| 6006 | `BondingCurveNotComplete` | кривая ещё не завершена | действие «для пула» вызвано слишком рано |
-| 6020 / 6021 | `BuyZeroAmount` / `NotEnoughTokensToBuy` | сумма покупки нулевая или слишком мала | увеличить сумму |
-| 6022 / 6023 | `SellZeroAmount` / `NotEnoughTokensToSell` | продажа нуля или больше баланса | перечитать баланс токенов |
-| 6024 | `Overflow` | кривая не может выплатить запрошенную сумму | продавать меньшую часть (см. ниже) |
-| 6029 | `UnsortedNotUniqueFeeRecipients` | неверный список получателей комиссии | брать адреса из данных сети, а не из старого кода |
-| 6042 | `BuySlippageBelowMinTokensOut` | покупка дала бы меньше токенов, чем минимум | поднять проскальзывание |
-| 6081 | `BondingCurveAlreadyMigrated` | кривая уже мигрировала | пропустить токен (graduation-бот вносит его в чёрный список) |
-| 6094 | `CashbackCoinNotSupported` | такие монеты этим кодом не поддерживаются | пропустить токен |
+| 6000 | `NotAuthorized` | the action is forbidden for the account | check which accounts are passed to the instruction |
+| 6002 | `TooMuchSolRequired` | the price rose: more SOL than allowed (`max_sol_cost`) is needed | raise `BUY_SLIPPAGE_BPS` or wait |
+| 6003 | `TooLittleSolReceived` | the sell returned less than the minimum | raise the sell slippage |
+| 6005 | `BondingCurveComplete` | the curve is complete, liquidity moved to PumpSwap | trading on the curve is over; the PumpSwap path is **unverified** |
+| 6006 | `BondingCurveNotComplete` | the curve is not complete yet | the pool action was called too early |
+| 6020 / 6021 | `BuyZeroAmount` / `NotEnoughTokensToBuy` | the buy amount is zero or too small | raise the amount |
+| 6022 / 6023 | `SellZeroAmount` / `NotEnoughTokensToSell` | selling zero or more than the balance | re-read the token balance |
+| 6024 | `Overflow` | the curve cannot pay the requested amount | sell a smaller part (see below) |
+| 6029 | `UnsortedNotUniqueFeeRecipients` | a wrong list of fee recipients | take the addresses from chain data, not from old code |
+| 6042 | `BuySlippageBelowMinTokensOut` | the buy would return fewer tokens than the minimum | raise the slippage |
+| 6081 | `BondingCurveAlreadyMigrated` | the curve already migrated | skip the token (the graduation bot blacklists it) |
+| 6094 | `CashbackCoinNotSupported` | such coins are not supported by this code | skip the token |
 
-### `6024 Overflow` при продаже всего баланса
+### `6024 Overflow` when selling the whole balance
 
-**Причина:** сумма к выплате превысила реальные резервы SOL на кривой. Программа
-«переполняется» вместо аккуратного отказа.
+**Cause:** the payout exceeded the real SOL reserves on the curve. The program
+overflows instead of refusing cleanly.
 
-**Что это значит:** продать всё одним куском нельзя **физически** — на кривой нет
-столько SOL. Это не ошибка настройки и не повод повторять попытку в цикле.
+**What it means:** selling everything in one chunk is **physically** impossible — the curve does not hold
+that much SOL. This is not a configuration error and not a reason to retry in a loop.
 
-**Что делает код:** делит продажу на части так, чтобы каждая укладывалась в 0.95 от
-реальных резервов, и продаёт по одной части за цикл. Если и это невозможно, позиция
-помечается **STUCK** и попадает в сводку сессии, а в логе появляется:
+**What the code does:** it splits the sale into parts so each fits within 0.95 of
+the real reserves, and sells one part per cycle. If even that is impossible, the position
+is marked **STUCK** and lands in the session summary, and the log shows:
 
 ```
-ALERT: <mint> STUCK (<venue>): <причина> — ..., use scripts/rescue-sell.mjs
+ALERT: <mint> STUCK (<venue>): <reason> — ..., use scripts/rescue-sell.mjs
 ```
 
-**Что делать человеку:** не «долбить» продажу. Проверить остатки (`npm run rescue`,
-по умолчанию он только показывает план) или дождаться, пока на кривой появятся SOL.
+**What a human should do:** do not hammer the sell. Check the leftovers (`npm run rescue`,
+by default it only shows a plan) or wait until SOL appears on the curve.
 
 ---
 
-## Снайпер молчит, хотя токены есть
+## The sniper is silent although there are tokens
 
-### Строка `ABOVE BAND: ... fill=98.0% > MAX_FILL=97%`
+### The `ABOVE BAND: ... fill=98.0% > MAX_FILL=97%` line
 
-**Причина:** токен слишком близко к миграции — бот намеренно не входит в последние
-проценты. Строка печатается один раз на токен, чтобы «тишина» была объяснена.
+**Cause:** the token is too close to migration — the bot deliberately does not enter the last
+percent. The line is printed once per token so the silence is explained.
 
-**Что делать:** ничего. Это ожидаемое поведение, а не сбой.
+**What to do:** nothing. This is expected behaviour, not a failure.
 
-### Строка `ALERT: entry for ... did not settle in Ns — slot released`
+### The `ALERT: entry for ... did not settle in Ns — slot released` line
 
-**Причина:** запрос к RPC по конкретному входу не вернулся за отведённое время. Слот
-освобождён, чтобы один зависший токен не блокировал все следующие.
+**Cause:** the RPC request for a specific entry did not return in time. The slot
+is released so one stuck token does not block all the following ones.
 
-**Что делать:** проверить RPC (таймаут задаётся `RPC_TIMEOUT_MS`, по умолчанию
-15 секунд). Если повторяется — узел перегружен или троттлит.
+**What to do:** check the RPC (the timeout is set by `RPC_TIMEOUT_MS`, default
+15 seconds). If it repeats — the node is overloaded or throttling.
 
-### Ничего не покупается, а в журнале только `buy_skipped`
+### Nothing is bought and the journal only has `buy_skipped`
 
-Это нормальная работа фильтров. Причины бывают разные: слишком мало держателей,
-кривая близко к миграции, не хватает глубины для выхода, токен с расширениями
-Token-2022. Посмотрите поле `reason` в журнале — там написано, какой именно фильтр
-сработал.
+This is the filters working normally. The reasons vary: too few holders,
+the curve is close to migration, not enough depth to exit, a token with Token-2022
+extensions. Look at the `reason` field in the journal — it says which filter
+fired.
 
 ---
 
-## `npm test`: падения и утечка ключа в вывод
+## `npm test`: failures and a key leaking into the output
 
-### Тест `env-inline` падает, а в тексте ошибки виден RPC-адрес вместе с `api-key`
+### The `env-inline` test fails and the error text shows the RPC address with `api-key`
 
-**Причина:** в оболочке экспортирована переменная `RPC_URL`. Тестовая обвязка
-(`scripts/lib/test-env.mjs`) подставляет своё значение только если переменной ещё нет
-(`process.env.RPC_URL ??= "https://example.invalid"`), поэтому ваша рабочая ссылка попадает
-в дочерний процесс, а проверка сравнивает её с ожидаемым `https://example.invalid`.
-Сообщение об ошибке печатает фактическое значение целиком — вместе с ключом.
+**Cause:** the `RPC_URL` variable is exported in the shell. The test harness
+(`scripts/lib/test-env.mjs`) substitutes its value only if the variable is not already set
+(`process.env.RPC_URL ??= "https://example.invalid"`), so your working URL leaks
+into the child process, and the check compares it with the expected `https://example.invalid`.
+The error message prints the actual value in full — including the key.
 
-**Что делать:**
+**What to do:**
 
 ```powershell
-Remove-Item Env:\RPC_URL   # Windows PowerShell, только в этой сессии
+Remove-Item Env:\RPC_URL   # Windows PowerShell, this session only
 npm test
 ```
 
@@ -255,33 +255,33 @@ unset RPC_URL              # macOS / Linux
 npm test
 ```
 
-**Важно:** такой вывод — обычный текст. Если он попал в файл, в чат или в скриншот, считайте
-ключ скомпрометированным и перевыпустите его в панели провайдера. Удаление файла ключ не
-отзывает.
+**Important:** such output is plain text. If it got into a file, a chat or a screenshot, consider
+the key compromised and re-issue it in the provider's dashboard. Deleting the file does not revoke
+the key.
 
-**Как убедиться, что всё хорошо:** все 60 файлов тестов печатают строку `PASS:`, а код возврата
-`npm test` равен `0`. Тесты не ходят в сеть и не требуют `keys/` или `.env` в папке проекта.
+**How to confirm everything is fine:** all 60 test files print a `PASS:` line, and the exit code of
+`npm test` is `0`. The tests do not go to the network and do not require `keys/` or `.env` in the project folder.
 
 ---
 
-## Как читать ошибку
+## How to read an error
 
-1. Смотрите на префикс строки: `buy failed:`, `sell attempt 1/3 failed`,
-   `sell simulation failed` — он говорит, на каком шаге всё остановилось.
-2. Число и название кода декодируются автоматически (`6024 Overflow`), а не
-   показываются как «сырое» `{Custom:6024}`.
-3. Те же события лежат в журнале (`data/journal/…jsonl`) со структурой: сумма,
-   баланс, ожидаемая выплата, реальные резервы, площадка, текст ошибки.
-4. Если позиция помечена STUCK — она попадёт в сводку. Не запускайте её повторно
-   бесконечно.
+1. Look at the line prefix: `buy failed:`, `sell attempt 1/3 failed`,
+   `sell simulation failed` — it says at which step it stopped.
+2. The code number and name are decoded automatically (`6024 Overflow`), not
+   shown as a raw `{Custom:6024}`.
+3. The same events are in the journal (`data/journal/…jsonl`) with the structure: amount,
+   balance, expected payout, real reserves, venue, error text.
+4. If a position is marked STUCK — it will appear in the summary. Do not retry it
+   endlessly.
 
-## Если просите помощи в интернете
+## If you ask for help online
 
-Публикуйте **только**:
+Publish **only**:
 
-- текст ошибки и 5–10 строк вокруг;
-- версию Node (`node -v`) и операционную систему;
-- что именно вы запускали (команду).
+- the error text and 5–10 lines around it;
+- the Node version (`node -v`) and the operating system;
+- exactly what you ran (the command).
 
-**Никогда** не публикуйте: `.env`, `RPC_URL` целиком, `keys/`, скриншот с адресом
-кошелька (если не хотите его раскрывать), полные логи с суммами.
+**Never** publish: `.env`, the full `RPC_URL`, `keys/`, a screenshot with the wallet
+address (if you do not want to reveal it), full logs with amounts.

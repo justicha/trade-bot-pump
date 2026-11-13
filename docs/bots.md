@@ -1,243 +1,243 @@
-# Боты: кто что делает
+# Bots: who does what
 
-В репозитории несколько ботов. Три из них **могут торговать** (и по умолчанию делают
-это виртуально), остальные только читают данные.
+The repo has several bots. Three of them **can trade** (and by default do
+it virtually), the rest only read data.
 
-Общие правила для всех:
+Common rules for all:
 
-- по умолчанию — **dry-run**: ничего не подписывается и не отправляется;
-- чтобы включить реальную торговлю, нужны **два** переключателя: флаг `--live` и
-  переменная `LIVE_CONFIRM=yes` в той же оболочке;
-- все значения ниже — из файла `.env.example` (это то, что вы получаете после
-  копирования шаблона) либо из кода бота, если в шаблоне переменной нет.
+- by default — **dry-run**: nothing is signed or sent;
+- to enable real trading you need **two** switches: the `--live` flag and
+  the `LIVE_CONFIRM=yes` variable in the same shell;
+- all the values below come from `.env.example` (what you get after
+  copying the template) or from the bot code when the template has no such variable.
 
-## Краткая таблица
+## Quick table
 
-| Бот | Команда | Что делает | Тратит деньги? | Новичку подходит? |
+| Bot | Command | What it does | Spends money? | Good for a beginner? |
 |---|---|---|---|---|
-| monitor | `npm run monitor` | показывает новые токены и сделки в реальном времени | нет, только чтение | **да**, с него и начинайте |
-| sniper | `npm run sniper` | покупает новые токены по фильтрам | только с `--live` | да, но сначала долго в dry-run |
-| graduation | `npm run graduation` | входит перед миграцией кривой в PumpSwap | только с `--live` | нет: логика тонкая, AMM-продажа не проверена |
-| copy | `npm run copy` | повторяет сделки чужих кошельков | только с `--live` | нет |
-| trade | `npm run trade` | ручная покупка/продажа одной команды | только с `--live` | для точечных действий, не для стратегии |
-| analytics | `npm run analytics` | локальный веб-дашборд | нет | да, но нужен браузер и свободный порт |
-| lab | `npm run lab` | бумажная торговля несколькими наборами правил | нет (запрещено технически) | да, если хотите собирать статистику |
-| replay | `npm run replay` | сравнение результатов лаборатории | нет | нет: нужны накопленные данные |
+| monitor | `npm run monitor` | shows new tokens and trades in real time | no, read-only | **yes**, start with it |
+| sniper | `npm run sniper` | buys new tokens by filters | only with `--live` | yes, but run a long dry-run first |
+| graduation | `npm run graduation` | enters before the curve migrates to PumpSwap | only with `--live` | no: subtle logic, the AMM sell is unverified |
+| copy | `npm run copy` | repeats other wallets' trades | only with `--live` | no |
+| trade | `npm run trade` | manual buy/sell with one command | only with `--live` | for one-off actions, not a strategy |
+| analytics | `npm run analytics` | a local web dashboard | no | yes, but you need a browser and a free port |
+| lab | `npm run lab` | paper trading with several rule sets | no (technically refused) | yes, if you want to collect statistics |
+| replay | `npm run replay` | compares the lab results | no | no: you need accumulated data |
 
 ---
 
-## monitor — поток новых токенов (только чтение)
+## monitor — a stream of new tokens (read-only)
 
-**Для кого:** для всех. Это первый запуск, который стоит сделать: он проверяет, что
-RPC работает и события вообще приходят.
+**For whom:** everyone. This is the first run worth doing: it checks that
+the RPC works and events arrive at all.
 
-**Что делает**
+**What it does**
 
-1. Подключается к WebSocket-адресу (он получается из `RPC_URL` заменой `https` на `wss`).
-2. Подписывается на логи программы pump.fun.
-3. Печатает каждый новый токен: номер, адрес токена (mint), адрес создателя и размер
-   первой покупки автора.
+1. Connects to the WebSocket address (derived from `RPC_URL` by replacing `https` with `wss`).
+2. Subscribes to the pump.fun program logs.
+3. Prints every new token: its number, the token address (mint), the creator's address and the size
+   of the author's first buy.
 
-**Запуск**
+**Run**
 
 ```powershell
 npm run monitor
 
-# с фильтром: показывать только токены, где автор купил не меньше 0.5 SOL
+# with a filter: show only tokens where the author bought at least 0.5 SOL
 node bots/monitor/stream.mjs --filter-dev-buy 0.5
 ```
 
-**Переменные и флаги**
+**Variables and flags**
 
-| Что | Значение по умолчанию | Смысл |
+| What | Default | Meaning |
 |---|---|---|
-| `RPC_URL` | обязательно | без него бот не стартует |
-| `--filter-dev-buy <SOL>` | выключен | скрывать «мелкие» запуски |
-| `LOG_LEVEL` | `info` | `debug` даёт больше подробностей |
+| `RPC_URL` | required | without it the bot does not start |
+| `--filter-dev-buy <SOL>` | off | hide small launches |
+| `LOG_LEVEL` | `info` | `debug` gives more detail |
 
-**Риск:** нулевой для денег — кошелёк не используется, транзакции не отправляются.
+**Risk:** zero for money — the wallet is not used, no transaction is sent.
 
-**Остановка:** Ctrl+C; бот печатает, сколько созданий токенов и сделок увидел.
+**Stop:** Ctrl+C; the bot prints how many token creations and trades it saw.
 
 ---
 
-## sniper — покупка новых токенов
+## sniper — buying new tokens
 
-**Что делает**
+**What it does**
 
-1. Ловит создание нового токена.
-2. Проверяет размер первой покупки автора (`SNIPER_MIN_DEV_BUY`).
-3. Ждёт, пока токен купят несколько **разных** кошельков (`SNIPER_MIN_HOLDERS`), но не
-   дольше `SNIPER_HOLDER_WAIT_SEC`; иначе токен отбрасывается.
-4. Проверяет «органичность» толпы: число разных слотов покупки и задержку после создания.
-5. Проверяет паузу между покупками и лимит одновременных позиций.
-6. Проходит общие лимиты (`MAX_TRADE_SOL`, `MAX_SESSION_SOL`) и покупает.
-7. Ведёт позицию и продаёт по take profit, stop loss или по таймауту.
-8. После продажи ещё некоторое время смотрит на цену — чтобы понять, рано ли вышли.
+1. Catches a new token's creation.
+2. Checks the size of the author's first buy (`SNIPER_MIN_DEV_BUY`).
+3. Waits until several **distinct** wallets buy the token (`SNIPER_MIN_HOLDERS`), but not
+   longer than `SNIPER_HOLDER_WAIT_SEC`; otherwise the token is dropped.
+4. Checks the crowd's organic look: the number of distinct buy slots and the delay after creation.
+5. Checks the pause between buys and the concurrent-position limit.
+6. Passes the common limits (`MAX_TRADE_SOL`, `MAX_SESSION_SOL`) and buys.
+7. Tracks the position and sells on take profit, stop loss or timeout.
+8. After selling it watches the price for a while — to see whether it exited too early.
 
-<p align="center"><img src="img/sniper-flow.svg" alt="Схема снайпера: фильтр покупки автора, ожидание держателей, проверка толпы, пауза, покупка, затем take profit, stop loss или таймаут" width="100%"></p>
+<p align="center"><img src="img/sniper-flow.svg" alt="Sniper diagram: the author's buy filter, waiting for holders, the crowd check, pause, buy, then take profit, stop loss or timeout" width="100%"></p>
 
-**Запуск**
+**Run**
 
 ```powershell
 npm run sniper                        # dry-run
-$env:LIVE_CONFIRM="yes"; npm run sniper -- --live    # реальные деньги
+$env:LIVE_CONFIRM="yes"; npm run sniper -- --live    # real money
 ```
 
-**Ключевые переменные (значения из `.env.example`)**
+**Key variables (values from `.env.example`)**
 
-| Переменная | Значение | Что означает |
+| Variable | Value | Meaning |
 |---|---|---|
-| `SNIPER_BUY_SOL` | `0.02` | размер покупки в SOL (в коде по умолчанию `0.1`, если переменной нет) |
-| `SNIPER_TAKE_PROFIT` | `2.0` | продать при росте цены в 2 раза |
-| `SNIPER_STOP_LOSS` | `0.5` | продать при падении до 0.5 от цены входа |
-| `SNIPER_TIMEOUT_SEC` | `120` | максимум секунд в позиции |
-| `SNIPER_MAX_POSITIONS` | `3` | сколько позиций можно держать одновременно |
-| `SNIPER_MIN_DEV_BUY` | `0.5` | минимальная первая покупка автора, SOL (`0` = не проверять) |
-| `SNIPER_COOLDOWN_SEC` | `10` | пауза между покупками |
-| `SNIPER_MIN_HOLDERS` | `4` | сколько разных держателей нужно до покупки (`0` = покупать сразу) |
-| `SNIPER_HOLDER_WAIT_SEC` | `45` | сколько секунд ждать этих держателей |
-| `SNIPER_MIN_SLOTS` | `1` | минимум разных «слотов» покупки |
-| `SNIPER_MIN_DELAY_MS` | `0` | задержка после создания токена, мс |
-| `SNIPER_POST_EXIT_SEC` | `300` | сколько секунд после выхода следить за ценой (`0` = выключено) |
-| `SNIPER_MAX_SEC` | не задано | остановиться через N секунд (удобно для коротких прогонов) |
+| `SNIPER_BUY_SOL` | `0.02` | buy size in SOL (code default `0.1` if the variable is missing) |
+| `SNIPER_TAKE_PROFIT` | `2.0` | sell when the price doubles |
+| `SNIPER_STOP_LOSS` | `0.5` | sell when it falls to 0.5 of the entry price |
+| `SNIPER_TIMEOUT_SEC` | `120` | max seconds in a position |
+| `SNIPER_MAX_POSITIONS` | `3` | how many positions to hold at once |
+| `SNIPER_MIN_DEV_BUY` | `0.5` | minimum author's first buy, SOL (`0` = don't check) |
+| `SNIPER_COOLDOWN_SEC` | `10` | pause between buys |
+| `SNIPER_MIN_HOLDERS` | `4` | how many distinct holders are needed before buying (`0` = buy immediately) |
+| `SNIPER_HOLDER_WAIT_SEC` | `45` | how many seconds to wait for these holders |
+| `SNIPER_MIN_SLOTS` | `1` | minimum distinct buy slots |
+| `SNIPER_MIN_DELAY_MS` | `0` | delay after the token's creation, ms |
+| `SNIPER_POST_EXIT_SEC` | `300` | how many seconds after the exit to watch the price (`0` = off) |
+| `SNIPER_MAX_SEC` | unset | stop after N seconds (handy for short runs) |
 
-**Куда пишет:** `data/journal/…jsonl` — сделки, причины пропусков, записи сессии;
-отдельные файлы с «тиками» цены и ростом числа держателей.
+**Where it writes:** `data/journal/…jsonl` — trades, skip reasons, session records;
+separate files with price ticks and the holder-count growth.
 
-**Неудачная продажа:** до `SELL_MAX_ATTEMPTS` попыток (по умолчанию 3) с паузами 2 с, 4 с, …; во время паузы позиция продолжает отслеживаться (цена и пик обновляются). Когда попытки кончились — позиция помечается STUCK: токены остаются в кошельке (`node scripts/rescue-sell.mjs`), убыток учитывается в `MAX_CONSEC_LOSSES` и дневном итоге.
+**A failed sale:** up to `SELL_MAX_ATTEMPTS` attempts (default 3) with 2 s, 4 s, ... pauses; during the pause the position keeps being tracked (price and peak update). When the attempts run out — the position is marked STUCK: tokens stay in the wallet (`node scripts/rescue-sell.mjs`), the loss counts into `MAX_CONSEC_LOSSES` and the daily total.
 
-**Риск:** средний для новичка. Токен может оказаться скамом, копией или «бандлом»
-(когда один человек покупает с десятка кошельков). Фильтры уменьшают риск, но не убирают.
+**Risk:** medium for a beginner. The token may be a scam, a copy or a bundle
+(one person buying from a dozen wallets). Filters reduce the risk but do not remove it.
 
-**Остановка:** Ctrl+C — бот перестаёт искать, закрывает позиции (в dry-run виртуально),
-печатает `SESSION SUMMARY`, затем дописывает журнал. Второй Ctrl+C — выход сразу.
+**Stop:** Ctrl+C — the bot stops searching, closes positions (virtually in dry-run),
+prints `SESSION SUMMARY`, then finishes the journal. A second Ctrl+C — exit immediately.
 
-**Защита от замирания:** `STALL_GUARD_SEC` — бот замечает паузу консоли, сбрасывает кэш цен и переоценивает позиции по сети; при балансе 0 ищет севшую продажу (иначе STUCK).
+**Stall guard:** `STALL_GUARD_SEC` — the bot notices a console pause, resets the price cache and re-evaluates positions from the network; at a zero balance it looks for a landed sale (otherwise STUCK).
 
 ---
 
-## graduation — вход перед миграцией
+## graduation — entering before migration
 
-**Для кого:** для тех, кто уже понимает, как работает bonding curve, и прочитал код.
+**For whom:** those who already understand how the bonding curve works and read the code.
 
-**Что делает**
+**What it does**
 
-1. Считает **реальное заполнение** кривой: `realSolReserves / 85 SOL × 100`.
-   Виртуальные резервы примерно на 30 SOL больше, поэтому «заполнение по виртуальным»
-   завышает цифру примерно на треть.
-2. Оставляет токен, только если заполнение попало в коридор `GRAD_MIN_FILL_PCT` …
-   `GRAD_MAX_FILL_PCT` (по умолчанию 92–97%) и в потоке видели не меньше
-   `GRAD_MIN_HOLDERS` разных покупателей.
-3. Делает **предварительную проверку выхода**: считает «купить и сразу продать» и
-   отказывается от входа, если обратный путь возвращает меньше `EXIT_MIN_RATIO`
-   (по умолчанию 0.9) или если кривая не может выплатить.
-4. Проверяет общие лимиты, симулирует покупку и только потом отправляет её.
-5. Цену входа берёт **из фактической транзакции** (сколько SOL ушло, сколько токенов
-   пришло), а не из расчёта.
-6. Выходит, когда цена продажи (за вычетом 1% комиссии) достигает
-   `GRAD_TAKE_PROFIT`, падает до `GRAD_STOP_LOSS` или истекает `GRAD_TIMEOUT_SEC`.
-7. Если кривая не может выплатить всю сумму сразу, продажа делится на части так,
-   чтобы каждая укладывалась в 0.95 от реальных резервов SOL. После
-   `SELL_MAX_ATTEMPTS` неудач позиция помечается **STUCK** и попадает в сводку.
+1. Computes the **real fill** of the curve: `realSolReserves / 85 SOL × 100`.
+   The virtual reserves are ~30 SOL larger, so a virtual-based fill
+   overstates the number by about a third.
+2. Keeps the token only if the fill landed in the `GRAD_MIN_FILL_PCT` … corridor
+   `GRAD_MAX_FILL_PCT` (default 92–97%) and at least
+   `GRAD_MIN_HOLDERS` distinct buyers were seen in the stream.
+3. Does a **pre-exit check**: computes buy-then-sell and
+   refuses the entry if the round trip returns less than `EXIT_MIN_RATIO`
+   (default 0.9) or the curve cannot pay.
+4. Checks the common limits, simulates the buy and only then sends it.
+5. Takes the entry price **from the actual transaction** (how much SOL left, how many tokens
+   arrived), not from the calculation.
+6. Exits when the sell price (minus the 1% fee) reaches
+   `GRAD_TAKE_PROFIT`, falls to `GRAD_STOP_LOSS` or `GRAD_TIMEOUT_SEC` expires.
+7. If the curve cannot pay the whole amount at once, the sale is split so
+   each part fits within 0.95 of the real SOL reserves. After
+   `SELL_MAX_ATTEMPTS` failures the position is marked **STUCK** and lands in the summary.
 
-<p align="center"><img src="img/graduation-flow.svg" alt="Схема graduation-снайпера: реальное заполнение, держатели, проверка выхода, симуляция и покупка, затем продажа частями, ограниченные повторы и состояние STUCK" width="100%"></p>
+<p align="center"><img src="img/graduation-flow.svg" alt="Graduation sniper diagram: real fill, holders, the exit check, simulation and buy, then partial sells, bounded retries and the STUCK state" width="100%"></p>
 
-**Запуск**
+**Run**
 
 ```powershell
 npm run graduation                                   # dry-run
-$env:LIVE_CONFIRM="yes"; npm run graduation -- --live # реальные деньги
+$env:LIVE_CONFIRM="yes"; npm run graduation -- --live # real money
 ```
 
-**Ключевые переменные (значения из `.env.example`)**
+**Key variables (values from `.env.example`)**
 
-| Переменная | Значение | Что означает |
+| Variable | Value | Meaning |
 |---|---|---|
-| `GRAD_BUY_SOL` | `0.02` | размер покупки в SOL (в коде по умолчанию `0.1`) |
-| `GRAD_MIN_FILL_PCT` | `92` | минимальное реальное заполнение, % (алиас `MIN_FILL`) |
-| `GRAD_MAX_FILL_PCT` | `97` | максимальное заполнение; последние 3% до миграции не трогаем (алиас `MAX_FILL`) |
-| `GRAD_MIN_HOLDERS` | `7` | минимум разных покупателей в потоке (алиас `MIN_HOLDERS`) |
-| `GRAD_TAKE_PROFIT` | `1.5` | take profit от фактической цены входа |
+| `GRAD_BUY_SOL` | `0.02` | buy size in SOL (code default `0.1`) |
+| `GRAD_MIN_FILL_PCT` | `92` | minimum real fill, % (alias `MIN_FILL`) |
+| `GRAD_MAX_FILL_PCT` | `97` | maximum fill; we do not touch the last 3% before migration (alias `MAX_FILL`) |
+| `GRAD_MIN_HOLDERS` | `7` | minimum distinct buyers in the stream (alias `MIN_HOLDERS`) |
+| `GRAD_TAKE_PROFIT` | `1.5` | take profit from the actual entry price |
 | `GRAD_STOP_LOSS` | `0.7` | stop loss |
-| `GRAD_TIMEOUT_SEC` | `300` | максимум секунд в позиции |
-| `GRAD_MAX_POSITIONS` | `3` | одновременные позиции |
-| `GRAD_COOLDOWN_SEC` | `30` | пауза между покупками |
-| `EXIT_MIN_RATIO` | `0.9` (закомментирована) | порог «обратного пути» для входа |
-| `SELL_MAX_ATTEMPTS` | `3` (закомментирована) | сколько раз пытаться продать до статуса STUCK |
-| `SELL_MAX_SLIPPAGE` | `2000` (закомментирована) | предел проскальзывания при продаже, bps |
-| `BUY_SLIPPAGE_BPS` | `500` (закомментирована) | запас по максимальной цене покупки |
-| `LIVE_CONFIRM_AMM` | не задана | `yes` разрешает продажу через PumpSwap (путь **непроверенный**) |
-| `DRY_SELL` | не задана | `yes` — собрать и просимулировать продажу PumpSwap, но не отправлять (для проверки) |
+| `GRAD_TIMEOUT_SEC` | `300` | max seconds in a position |
+| `GRAD_MAX_POSITIONS` | `3` | concurrent positions |
+| `GRAD_COOLDOWN_SEC` | `30` | pause between buys |
+| `EXIT_MIN_RATIO` | `0.9` (commented out) | the round-trip entry threshold |
+| `SELL_MAX_ATTEMPTS` | `3` (commented out) | how many sell attempts before the STUCK status |
+| `SELL_MAX_SLIPPAGE` | `2000` (commented out) | the sell slippage cap, bps |
+| `BUY_SLIPPAGE_BPS` | `500` (commented out) | headroom on the max buy price |
+| `LIVE_CONFIRM_AMM` | unset | `yes` allows the PumpSwap sell (an **unverified** path) |
+| `DRY_SELL` | unset | `yes` — build and simulate the PumpSwap sell, but not send (for checking) |
 
-**Куда пишет:** `data/journal/…jsonl` (кандидаты, покупки, продажи, причины пропуска),
-`data/journal/graduation-blacklist.json` (токены, у которых кривая уже завершена).
+**Where it writes:** `data/journal/…jsonl` (candidates, buys, sells, skip reasons),
+`data/journal/graduation-blacklist.json` (tokens whose curve is already complete).
 
-**Риск:** высокий и самый «тонкий». После миграции токен уходит в пул PumpSwap, а этот
-путь продажи **не проверен на реальной транзакции** — поэтому он закрыт отдельным
-переключателем `LIVE_CONFIRM_AMM=yes`. Для мигрировавших токенов безопаснее продать
-вручную через кошелёк или другой сервис.
+**Risk:** high and the most subtle. After migration the token goes to the PumpSwap pool, and that
+sell path is **not verified on a real transaction** — so it is gated by a separate
+`LIVE_CONFIRM_AMM=yes` switch. For migrated tokens it is safer to sell
+manually via a wallet or another service.
 
-**Остановка:** Ctrl+C — короткая пауза на дописывание (до 8 секунд), сводка, снятие
-блокировки. Второй Ctrl+C — выход сразу.
+**Stop:** Ctrl+C — a short pause to finish writing (up to 8 seconds), a summary, removing the
+lock. A second Ctrl+C — exit immediately.
 
-**Защита от замирания:** `STALL_GUARD_SEC` — после паузы консоли бот переоценивает позиции по сети; при балансе 0 ищет севшую продажу (иначе STUCK).
+**Stall guard:** `STALL_GUARD_SEC` — after a console pause the bot re-evaluates positions from the network; at a zero balance it looks for a landed sale (otherwise STUCK).
 
 ---
 
-## copy — повторять чужие сделки
+## copy — repeating others' trades
 
-**Что делает**
+**What it does**
 
-1. Подписывается на события по адресам из `COPY_TARGETS`.
-2. Когда выбранный кошелёк покупает — открывает свою позицию на `COPY_BUY_SOL`.
-3. Когда он продаёт — продаёт `COPY_SELL_PCT`% своей позиции.
-4. Соблюдает лимит позиций и общие ограничения сессии.
+1. Subscribes to events for the `COPY_TARGETS` addresses.
+2. When a chosen wallet buys — opens its own position of `COPY_BUY_SOL`.
+3. When it sells — sells `COPY_SELL_PCT`% of its position.
+4. Respects the position limit and the common session limits.
 
-**Запуск**
+**Run**
 
 ```powershell
 npm run copy
 $env:LIVE_CONFIRM="yes"; npm run copy -- --live
 ```
 
-**Переменные**
+**Variables**
 
-| Переменная | Значение в `.env.example` | Смысл |
+| Variable | Value in `.env.example` | Meaning |
 |---|---|---|
-| `COPY_TARGETS` | `wallet1,wallet2` (заглушки) | адреса через запятую |
-| `COPY_BUY_SOL` | `0.05` | размер копирующей покупки |
-| `COPY_SELL_PCT` | `100` | какой процент продать вслед за целью |
-| `COPY_MAX_POSITIONS` | `5` | максимум одновременных позиций |
-| `COPY_MAX_HOLD_SEC` | `1800` | страховочный таймаут: если цель не продала за N секунд после нашей покупки — бот сам продаёт весь остаток (игнорируя `COPY_SELL_PCT`); `0` = выкл |
+| `COPY_TARGETS` | `wallet1,wallet2` (placeholders) | comma-separated addresses |
+| `COPY_BUY_SOL` | `0.05` | the copy-buy size |
+| `COPY_SELL_PCT` | `100` | what percent to sell after the target |
+| `COPY_MAX_POSITIONS` | `5` | max concurrent positions |
+| `COPY_MAX_HOLD_SEC` | `1800` | safety timeout: if the target has not sold within N seconds of our buy — the bot sells the whole remainder itself (ignoring `COPY_SELL_PCT`); `0` = off |
 
-**Важно:** в шаблоне стоят заглушки `wallet1,wallet2`. Пока вы не впишете реальные
-адреса, бот ничего не делает — и это правильно.
+**Important:** the template has the `wallet1,wallet2` placeholders. Until you enter real
+addresses, the bot does nothing — and that is correct.
 
-**Повтор продажи и страховка:** неудачная продажа повторяется таймером каждые 2 с по backoff (2 с, 4 с, …), не дожидаясь новой продажи цели; после `SELL_MAX_ATTEMPTS` попыток (по умолчанию 3) — STUCK. `COPY_MAX_HOLD_SEC` — страховка от вечной позиции: если цель не продала за N секунд, бот сам продаёт весь остаток, игнорируя `COPY_SELL_PCT`; `0` = выкл; TP/SL у бота нет. При остановке — одна финальная попытка без ожидания паузы.
+**Sell retry and safety net:** a failed sale is retried by a timer every 2 s on a backoff (2 s, 4 s, ...), without waiting for the target's next sale; after `SELL_MAX_ATTEMPTS` attempts (default 3) — STUCK. `COPY_MAX_HOLD_SEC` is a safety net against a stuck position: if the target has not sold for N seconds, the bot sells the whole remainder itself, ignoring `COPY_SELL_PCT`; `0` = off; the bot has no TP/SL. On stop — one final attempt without waiting for the pause.
 
-**Риск:** высокий. Копирование хрупкое: цель может успеть раньше, продать в том же
-блоке или оказаться «бандлом» из десятков связанных кошельков. Одинаковой цены входа
-никто не гарантирует.
+**Risk:** high. Copying is fragile: the target may be faster, sell in the same
+block or turn out to be a bundle of dozens of linked wallets. No one guarantees an equal entry price.
 
-**Защита от замирания:** `STALL_GUARD_SEC` — после паузы консоли бот немедленно проверяет выходы; при балансе 0 ищет севшую продажу (иначе STUCK).
+
+**Stall guard:** `STALL_GUARD_SEC` — after a console pause the bot immediately checks the exits; at a zero balance it looks for a landed sale (otherwise STUCK).
 
 ---
 
-## trade — ручные команды
+## trade — manual commands
 
-**Что делает:** одна команда — одно действие. Собирает транзакцию тем же кодом, что и
-боты, но без стратегии и без слежения за позицией.
+**What it does:** one command — one action. It builds the transaction with the same code as
+the bots, but with no strategy and no position tracking.
 
 ```powershell
 node bots/basic-trader/trade.mjs buy     <MINT> <SOL>
-node bots/basic-trader/trade.mjs sell    <MINT> <процент|all>
+node bots/basic-trader/trade.mjs sell    <MINT> <percent|all>
 node bots/basic-trader/trade.mjs price   <MINT>
 node bots/basic-trader/trade.mjs balance <MINT>
-node bots/basic-trader/trade.mjs wallet            # адрес и баланс SOL
+node bots/basic-trader/trade.mjs wallet            # address and SOL balance
 ```
 
-То же самое через npm:
+The same via npm:
 
 ```powershell
 npm run trade -- price <MINT>
@@ -245,105 +245,105 @@ npm run trade -- buy <MINT> 0.01
 $env:LIVE_CONFIRM="yes"; npm run trade -- sell <MINT> all --live
 ```
 
-**Переменные:** `SLIPPAGE_BPS` (по умолчанию `500`), `MAX_TRADE_SOL`.
-Бот сам печатает предупреждение:
+**Variables:** `SLIPPAGE_BPS` (default `500`), `MAX_TRADE_SOL`.
+The bot prints a warning itself:
 
 ```
 [CLI] Limits: only MAX_TRADE_SOL (X SOL) applies here; MAX_SESSION_SOL and MAX_CONSEC_LOSSES do NOT apply to the CLI bot.
 ```
 
-**Риск:** средний. Здесь нет ни лимита сессии, ни остановки по серии убытков — только
-лимит на одну сделку. Опечатка в количестве ограничена только `MAX_TRADE_SOL`.
+**Risk:** medium. There is no session limit and no losing-streak stop here — only
+the per-trade limit. A typo in the amount is bounded only by `MAX_TRADE_SOL`.
 
-**Файлы:** ничего не пишет, журнала нет. Это одноразовая команда.
+**Files:** writes nothing, no journal. This is a one-off command.
 
 ---
 
-## analytics — локальный дашборд
+## analytics — a local dashboard
 
-**Что делает:** поднимает локальный веб-сервер, собирает статистику по потоку событий
-и отдаёт страницу-дашборд и JSON по адресу `http://localhost:<порт>/api/stats`.
+**What it does:** starts a local web server, collects statistics over the event stream
+and serves a dashboard page and JSON at `http://localhost:<port>/api/stats`.
 
 ```powershell
 npm run analytics
 ```
 
-**Переменные**
+**Variables**
 
-| Переменная | Значение по умолчанию | Смысл |
+| Variable | Default | Meaning |
 |---|---|---|
-| `ANALYTICS_PORT` | `3000` | порт локального сервера |
+| `ANALYTICS_PORT` | `3000` | the local server's port |
 
-Сервер слушает только `127.0.0.1`, то есть снаружи он недоступен. Если порт занят —
-поменяйте `ANALYTICS_PORT` в `.env`.
+The server listens only on `127.0.0.1`, so it is unreachable from outside. If the port is busy —
+change `ANALYTICS_PORT` in `.env`.
 
-**Риск:** для денег нулевой (только чтение). Кошелёк не нужен.
+**Risk:** zero for money (read-only). No wallet needed.
 
 ---
 
-## lab — бумажная торговля вариантами
+## lab — paper trading with variants
 
-**Что делает:** подписывается один раз на поток событий и одновременно (!) прогоняет
-несколько наборов правил, каждому — свой виртуальный счёт. Так варианты сравниваются
-на одних и тех же данных, а не на разных днях.
+**What it does:** subscribes once to the event stream and simultaneously (!) runs
+several rule sets, each with its own virtual account. That way variants are compared
+on the same data, not on different days.
 
 ```powershell
 npm run lab
 ```
 
-Флаг `--live` отклоняется намеренно:
+The `--live` flag is refused on purpose:
 
 ```
 lab.mjs is dry-run only: it never sends transactions. Remove --live.
 ```
 
-**Переменные (значения из `.env.example`)**
+**Variables (values from `.env.example`)**
 
-| Переменная | Значение | Смысл |
+| Variable | Value | Meaning |
 |---|---|---|
-| `LAB_BUY_SOL` | `0.02` | размер бумажной покупки |
-| `LAB_MIN_HOLDERS` | `4` | сколько держателей ждать |
-| `LAB_MIN_SLOTS` | `2` | минимум разных слотов покупки |
-| `LAB_MIN_DELAY_MS` | `2500` | задержка после создания токена |
-| `LAB_WAIT_SEC` | `45` | окно ожидания держателей |
-| `LAB_SAMPLES` | `30,60,120,300` | через сколько секунд фиксировать цену |
-| `LAB_LATENCY_MS` | `600` | «задержка исполнения»: покупаем по цене не раньше этого момента |
-| `LAB_TARGET_TRADES` | `1000` | цель для оценки времени в строке статуса |
+| `LAB_BUY_SOL` | `0.02` | the paper buy size |
+| `LAB_MIN_HOLDERS` | `4` | how many holders to wait for |
+| `LAB_MIN_SLOTS` | `2` | minimum distinct buy slots |
+| `LAB_MIN_DELAY_MS` | `2500` | delay after the token's creation |
+| `LAB_WAIT_SEC` | `45` | the holder-wait window |
+| `LAB_SAMPLES` | `30,60,120,300` | after how many seconds to record the price |
+| `LAB_LATENCY_MS` | `600` | execution delay: we buy at the price no earlier than this moment |
+| `LAB_TARGET_TRADES` | `1000` | the target for the time estimate in the status line |
 
-**Куда пишет:** `data/research/variants/<вариант>.jsonl`.
+**Where it writes:** `data/research/variants/<variant>.jsonl`.
 
-**Риск:** денег нет. Но и «результат» здесь — только бумага: без долгого прогона и
-сравнения на отдельных данных цифры ничего не значат.
+**Risk:** no money. But the result here is only paper: without a long run and
+a comparison on held-out data the numbers mean nothing.
 
 ---
 
-## replay — сравнение вариантов лаборатории
+## replay — comparing the lab variants
 
-**Что делает:** берёт файлы, которые собрала лаборатория, делит их на «обучение» и
-«проверку» и сравнивает варианты с пересевоением (bootstrap), чтобы вариант не
-выигрывал случайно.
+**What it does:** takes the files the lab collected, splits them into training and
+test, and compares the variants with a bootstrap so a variant does not
+win by chance.
 
 ```powershell
 npm run replay
 ```
 
-**Переменные:** `REPLAY_MIN_TRADES` (`300`), `REPLAY_TEST_FRACTION` (`0.7`),
+**Variables:** `REPLAY_MIN_TRADES` (`300`), `REPLAY_TEST_FRACTION` (`0.7`),
 `REPLAY_RESAMPLES` (`2000`).
 
-Если сделок меньше `REPLAY_MIN_TRADES`, скрипт честно отказывается делать выводы,
-вместо того чтобы придумать результат.
+If there are fewer than `REPLAY_MIN_TRADES` trades, the script honestly refuses to conclude,
+instead of inventing a result.
 
-**Риск:** денег нет. Нужны накопленные данные: без них запускать бессмысленно.
+**Risk:** no money. You need accumulated data: without it, running is pointless.
 
 ---
 
-## Дополнительные инструменты (не входят в восемь выше)
+## Extra tools (not among the eight above)
 
-| Инструмент | Команда | Что делает |
+| Tool | Command | What it does |
 |---|---|---|
-| Теневой прогон graduation | `node bots/graduation-sniper/shadow.mjs` | бумажная торговля вариантами стратегии graduation; пишет `gshadow_*` в журнал |
-| Спасательная продажа | `npm run rescue` | показывает, что можно продать из остатков, и (с `--live --mint`) продаёт; по умолчанию только план |
-| Массовая продажа | `node scripts/sell-all.mjs` | перечисляет все токены на кошельке и (с `--live`) продаёт по одному |
-| Анализ кошелька/токена | `npm run analyze -- wallet <адрес>` | восстанавливает историю сделок по данным сети |
+| A graduation shadow run | `node bots/graduation-sniper/shadow.mjs` | paper trading of graduation strategy variants; writes `gshadow_*` to the journal |
+| A rescue sell | `npm run rescue` | shows what can be sold from the leftovers, and (with `--live --mint`) sells; plan only by default |
+| A bulk sell | `node scripts/sell-all.mjs` | lists all tokens in the wallet and (with `--live`) sells them one by one |
+| Wallet/token analysis | `npm run analyze -- wallet <address>` | reconstructs the trade history from chain data |
 
-Про «продать всё» отдельное предупреждение — в README, раздел «Продать всё».
+About selling everything there is a separate warning — in the README, the Sell everything section.

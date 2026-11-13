@@ -1,12 +1,12 @@
-"""Поведенческий анализ кошелька по скачанным транзакциям.
+"""Behavioural analysis of a wallet from downloaded transactions.
 python3 research/analyze.py <wallet> [--json out.json]
 
-Что считает:
-  * классификация tx: buy / sell / transfer_in / transfer_out / other
-  * площадка (pump.fun bonding curve, PumpSwap, Jupiter, Raydium, кастомные роутеры)
-  * события TradeEvent pump.fun -> цена, mcap в SOL, прогресс bonding curve на входе
-  * priority fee, CU limit, чаевые (Jito и др. мелкие переводы в swap-tx)
-  * по каждому mint: вложено / выведено SOL, PnL, число покупок/продаж, время удержания
+What it computes:
+  * tx classification: buy / sell / transfer_in / transfer_out / other
+  * venue (pump.fun bonding curve, PumpSwap, Jupiter, Raydium, custom routers)
+  * pump.fun TradeEvent events -> price, mcap in SOL, bonding curve progress at entry
+  * priority fee, CU limit, tips (Jito and other small transfers in swap txs)
+  * per mint: SOL in / out, PnL, number of buys/sells, holding time
 """
 import collections
 import hashlib
@@ -24,7 +24,7 @@ DISC = lambda name: hashlib.sha256(f"event:{name}".encode()).digest()[:8]
 TRADE_EVENT = DISC("TradeEvent")
 CREATE_EVENT = DISC("CreateEvent")
 AMM_BUY, AMM_SELL = DISC("BuyEvent"), DISC("SellEvent")
-TOTAL_SUPPLY = 1_000_000_000  # pump.fun токены: 1B, 6 decimals
+TOTAL_SUPPLY = 1_000_000_000  # pump.fun tokens: 1B, 6 decimals
 STABLES = {WSOL, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"}
 
 
@@ -42,7 +42,7 @@ def parse_trade_event(b: bytes):
 
 
 def events(tx):
-    """pump.fun TradeEvent из inner self-CPI и/или логов."""
+    """pump.fun TradeEvent from inner self-CPIs and/or logs."""
     out = []
     for g in tx["meta"].get("innerInstructions") or []:
         for ii in g["instructions"]:
@@ -74,7 +74,7 @@ def token_deltas(tx, owner):
 
 
 def sol_transfers_from(tx, src):
-    """Все system transfer'ы от src (top-level + inner)."""
+    """All system transfers from src (top-level + inner)."""
     ixs = list(tx["transaction"]["message"]["instructions"])
     for g in tx["meta"].get("innerInstructions") or []:
         ixs += g["instructions"]
@@ -149,17 +149,17 @@ def summarize(wallet, rows, fails):
     P = print
     P(f"\n================ {wallet} ================")
     if not rows:
-        P("нет успешных транзакций с участием кошелька")
+        P("no successful transactions involving the wallet")
         return {}
     span_h = (rows[-1]["ts"] - rows[0]["ts"]) / 3600 or 1e-9
     kinds = collections.Counter(r["kind"] for r in rows)
-    P(f"успешных tx: {len(rows)} за {span_h:.1f} ч  ({len(rows) / span_h:.1f}/ч);  упавших в выборке: {sum(fails.values())}")
-    P("типы:", dict(kinds))
-    P("сам подписывает:", sum(r["signer"] for r in rows), "/", len(rows))
-    P("площадки (buy/sell):", collections.Counter(r["venue"] for r in rows if r["kind"] in ("buy", "sell")).most_common())
-    P("top-level программы:", collections.Counter(p for r in rows for p in set(r["top_programs"])).most_common(10))
+    P(f"successful tx: {len(rows)} in {span_h:.1f} h  ({len(rows) / span_h:.1f}/h);  failed in the sample: {sum(fails.values())}")
+    P("types:", dict(kinds))
+    P("signs itself:", sum(r["signer"] for r in rows), "/", len(rows))
+    P("venues (buy/sell):", collections.Counter(r["venue"] for r in rows if r["kind"] in ("buy", "sell")).most_common())
+    P("top-level programs:", collections.Counter(p for r in rows for p in set(r["top_programs"])).most_common(10))
     if fails:
-        P("ошибки:", fails.most_common(6))
+        P("errors:", fails.most_common(6))
 
     trades = [r for r in rows if r["kind"] in ("buy", "sell")]
     buys = [r for r in trades if r["kind"] == "buy"]
@@ -167,25 +167,25 @@ def summarize(wallet, rows, fails):
     q = lambda xs, p: sorted(xs)[min(len(xs) - 1, int(p * len(xs)))] if xs else None
     if buys:
         sz = [-r["sol"] for r in buys]
-        P(f"размер покупки SOL: median={st.median(sz):.3f} p10={q(sz, .1):.3f} p90={q(sz, .9):.3f} max={max(sz):.3f}")
+        P(f"buy size SOL: median={st.median(sz):.3f} p10={q(sz, .1):.3f} p90={q(sz, .9):.3f} max={max(sz):.3f}")
     cup = [r["cu_price"] for r in trades if r["cu_price"]]
     if cup:
         P(f"priority fee (µlamports/CU): median={st.median(cup):,.0f} p90={q(cup, .9):,.0f};  CU limit median={st.median([r['cu_limit'] for r in trades if r['cu_limit']] or [0]):,.0f}")
     fees = [r["fee"] for r in trades]
     tips = [r["tips"] for r in trades if r["tips"]]
     if fees:
-        P(f"tx fee SOL: median={st.median(fees):.6f};  jito tips в {len(tips)}/{len(trades)} сделок, median={st.median(tips) if tips else 0:.5f}")
+        P(f"tx fee SOL: median={st.median(fees):.6f};  jito tips in {len(tips)}/{len(trades)} trades, median={st.median(tips) if tips else 0:.5f}")
     extra = collections.Counter(dst for r in trades for dst, _ in r["other_outs"])
     if extra:
-        P("доп. переводы SOL в сделках (комиссии терминалов/ноды):", [(KNOWN.get(k, k), n) for k, n in extra.most_common(6)])
+        P("extra SOL transfers in trades (terminal/node fees):", [(KNOWN.get(k, k), n) for k, n in extra.most_common(6)])
     evb = [r["ev"] for r in buys if r["ev"]]
     if evb:
         evb = [e for e in evb if e["quote_is_sol"]]
         mc = [e["mcap_sol"] for e in evb] or [0]
         rs = [e["real_sol"] for e in evb] or [0]
-        P(f"pump.fun вход: mcap SOL median={st.median(mc):.1f} p10={q(mc, .1):.1f} p90={q(mc, .9):.1f};  real_sol в кривой median={st.median(rs):.2f} (≈{st.median(rs) / 85 * 100:.0f}% до выпуска)")
+        P(f"pump.fun entry: mcap SOL median={st.median(mc):.1f} p10={q(mc, .1):.1f} p90={q(mc, .9):.1f};  real_sol in the curve median={st.median(rs):.2f} (≈{st.median(rs) / 85 * 100:.0f}% until graduation)")
 
-    # по токенам
+    # per token
     by = collections.defaultdict(list)
     for r in trades + [r for r in rows if r["kind"] in ("token_in", "token_out")]:
         by[r["mint"]].append(r)
@@ -201,24 +201,24 @@ def summarize(wallet, rows, fails):
                         hold_s=(s[-1]["ts"] - b[0]["ts"]) if b and s else None,
                         first=rs[0]["ts"]))
     closed = [p for p in per if p["closed"] and p["spent"] > 0]
-    P(f"токенов: {len(per)}, закрытых позиций: {len(closed)}")
+    P(f"tokens: {len(per)}, closed positions: {len(closed)}")
     if closed:
         wins = [p for p in closed if p["pnl"] > 0]
         holds = [p["hold_s"] for p in closed if p["hold_s"] is not None]
         rois = [p["pnl"] / p["spent"] for p in closed]
-        P(f"винрейт: {len(wins) / len(closed) * 100:.0f}%   PnL закрытых: {sum(p['pnl'] for p in closed):+.3f} SOL   ROI median={st.median(rois) * 100:+.1f}% avg={st.mean(rois) * 100:+.1f}%")
-        P(f"удержание сек: median={st.median(holds):.0f} p10={q(holds, .1):.0f} p90={q(holds, .9):.0f}")
-        P(f"покупок на токен median={st.median([p['buys'] for p in closed])}, продаж на токен median={st.median([p['sells'] for p in closed])}")
+        P(f"win rate: {len(wins) / len(closed) * 100:.0f}%   PnL of closed: {sum(p['pnl'] for p in closed):+.3f} SOL   ROI median={st.median(rois) * 100:+.1f}% avg={st.mean(rois) * 100:+.1f}%")
+        P(f"holding sec: median={st.median(holds):.0f} p10={q(holds, .1):.0f} p90={q(holds, .9):.0f}")
+        P(f"buys per token median={st.median([p['buys'] for p in closed])}, sells per token median={st.median([p['sells'] for p in closed])}")
     hours = collections.Counter(__import__("datetime").datetime.fromtimestamp(r["ts"], __import__("datetime").UTC).hour for r in trades)
     if hours:
-        P("активность по часам UTC:", " ".join(f"{h}:{hours.get(h, 0)}" for h in range(24)))
+        P("activity by UTC hour:", " ".join(f"{h}:{hours.get(h, 0)}" for h in range(24)))
     tr = [r for r in rows if r["kind"].startswith("transfer")]
     cp = collections.Counter()
     for r in tr:
         for dst, a in r["other_outs"]:
             cp[dst] += 1
     if tr:
-        P(f"переводы: out={kinds.get('transfer_out', 0)} in={kinds.get('transfer_in', 0)}; топ получателей:", cp.most_common(5))
+        P(f"transfers: out={kinds.get('transfer_out', 0)} in={kinds.get('transfer_in', 0)}; top recipients:", cp.most_common(5))
     return dict(wallet=wallet, rows=rows, per_token=per)
 
 

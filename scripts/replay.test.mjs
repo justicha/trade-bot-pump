@@ -80,8 +80,8 @@ const asrt = (c, m) => {
   });
 
   asrt(/VARIANT REPLAY/.test(out), "CLI must print the table header");
-  asrt(/ВЕРДИКТ/.test(out), "CLI must print a verdict");
-  asrt(/прошли критерий/.test(out) && /B/.test(out), "B (always +30%) must pass the criterion");
+  asrt(/VERDICT/.test(out), "CLI must print a verdict");
+  asrt(/passed the criterion/.test(out) && /B/.test(out), "B (always +30%) must pass the criterion");
   asrt(/no \(/.test(out), "A must be marked as failing");
 
   fs.rmSync(dir, { recursive: true, force: true });

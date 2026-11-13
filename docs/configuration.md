@@ -94,7 +94,7 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LAB_BUY_SOL` / `LAB_MIN_HOLDERS` / `LAB_MIN_SLOTS` / `LAB_MIN_DELAY_MS` / `LAB_WAIT_SEC` | `0.02` / `4` / `2` / `2500` / `45` | Paper lab entry and sampling (full table in [bots.md](bots.md#research-lab--paper-variants-on-one-stream)) |
+| `LAB_BUY_SOL` / `LAB_MIN_HOLDERS` / `LAB_MIN_SLOTS` / `LAB_MIN_DELAY_MS` / `LAB_WAIT_SEC` | `0.02` / `4` / `2` / `2500` / `45` | Paper lab entry and sampling (full table in [bots.md](bots.md#lab--paper-trading-with-variants)) |
 | `LAB_SAMPLES` | `30,60,120,300` | Price sample offsets, seconds |
 | `LAB_LATENCY_MS` / `LAB_LATENCY_GRID` / `LAB_TARGET_TRADES` | `600` / unset / `1000` | Execution delay, latency grid, ETA target |
 | `LAB_TAKE_PROFIT` / `LAB_STOP_LOSS` / `LAB_TIMEOUT_SEC` / `LAB_TIME_STOP_SEC` | unset | Exit overrides on top of every variant |

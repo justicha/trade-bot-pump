@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="archTitle archDesc">
-  <title id="archTitle">Архитектура pump-bot</title>
-  <desc id="archDesc">Поток данных: Solana RPC и WebSocket, затем слой RPC и парсер событий, затем расчёты по кривой и боты, затем сборка транзакции, симуляция, подпись локальным ключом и отправка обратно в RPC. Сбоку — ограничители, логгер с маскированием секретов и журнал.</desc>
+  <title id="archTitle">pump-bot architecture</title>
+  <desc id="archDesc">The data flow: Solana RPC and WebSocket, then the RPC layer and the event parser, then the curve calculations and the bots, then transaction build, simulation, signing with the local key and sending back to the RPC. At the side — guards, a logger with secret masking and the journal.</desc>
   <defs>
     <linearGradient id="archBg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
@@ -23,7 +23,7 @@
   <rect width="1200" height="700" fill="url(#archBg)"/>
   <rect width="1200" height="700" fill="url(#archGrid)" opacity="0.55"/>
 
-  <text x="32" y="44" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#e6f1ff">Карта модулей (сверено с lib/ и bots/)</text>
+  <text x="32" y="44" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#e6f1ff">Module map (checked against lib/ and bots/)</text>
 
   <g filter="url(#archShadow)">
     <rect x="32" y="88" width="228" height="82" rx="12" fill="#141d2b" stroke="#3b5578" stroke-width="1.6"/>
@@ -43,53 +43,53 @@
 
   <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
     <text x="48" y="118" font-size="14" font-weight="600" fill="#dbe7f5">Solana RPC (HTTP)</text>
-    <text x="48" y="140" font-size="11.5" fill="#8aa0b8">RPC_URL из .env</text>
+    <text x="48" y="140" font-size="11.5" fill="#8aa0b8">RPC_URL from .env</text>
     <text x="48" y="158" font-size="11.5" fill="#8aa0b8">lib/config.mjs · lib/rpc.mjs</text>
 
     <text x="48" y="214" font-size="14" font-weight="600" fill="#dbe7f5">WebSocket Solana</text>
     <text x="48" y="236" font-size="11.5" fill="#8aa0b8">logsSubscribe (pump.fun)</text>
     <text x="48" y="254" font-size="11.5" fill="#8aa0b8">lib/ws.mjs</text>
 
-    <text x="316" y="118" font-size="14" font-weight="600" fill="#dbe7f5">Слой RPC</text>
-    <text x="316" y="140" font-size="11.5" fill="#8aa0b8">лимитер и повтор с паузой</text>
+    <text x="316" y="118" font-size="14" font-weight="600" fill="#dbe7f5">RPC layer</text>
+    <text x="316" y="140" font-size="11.5" fill="#8aa0b8">limiter and pause retry</text>
     <text x="316" y="158" font-size="11.5" fill="#8aa0b8">lib/rpc.mjs · lib/ratelimit.mjs</text>
 
-    <text x="316" y="214" font-size="14" font-weight="600" fill="#dbe7f5">Парсер событий</text>
-    <text x="316" y="236" font-size="11.5" fill="#8aa0b8">сделки и создания, смещения</text>
+    <text x="316" y="214" font-size="14" font-weight="600" fill="#dbe7f5">Event parser</text>
+    <text x="316" y="236" font-size="11.5" fill="#8aa0b8">trades and creations, offsets</text>
     <text x="316" y="254" font-size="11.5" fill="#8aa0b8">lib/events.mjs · lib/mayhem.mjs</text>
 
-    <text x="316" y="310" font-size="14" font-weight="600" fill="#fbbf24">Состояние и расчёты</text>
-    <text x="316" y="332" font-size="11.5" fill="#c9b48a">кривая, комиссии, держатели</text>
+    <text x="316" y="310" font-size="14" font-weight="600" fill="#fbbf24">State and calculations</text>
+    <text x="316" y="332" font-size="11.5" fill="#c9b48a">curve, fees, holders</text>
     <text x="316" y="350" font-size="11" fill="#c9b48a">lib/curve.mjs · lib/fees.mjs</text>
 
-    <text x="316" y="406" font-size="14" font-weight="600" fill="#dbe7f5">Боты</text>
+    <text x="316" y="406" font-size="14" font-weight="600" fill="#dbe7f5">Bots</text>
     <text x="316" y="428" font-size="11.5" fill="#8aa0b8">monitor · sniper · graduation</text>
     <text x="316" y="446" font-size="11.5" fill="#8aa0b8">copy · trade · analytics · analyzer</text>
 
-    <text x="608" y="406" font-size="14" font-weight="600" fill="#fbbf24">Сборка транзакции</text>
-    <text x="608" y="428" font-size="11.5" fill="#c9b48a">compute budget + инструкции</text>
+    <text x="608" y="406" font-size="14" font-weight="600" fill="#fbbf24">Transaction build</text>
+    <text x="608" y="428" font-size="11.5" fill="#c9b48a">compute budget + instructions</text>
     <text x="608" y="446" font-size="11.5" fill="#c9b48a">lib/tx.mjs · lib/pumpfun.mjs</text>
 
-    <text x="608" y="310" font-size="14" font-weight="600" fill="#dbe7f5">Симуляция → отправка</text>
-    <text x="608" y="332" font-size="11.5" fill="#8aa0b8">сначала проверка, потом send</text>
+    <text x="608" y="310" font-size="14" font-weight="600" fill="#dbe7f5">Simulation → send</text>
+    <text x="608" y="332" font-size="11.5" fill="#8aa0b8">check first, then send</text>
     <text x="608" y="350" font-size="11.5" fill="#8aa0b8">lib/exec.mjs · lib/send.mjs</text>
 
-    <text x="608" y="214" font-size="14" font-weight="600" fill="#fbbf24">Подписанная транзакция</text>
-    <text x="608" y="236" font-size="11.5" fill="#c9b48a">ключ из локального файла</text>
+    <text x="608" y="214" font-size="14" font-weight="600" fill="#fbbf24">Signed transaction</text>
+    <text x="608" y="236" font-size="11.5" fill="#c9b48a">key from a local file</text>
     <text x="608" y="254" font-size="11.5" fill="#c9b48a">lib/wallet.mjs</text>
 
-    <text x="900" y="214" font-size="14" font-weight="600" fill="#dbe7f5">Solana RPC (отправка)</text>
+    <text x="900" y="214" font-size="14" font-weight="600" fill="#dbe7f5">Solana RPC (send)</text>
     <text x="900" y="236" font-size="11.5" fill="#8aa0b8">sendRawTransaction</text>
     <text x="900" y="254" font-size="11.5" fill="#8aa0b8">confirmTransaction</text>
 
-    <text x="900" y="360" font-size="14" font-weight="600" fill="#dbe7f5">Ограничители</text>
+    <text x="900" y="360" font-size="14" font-weight="600" fill="#dbe7f5">Guards</text>
     <text x="900" y="382" font-size="10.5" fill="#8aa0b8">MAX_TRADE_SOL · MAX_SESSION_SOL</text>
     <text x="900" y="400" font-size="10.5" fill="#8aa0b8">MAX_CONSEC_LOSSES</text>
 
-    <text x="900" y="462" font-size="14" font-weight="600" fill="#dbe7f5">Логгер (маскирование)</text>
+    <text x="900" y="462" font-size="14" font-weight="600" fill="#dbe7f5">Logger (masking)</text>
     <text x="900" y="484" font-size="11.5" fill="#8aa0b8">lib/logger.mjs</text>
 
-    <text x="900" y="564" font-size="14" font-weight="600" fill="#dbe7f5">Журнал</text>
+    <text x="900" y="564" font-size="14" font-weight="600" fill="#dbe7f5">Journal</text>
     <text x="900" y="586" font-size="11.5" fill="#8aa0b8">data/journal/*.jsonl · lib/journal.mjs</text>
   </g>
 
@@ -108,10 +108,10 @@
     <path d="M718 280 V 266"/>
   </g>
 
-  <text x="610" y="132" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#6f8299">читает: аккаунты, кривую, держателей</text>
-  <text x="610" y="150" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#6f8299">пишет строку в журнал на каждое событие</text>
+  <text x="610" y="132" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#6f8299">reads: accounts, curve, holders</text>
+  <text x="610" y="150" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#6f8299">writes a journal line per event</text>
 
-  <text x="32" y="656" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">Бирюзовый — данные на входе. Янтарный — вычисления и путь транзакции. Транзакцию собирает и подписывает только режим LIVE.</text>
-  <text x="32" y="678" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11.5" fill="#6f8299">План продажи частями считает lib/sell-plan.mjs. Список модулей на схеме выборочный, а не полный.</text>
+  <text x="32" y="656" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">Teal is input data. Amber is the calculations and the transaction path. Only LIVE mode builds and signs a transaction.</text>
+  <text x="32" y="678" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11.5" fill="#6f8299">The partial-sell plan is computed by lib/sell-plan.mjs. The module list on the diagram is selective, not complete.</text>
 </svg>
 

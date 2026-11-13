@@ -1,5 +1,5 @@
-// Общий RPC-клиент с учётом кредитов (data/credits.json) и жёстким лимитом CREDIT_BUDGET из .env.
-// Оценка консервативная: архивные методы по 10 кредитов, остальные по 1. Каждая попытка списывается.
+// Shared RPC client with credit accounting (data/credits.json) and a hard CREDIT_BUDGET limit from .env.
+// Estimate is conservative: archive methods 10 credits, the rest 1. Every attempt is charged.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,7 +29,7 @@ export class BudgetExceeded extends Error {}
 function charge(method) {
   if (IS_PUBLIC) return;
   const c = COST[method] ?? 1;
-  if (ledger.used + c > BUDGET) throw new BudgetExceeded(`бюджет ${BUDGET} кредитов исчерпан (использовано ${ledger.used})`);
+  if (ledger.used + c > BUDGET) throw new BudgetExceeded(`budget of ${BUDGET} credits exhausted (used ${ledger.used})`);
   ledger.used += c;
   ledger.calls[method] = (ledger.calls[method] || 0) + 1;
 }

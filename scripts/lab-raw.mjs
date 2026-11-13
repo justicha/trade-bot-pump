@@ -49,7 +49,7 @@ const TIME_STOP_MIN_RATIO = 1.3;
 const BUY_SOL = 0.02;
 const HOLDOUT_SHARE = 0.3; // the last 30% of exits, same split as lib/research.mjs
 const TARGET_HOLDOUT = 300;
-const BLOCK_MS = 10 * 60 * 1000; // "10-минутные блоки" for the block bootstrap
+const BLOCK_MS = 10 * 60 * 1000; // "10-minute blocks" for the block bootstrap
 const FREEZE_FILE = path.join(ROOT, "data", "research", "frozen.json");
 const FREEZE_LATENCY = 600; // the frozen verdict is judged at these two settings only
 const FREEZE_SLIPPAGE = 100;
@@ -436,7 +436,7 @@ if (frozen) {
       passed = okTrades && okHours && okCI;
     }
   }
-  console.log(`\n=== ВЕРДИКТ: ${passed ? "перевес есть" : "устойчивого перевеса нет"} ===`);
+  console.log(`\n=== VERDICT: ${passed ? "an edge" : "no stable edge"} ===`);
   if (!passed) console.log("  (verdict requires >=300 trades after the freeze, >=72 h covering all UTC hours, and a 99% block-bootstrap CI lower bound above zero)");
 }
 

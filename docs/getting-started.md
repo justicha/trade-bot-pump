@@ -1,88 +1,88 @@
-# С чего начать
+# Where to start
 
-Это пошаговое руководство для человека, который **раньше не запускал ботов**.
-Мы пройдём путь от пустого компьютера до запущенного «виртуального» бота (dry-run),
-который ничего не покупает и не тратит.
+A step-by-step guide for someone who has **never run bots before**.
+We go from an empty computer to a running virtual (dry-run) bot,
+which buys and spends nothing.
 
-> Всё ниже сверено с кодом этого репозитория. Блоки вывода — **примеры** с
-> плейсхолдерами (`MINT_EXAMPLE`, `0.00`), а не запись реальной сессии.
-
----
-
-## 0. Что это за бот и чего он НЕ делает
-
-**Что делает**
-
-- следит за блокчейном Solana и замечает новые токены на pump.fun в момент появления;
-- по заданным правилам решает «покупать или пропустить» (размер первой покупки автора
-  токена, число разных держателей, лимиты на сумму);
-- выходит по одному из трёх правил: take profit, stop loss или timeout;
-- записывает каждое решение в журнал — файл `data/journal/ГГГГ-ММ-ДД.jsonl`;
-- по умолчанию работает в режиме **dry-run**: считает и записывает, но не подписывает
-  и не отправляет транзакции.
-
-**Чего он НЕ делает**
-
-- **не является финансовым советником**: он не знает, что будет с ценой дальше;
-- **не гарантирует прибыль** и не обещает доходность — ни в документации, ни в логах;
-- не «зарабатывает сам»: без ваших команд он ничего не делает;
-- не выводит деньги на карту, не платит налоги и не отвечает за законность ваших действий;
-- не умеет отменять уже отправленную транзакцию: блокчейн необратим.
-
-Мемкоины — очень рискованный рынок: цена может упасть на 99% за минуту, а некоторые
-токены **невозможно продать вообще**. Считайте, что деньги, которые вы вносите, можно
-потерять полностью.
+> Everything below is checked against this repository's code. The output blocks are **examples** with
+> placeholders (`MINT_EXAMPLE`, `0.00`), not a recording of a real session.
 
 ---
 
-## 1. Что установить
+## 0. What this bot is and what it does NOT do
 
-### 1.1 Node.js 22 или новее
+**What it does**
 
-Бот написан на Node.js (это среда выполнения JavaScript). В `package.json` указано
-требование `>=22`.
+- watches the Solana blockchain and notices new pump.fun tokens the moment they appear;
+- decides by given rules whether to buy or skip (the size of the token author's first buy,
+  the number of distinct holders, the amount limits);
+- exits by one of three rules: take profit, stop loss or timeout;
+- records every decision in a journal — the `data/journal/YYYY-MM-DD.jsonl` file;
+- runs in **dry-run** mode by default: counts and records, but does not sign
+  or send transactions.
 
-1. Откройте <https://nodejs.org> и скачайте **LTS-версию** (ветка 22 или новее).
-2. Установите со стандартными настройками (кнопка «Next» до конца).
-3. Откройте терминал (см. 1.3) и проверьте:
+**What it does NOT do**
+
+- **is not a financial advisor**: it does not know what the price will do next;
+- **guarantees no profit** and promises no yield — not in the docs, not in the logs;
+- does not earn by itself: without your commands it does nothing;
+- does not withdraw to a card, pay taxes or answer for the legality of your actions;
+- cannot cancel an already-sent transaction: the blockchain is irreversible.
+
+Meme coins are a very risky market: the price can drop 99% in a minute, and some
+tokens **cannot be sold at all**. Assume the money you put in can be
+lost entirely.
+
+---
+
+## 1. What to install
+
+### 1.1 Node.js 22 or newer
+
+The bot is written in Node.js (a JavaScript runtime). `package.json` declares the
+`>=22` requirement.
+
+1. Open <https://nodejs.org> and download the **LTS version** (branch 22 or newer).
+2. Install with the default settings (click Next to the end).
+3. Open a terminal (see 1.3) and check:
 
 ```powershell
 node -v
 npm -v
 ```
 
-Ожидаемый результат — что-то вроде:
+The expected result looks like:
 
 ```
 v22.11.0
 10.9.0
 ```
 
-Если вместо версии вы видите «команда не найдена» (`not recognized`,
-`command not found`) — Node.js не установился или терминал был открыт до установки.
-Закройте терминал, откройте заново и повторите.
+If instead of a version you see command not found (`not recognized`,
+`command not found`) — Node.js did not install, or the terminal was opened before the install.
+Close the terminal, reopen it and repeat.
 
-### 1.2 Редактор кода
+### 1.2 Code editor
 
-Подойдёт любой текстовый редактор, но удобнее всего **VS Code** (бесплатный):
-<https://code.visualstudio.com>. Он нужен, чтобы открыть и отредактировать файл
-`.env` (настройки); обычный «Блокнот» тоже справится.
+Any text editor works, but **VS Code** (free) is the most convenient:
+<https://code.visualstudio.com>. You need it to open and edit the `.env` file
+(settings); a plain Notepad works too.
 
-### 1.3 Терминал
+### 1.3 Terminal
 
-- **Windows:** «PowerShell» (найдите в меню «Пуск»). Все команды ниже даны для
-  PowerShell. Не используйте «Командную строку» (`cmd`) — команды там другие.
-- **macOS:** приложение «Терминал» (`Terminal`) или iTerm.
-- **Linux:** любой терминал, оболочка `bash`.
+- **Windows:** PowerShell (find it in the Start menu). All commands below are for
+  PowerShell. Do not use the Command Prompt (`cmd`) — its commands differ.
+- **macOS:** the Terminal app or iTerm.
+- **Linux:** any terminal, the `bash` shell.
 
-Проверка, что вы в нужной папке: `pwd` (macOS/Linux) или `Get-Location` (Windows)
-печатает текущий путь. Все команды из этого документа выполняются **из папки
-проекта** — той, где лежит файл `package.json`.
+To check you are in the right folder: `pwd` (macOS/Linux) or `Get-Location` (Windows)
+prints the current path. All commands in this document run **from the project
+folder** — the one containing `package.json`.
 
-### 1.4 Git (по желанию)
+### 1.4 Git (optional)
 
-Git нужен, чтобы скачать код командой `git clone`. Если Git нет, скачайте архив ZIP
-со страницы репозитория и распакуйте — результат тот же.
+Git is needed to download the code with `git clone`. Without Git, download a ZIP archive
+from the repository page and unzip it — the result is the same.
 
 ```powershell
 git --version
@@ -90,200 +90,200 @@ git --version
 
 ---
 
-## 2. Установка
+## 2. Installation
 
 ### 2.1 Windows (PowerShell)
 
 ```powershell
-# 1. Скачать код. Замените <URL-репозитория> на адрес, по которому вы получили проект
-#    (например, https://github.com/ваш-логин/pump-bot.git).
-git clone <URL-репозитория> pump-bot
+# 1. Download the code. Replace <REPO-URL> with the address you got the project from
+#    (for example, https://github.com/your-login/pump-bot.git).
+git clone <REPO-URL> pump-bot
 
-# 2. Перейти в папку проекта
+# 2. Go into the project folder
 cd pump-bot
 
-# 3. Поставить библиотеки ровно тех версий, что записаны в package-lock.json
+# 3. Install the libraries exactly the versions recorded in package-lock.json
 npm ci --ignore-scripts
 
-# 4. Создать свой файл настроек из шаблона
+# 4. Create your own config file from the template
 Copy-Item .env.example .env
 ```
 
 ### 2.2 macOS / Linux (bash)
 
 ```bash
-# 1. Скачать код
-git clone <URL-репозитория> pump-bot
+# 1. Download the code
+git clone <REPO-URL> pump-bot
 
-# 2. Перейти в папку проекта
+# 2. Go into the project folder
 cd pump-bot
 
-# 3. Поставить библиотеки
+# 3. Install the libraries
 npm ci --ignore-scripts
 
-# 4. Создать свой файл настроек из шаблона
+# 4. Create your own config file from the template
 cp .env.example .env
 ```
 
-### 2.3 Что означают эти команды
+### 2.3 What these commands mean
 
-| Команда | Что делает |
+| Command | What it does |
 |---|---|
-| `git clone <URL>` | копирует проект к вам на компьютер |
-| `cd pump-bot` | переходит в папку проекта |
-| `npm ci --ignore-scripts` | ставит 4 библиотеки из `package-lock.json` и **не** запускает служебные скрипты зависимостей. Ставьте именно `npm ci`, а не `npm install`: так версии совпадут с проверенными |
-| `Copy-Item .env.example .env` | создаёт ваш личный файл настроек `.env` (в git он не попадает) |
+| `git clone <URL>` | copies the project to your computer |
+| `cd pump-bot` | goes into the project folder |
+| `npm ci --ignore-scripts` | installs the 4 libraries from `package-lock.json` and does **not** run the dependencies' helper scripts. Use `npm ci`, not `npm install`: that way the versions match the tested ones |
+| `Copy-Item .env.example .env` | creates your personal `.env` config file (it does not go into git) |
 
-> **Важно:** `.env` — личный файл. В нём будет адрес RPC с вашим ключом.
-> Не отправляйте его в чат, не вставляйте в скриншоты и не коммитьте в git.
+> **Important:** `.env` is a personal file. It will hold the RPC address with your key.
+> Do not send it to a chat, do not put it in screenshots and do not commit it to git.
 
 ---
 
-## 3. RPC_URL: что это и где взять
+## 3. RPC_URL: what it is and where to get it
 
-### 3.1 Объяснение простыми словами
+### 3.1 The plain-words explanation
 
-**RPC** (Remote Procedure Call) — это «окно в блокчейн». Бот не хранит копию всей
-Solana у вас на диске: он спрашивает данные у сервера RPC («сколько SOL на кошельке?»,
-«какие события в новых блоках?»).
+**RPC** (Remote Procedure Call) is a window into the blockchain. The bot does not keep a copy of the whole
+Solana on your disk: it asks the RPC server for data (how much SOL is on the wallet?,
+what events are in new blocks?).
 
-**RPC_URL** — адрес такого сервера, который вы вписываете в `.env`.
+**RPC_URL** is the address of such a server, which you put into `.env`.
 
-### 3.2 Почему нельзя взять «публичный бесплатный» адрес
+### 3.2 Why you cannot use a free public address
 
-Публичные адреса (`https://api.mainnet-beta.solana.com`) годятся, чтобы один раз
-посмотреть баланс, но не для бота:
+Public addresses (`https://api.mainnet-beta.solana.com`) are fine for checking the balance once,
+but not for a bot:
 
-- у них жёсткие лимиты запросов — бот будет получать `429 Too Many Requests`;
-- подписка на события (`logsSubscribe`, то есть «присылай мне все новые токены»)
-  на публичных адресах обычно тормозится или не работает вовсе;
-- в итоге бот выглядит «мёртвым»: процесс жив, а в консоли тишина.
+- they have hard request limits — the bot will get `429 Too Many Requests`;
+- the event subscription (`logsSubscribe`, i.e. send me all new tokens)
+  usually lags or does not work at all on public addresses;
+- as a result the bot looks dead: the process is alive, but the console is silent.
 
-Именно поэтому `lib/config.mjs` **требует** явно указать `RPC_URL` и не подставляет
-публичный адрес по умолчанию.
+That is exactly why `lib/config.mjs` **requires** an explicit `RPC_URL` and does not substitute
+a public address by default.
 
-### 3.3 Как получить собственный адрес
+### 3.3 How to get your own address
 
-1. Выберите провайдера RPC: например, Helius (<https://helius.dev>), QuickNode,
-   Triton или любого другого — принцип одинаковый.
-2. Зарегистрируйтесь и создайте проект/приложение в панели провайдера.
-3. Скопируйте выданный **HTTPS-адрес**. Обычно он выглядит так:
+1. Pick an RPC provider: for example Helius (<https://helius.dev>), QuickNode,
+   Triton or any other — the principle is the same.
+2. Sign up and create a project/app in the provider's dashboard.
+3. Copy the issued **HTTPS address**. It usually looks like this:
 
    ```
    https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
    ```
 
-   У некоторых провайдеров ключ передаётся отдельным заголовком — тогда возьмите
-   «полный URL» из панели, если он там есть.
+   Some providers pass the key as a separate header — then take
+   the full URL from the dashboard, if it is there.
 
-4. У Helius есть бесплатный тариф, но лимиты и условия меняются — **проверьте
-   актуальные условия у провайдера**, прежде чем рассчитывать на бесплатный план.
+4. Helius has a free plan, but limits and terms change — **check
+   the provider's current terms** before counting on a free plan.
 
-> Ключ в адресе — это ваш платный (или ограниченный по квоте) доступ. Он не даёт
-> доступа к деньгам, но позволяет тратить вашу квоту. Не публикуйте его.
+> The key in the address is your paid (or quota-limited) access. It does not grant
+> access to money, but it lets someone spend your quota. Do not publish it.
 
-### 3.4 Куда вставить
+### 3.4 Where to put it
 
-Откройте `.env` в редакторе (Windows: `notepad .env`) и замените строку
+Open `.env` in an editor (Windows: `notepad .env`) and replace the line
 
 ```dotenv
 RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
 ```
 
-на свою:
+with your own:
 
 ```dotenv
-RPC_URL=https://ваш-адрес-от-провайдера/?api-key=ВАШ_КЛЮЧ
+RPC_URL=https://your-provider-address/?api-key=YOUR_KEY
 ```
 
-Правила, которые проверяет код:
+Rules the code checks:
 
-- адрес обязан начинаться с `http://` или `https://`, иначе бот не запустится и
-  напечатает `[config] ERROR: RPC_URL is required (must start with http:// or https://)...`;
-- **WS_URL задавать не нужно**: адрес WebSocket (постоянного соединения для событий)
-  бот получает сам, заменяя `https://` на `wss://`;
-- `HELIUS_API_KEY` в шаблоне — отдельная необязательная переменная; для запуска
-  достаточно `RPC_URL`.
+- the address must start with `http://` or `https://`, otherwise the bot will not start and
+  will print `[config] ERROR: RPC_URL is required (must start with http:// or https://)...`;
+- **you do not need to set WS_URL**: the WebSocket address (the persistent connection for events)
+  is derived by the bot itself by replacing `https://` with `wss://`;
+- `HELIUS_API_KEY` in the template is a separate optional variable; `RPC_URL`
+  is enough to run.
 
-### 3.5 Как проверить, что адрес рабочий
+### 3.5 How to check the address works
 
-Самый быстрый способ — монитор (он только читает, ничего не покупает):
+The fastest way is the monitor (it only reads, buys nothing):
 
 ```powershell
 npm run monitor
 ```
 
-Если в течение минуты появляются строки `NEW TOKEN #1 ...`, всё работает.
-Если тишина — смотрите раздел «Бот молчит» в
+If `NEW TOKEN #1 ...` lines appear within a minute, everything works.
+If it is silent — see the Bot is silent section in
 [errors-and-troubleshooting.md](errors-and-troubleshooting.md).
 
-Остановить монитор: **Ctrl+C**.
+Stop the monitor: **Ctrl+C**.
 
 ---
 
-## 4. Кошелёк
+## 4. The wallet
 
-### 4.1 Что такое приватный ключ и публичный адрес
+### 4.1 What a private key and a public address are
 
-- **Публичный адрес** (public key) — как номер банковского счёта. Его можно
-  показывать всем: по нему видно баланс и историю, но потратить деньги нельзя.
-  В примерах ниже он обозначен как `WALLET_EXAMPLE`.
-- **Приватный ключ** (secret key) — как подпись, которая разрешает тратить. Кто
-  получил ключ, тот распоряжается всеми деньгами на адресе. Показывать его нельзя
-  никому и никогда.
+- **The public address** (public key) is like a bank account number. You can
+  show it to everyone: it reveals the balance and history, but cannot spend money.
+  In the examples below it is shown as `WALLET_EXAMPLE`.
+- **The private key** (secret key) is like the signature that allows spending. Whoever
+  got the key controls all the money at the address. Never show it
+  to anyone.
 
-В этом проекте приватный ключ лежит **файлом на диске**. Ни пароля, ни шифрования,
-ни аппаратного кошелька нет: файл прочитали — ключ получили.
+In this project the private key lives **as a file on disk**. There is no password, no encryption,
+no hardware wallet: read the file and you have the key.
 
-### 4.2 Создание кошелька
+### 4.2 Creating the wallet
 
-Сначала должен существовать `.env` (шаги 2.1/2.2): `lib/wallet.mjs` читает настройки
-из того же места и без `RPC_URL` не запустится.
+`.env` must exist first (steps 2.1/2.2): `lib/wallet.mjs` reads the settings
+from the same place and will not start without `RPC_URL`.
 
 ```powershell
-node lib/wallet.mjs generate      # создать кошелёк с именем по умолчанию
-node lib/wallet.mjs show          # показать публичный адрес (без интернета)
+node lib/wallet.mjs generate      # create a wallet with the default name
+node lib/wallet.mjs show          # show the public address (offline)
 ```
 
-Вывод будет примерно таким:
+The output will look roughly like this:
 
 ```
 Generated keys/default.json
 Public address: WALLET_EXAMPLE
 ```
 
-Полезные детали (проверены в коде):
+Useful details (verified in the code):
 
-- имя кошелька — это имя файла: разрешены только латиница, цифры, `_` и `-`;
-- повторный `generate` **не перезапишет** существующий файл, пока вы не добавите
-  `--force`. Это защита от случайной потери уже пополненного кошелька;
-- на macOS/Linux файл получает права `600` (читает только ваш пользователь).
-  **В Windows это ограничение почти не действует** — защищайте свою учётную запись
-  и не синхронизируйте папку `keys/` в общие облака.
+- the wallet name is the file name: only Latin letters, digits, `_` and `-` are allowed;
+- a repeated `generate` will **not overwrite** an existing file until you add
+  `--force`. This guards against accidentally losing an already-funded wallet;
+- on macOS/Linux the file gets `600` permissions (only your user reads it).
+  **On Windows this restriction barely applies** — protect your account
+  and do not sync the `keys/` folder to shared clouds.
 
-### 4.3 Где именно лежит ключ
+### 4.3 Where exactly the key lives
 
 ```
 keys/default.json
 ```
 
-Это **не seed-фраза** (не 12 слов). Внутри — массив из 64 чисел:
+This is **not a seed phrase** (not 12 words). Inside there is an array of 64 numbers:
 
 ```json
-[12, 34, 56, "… ещё 61 число …"]
+[12, 34, 56, "... 61 more numbers ..."]
 ```
 
-Такой массив и есть приватный ключ в формате, который понимает Solana.
+That array is the private key in the format Solana understands.
 
-- папка `keys/` перечислена в `.gitignore` — git её не видит;
-- проверить: команда `git ls-files keys` должна **ничего** не печатать;
-- **потеря этого файла = потеря кошелька.** Восстановить нельзя: нет ни поддержки,
-  ни «сброса пароля». Деньги останутся на адресе, но пользоваться ими вы не сможете.
+- the `keys/` folder is listed in `.gitignore` — git does not see it;
+- to check: `git ls-files keys` must print **nothing**;
+- **losing this file = losing the wallet.** It cannot be recovered: there is no support,
+  no password reset. The money stays at the address, but you will not be able to use it.
 
-### 4.4 Если нужно показать генерацию в обучающем видео или статье
+### 4.4 If you need to show generation in a tutorial video or article
 
-Не создавайте `keys/` внутри репозитория. Укажите временную папку через переменную
-окружения `KEYS_DIR` — код это поддерживает:
+Do not create `keys/` inside the repository. Point to a temporary folder via the
+`KEYS_DIR` environment variable — the code supports it:
 
 ```bash
 # macOS / Linux
@@ -295,48 +295,48 @@ KEYS_DIR=/tmp/demo-keys node lib/wallet.mjs generate demo
 $env:KEYS_DIR="C:\Temp\demo-keys"; node lib/wallet.mjs generate demo
 ```
 
-Временную папку потом просто удалите: в репозитории не останется ни ключей, ни мусора.
+Just delete the temporary folder afterwards: no keys or junk remain in the repository.
 
-### 4.5 Правила обращения с ключом
+### 4.5 Key-handling rules
 
-1. **Никому не отправляйте** `keys/` — ни в чат, ни в личку, ни «в поддержку».
-2. **Никогда** не вставляйте содержимое файла в веб-сайты, формы, нейросети.
-3. **Никогда** не делайте скриншот с открытым файлом ключа или с `.env`.
-4. Сделайте **резервную копию** файла на офлайн-носитель (зашифрованная флешка,
-   менеджер паролей). Не в облако и не в почту.
-5. Если ключ всё же утёк — считайте кошелёк потерянным: создайте новый и переведите
-   остаток туда. Отозвать приватный ключ нельзя.
-6. Публичный адрес показывать можно — это безопасно.
-7. **Не используйте свой основной кошелёк.** Только отдельный, «одноразовый», на
-   сумму, которую не страшно потерять целиком.
+1. **Never send** `keys/` to anyone — not to a chat, not in DMs, not to support.
+2. **Never** paste the file contents into websites, forms or AI tools.
+3. **Never** take a screenshot with the key file or `.env` open.
+4. Make a **backup** of the file onto an offline medium (an encrypted USB stick,
+   a password manager). Not the cloud and not email.
+5. If the key did leak — treat the wallet as lost: create a new one and move
+   the remainder there. A private key cannot be revoked.
+6. Showing the public address is fine — it is safe.
+7. **Do not use your main wallet.** Only a separate, throwaway one, with
+   an amount you can afford to lose entirely.
 
 ---
 
-## 5. Виртуальный запуск (dry-run): без денег
+## 5. A virtual run (dry-run): no money
 
-### 5.1 Что такое dry-run и почему он безопасен
+### 5.1 What dry-run is and why it is safe
 
-**Dry-run** («сухой прогон», виртуальный запуск) — режим, в котором бот делает всё,
-кроме последнего шага: он читает блокчейн, считает цену, принимает решения, пишет
-журнал — но **не подписывает и не отправляет транзакции**.
+**Dry-run** (a virtual run) is a mode where the bot does everything
+except the last step: it reads the blockchain, computes the price, makes decisions, writes
+the journal — but **signs and sends no transaction**.
 
-Как это устроено в коде (`lib/config.mjs`):
+How it works in the code (`lib/config.mjs`):
 
 ```js
 export const LIVE = argv.includes("--live") && !argv.includes("--dry-run");
 export const DRY_RUN = !LIVE;
 ```
 
-То есть: пока вы не добавили флаг `--live`, бот работает в dry-run. Это **режим по
-умолчанию**, и он не требует ни денег на кошельке, ни ключа с балансом.
+That is: until you add the `--live` flag, the bot runs in dry-run. This is the **default
+mode**, and it needs neither money on the wallet nor a key with a balance.
 
-### 5.2 Запуск 1: монитор (только чтение)
+### 5.2 Run 1: the monitor (read-only)
 
 ```powershell
 npm run monitor
 ```
 
-Пример вывода (плейсхолдеры вместо реальных значений):
+Example output (placeholders instead of real values):
 
 ```
 [INFO] Monitoring pump.fun V3 for new tokens...
@@ -344,49 +344,49 @@ npm run monitor
 [INFO] NEW TOKEN #1 MINT_EXAMPLE creator=WALLET_EXAMPLE dev buy 0.42 SOL
 ```
 
-Что это значит: бот увидел новый токен и показывает, кто его создал и сколько SOL
-автор купил первым. Ничего не покупается.
+What it means: the bot saw a new token and shows who created it and how much SOL
+the author bought first. Nothing is bought.
 
-### 5.3 Запуск 2: снайпер в dry-run
+### 5.3 Run 2: the sniper in dry-run
 
 ```powershell
 npm run sniper
 ```
 
-Что происходит:
+What happens:
 
-1. бот подписывается на события pump.fun и ловит создание новых токенов;
-2. проверяет фильтры (`SNIPER_MIN_DEV_BUY`, `SNIPER_MIN_HOLDERS` и другие);
-3. если токен прошёл — «покупает» виртуально и ведёт позицию;
-4. выходит по take profit, stop loss или timeout — тоже виртуально.
+1. the bot subscribes to pump.fun events and catches new token creations;
+2. it checks the filters (`SNIPER_MIN_DEV_BUY`, `SNIPER_MIN_HOLDERS` and others);
+3. if the token passed — it buys virtually and tracks the position;
+4. it exits on take profit, stop loss or timeout — also virtually.
 
-Ключевые строки в выводе:
+Key lines in the output:
 
-| Строка | Что означает |
+| Line | What it means |
 |---|---|
-| `skip: <причина>` | токен или сделка отброшены; причина напечатана рядом. Денег это не стоит |
-| `buying 0.02 SOL -> ~123456 tokens` | бот собирается «купить»; число токенов посчитано по кривой |
-| `[DRY RUN] would buy — position tracked` | **виртуальная** покупка: позиция записана, транзакция не отправлена |
-| `[DRY RUN] would sell: +12.3% net of costs (...)` | **виртуальная** продажа с результатом за вычетом комиссий |
-| `session: 3 trades, 2W/1L` | счётчик сделок этой сессии |
+| `skip: <reason>` | the token or trade was dropped; the reason is printed next to it. It costs no money |
+| `buying 0.02 SOL -> ~123456 tokens` | the bot is about to buy; the token count is computed from the curve |
+| `[DRY RUN] would buy — position tracked` | a **virtual** buy: the position is recorded, no transaction sent |
+| `[DRY RUN] would sell: +12.3% net of costs (...)` | a **virtual** sale with the result after costs |
+| `session: 3 trades, 2W/1L` | this session's trade counter |
 
-> «would buy» — это «**купил бы**». Бот не покупал. Если вы видите эту строку,
-> значит режим dry-run действительно работает.
+> would buy means the bot would buy. It did not buy. If you see this line,
+> the dry-run mode really is working.
 
-![Пример вывода бота в dry-run: строки журнала, адреса, суммы и проценты заменены заглушками](img/dryrun-terminal.svg)
+![Example bot dry-run output: journal lines, addresses, amounts and percentages replaced with placeholders](img/dryrun-terminal.svg)
 
-*Это иллюстрация, а не реальный лог: `MINT_EXAMPLE`, `WALLET_EXAMPLE` и `0.00` стоят вместо
-настоящих значений. Ваш вывод будет другим, но строки узнаваемые.*
+*This is an illustration, not a real log: `MINT_EXAMPLE`, `WALLET_EXAMPLE` and `0.00` stand in for
+real values. Your output will differ, but the lines are recognizable.*
 
-### 5.4 Как остановить и что такое SESSION SUMMARY
+### 5.4 How to stop and what SESSION SUMMARY is
 
-Нажмите **Ctrl+C** один раз. Бот:
+Press **Ctrl+C** once. The bot:
 
-1. перестаёт принимать новые сигналы;
-2. закрывает открытые позиции (в dry-run — виртуально, записывая причину `manual stop`);
-3. печатает сводку `SESSION SUMMARY` и завершается.
+1. stops accepting new signals;
+2. closes open positions (in dry-run — virtually, recording the reason `manual stop`);
+3. prints the `SESSION SUMMARY` and exits.
 
-Пример сводки (значения — плейсхолдеры):
+Example summary (values are placeholders):
 
 ```
 [INFO] SESSION SUMMARY — SNIPER
@@ -405,55 +405,55 @@ npm run sniper
 [INFO]   note            : spent/received are gross — network + priority fees not deducted
 ```
 
-Как читать:
+How to read it:
 
-- **spent / received** — «сколько отдал» / «сколько вернулось» (без вычета сетевых
-  комиссий);
-- **NET result** — received минус spent;
-- **costs** — оценка комиссий: 1% на входе, 1% на выходе, проскальзывание,
-  приоритетная комиссия. Это и есть главная причина, почему «плюс на бумаге» может
-  оказаться минусом на практике;
-- **NET after costs** — честный итог с учётом этих комиссий;
-- в режиме live дополнительно печатается реальная разница баланса кошелька и список
-  позиций **STUCK** (тех, что не удалось продать).
+- **spent / received** — how much was given / how much came back (before network
+  fees);
+- **NET result** — received minus spent;
+- **costs** — the fee estimate: 1% on entry, 1% on exit, slippage,
+  the priority fee. This is the main reason why a plus on paper can
+  turn into a minus in practice;
+- **NET after costs** — the honest total with those fees included;
+- in live mode it additionally prints the real wallet-balance difference and the list
+  of **STUCK** positions (those that could not be sold).
 
-Второй Ctrl+C во время остановки завершает процесс сразу — это на случай, если
-что-то зависло.
+A second Ctrl+C during the stop ends the process immediately — for the case when
+something hangs.
 
-### 5.5 Запуск 3: лаборатория (бумажная торговля вариантов)
+### 5.5 Run 3: the lab (paper trading of variants)
 
 ```powershell
 npm run lab
 ```
 
-Лаборатория подписывается на тот же поток событий и прогоняет **несколько наборов
-правил одновременно**, каждому — свой виртуальный кошелёк. Деньги не тратятся,
-кошелёк не нужен: она вообще не загружает ключ.
+The lab subscribes to the same event stream and runs **several rule sets
+at once**, each with its own virtual wallet. No money is spent,
+no wallet is needed: it does not even load a key.
 
-- флаг `--live` она **отклоняет** намеренно, сообщением
+- it **refuses** the `--live` flag on purpose, with the message
   `lab.mjs is dry-run only: it never sends transactions. Remove --live.`;
-- результаты пишутся в `data/research/variants/*.jsonl`, по одному файлу на вариант;
-- сравнивать варианты между собой умеет `npm run replay`.
+- results are written to `data/research/variants/*.jsonl`, one file per variant;
+- `npm run replay` can compare the variants against each other.
 
-Важно: одна сессия лаборатории ничего не доказывает. Это сбор данных, а не
-доказательство, что какая-то настройка выгодна.
+Important: one lab session proves nothing. It is data collection, not
+proof that some setting is profitable.
 
-### 5.6 Куда бот пишет файлы
+### 5.6 Where the bot writes files
 
-| Путь | Кто пишет | Что внутри |
+| Path | Who writes | What is inside |
 |---|---|---|
-| `data/journal/ГГГГ-ММ-ДД.jsonl` | снайпер, graduation-снайпер, копи-трейдер | по одной строке JSON на каждое решение и сделку |
-| `data/journal/ticks-*.jsonl` | снайпер | цены позиции раз в секунду (файлы сменяются по размеру) |
-| `data/journal/holders-*.jsonl` | снайпер | как росло число держателей |
-| `data/journal/.sniper.lock`, `.graduation.lock` | боты | «замок» из PID: не даёт запустить два одинаковых бота на одной папке |
-| `data/journal/graduation-blacklist.json` | graduation-снайпер | токены, у которых кривая уже завершена: их больше не покупаем |
-| `data/research/variants/*.jsonl` | лаборатория | по одному файлу на вариант правил |
-| `data/raw/*.jsonl.gz` | `npm run capture-raw` | сырые события, сжатые по часам |
+| `data/journal/YYYY-MM-DD.jsonl` | sniper, graduation sniper, copy trader | one JSON line per decision and trade |
+| `data/journal/ticks-*.jsonl` | sniper | the position's prices once a second (files rotate by size) |
+| `data/journal/holders-*.jsonl` | sniper | how the holder count grew |
+| `data/journal/.sniper.lock`, `.graduation.lock` | the bots | a PID lock: stops two identical bots from running on one folder |
+| `data/journal/graduation-blacklist.json` | graduation sniper | tokens whose curve is already complete: we no longer buy them |
+| `data/research/variants/*.jsonl` | the lab | one file per rule variant |
+| `data/raw/*.jsonl.gz` | `npm run capture-raw` | raw events, compressed hourly |
 
-Папка `data/` в git не попадает (она в `.gitignore`). Не выкладывайте её в публичный
-репозиторий: там ваши адреса, суммы и результаты.
+The `data/` folder does not go into git (it is in `.gitignore`). Do not publish it to a public
+repository: your addresses, amounts and results are there.
 
-Прочитать журнал можно командой:
+You can read the journal with:
 
 ```powershell
 npm run journal
@@ -461,112 +461,112 @@ npm run journal
 
 ---
 
-## 6. Деньги и режим live: почему не спешить
+## 6. Money and live mode: why not to rush
 
-<p align="center"><img src="img/modes.svg" alt="Схема режимов: сверху dry-run (сигнал, лимиты, расчёт выхода, журнал, ноль транзакций), снизу live (плюс симуляция, подпись и подтверждение в блоке)" width="100%"></p>
+<p align="center"><img src="img/modes.svg" alt="Modes diagram: top dry-run (signal, limits, exit calculation, journal, zero transactions), bottom live (plus simulation, signature and block confirmation)" width="100%"></p>
 
 
-### 6.1 На этапе dry-run деньги не нужны вообще
+### 6.1 In the dry-run phase you need no money at all
 
-- кошелёк не обязан иметь баланс;
-- транзакции не подписываются, значит комиссии не списываются;
-- всё, что «тратится», — это время и трафик RPC.
+- the wallet does not have to have a balance;
+- transactions are not signed, so no fees are charged;
+- all that is spent is time and RPC traffic.
 
-Единственное, что нужно, — рабочий `RPC_URL`.
+The only thing you need is a working `RPC_URL`.
 
-### 6.2 Почему live не для новичков
+### 6.2 Why live is not for beginners
 
-**Live** — режим, в котором бот подписывает настоящие транзакции ключом из `keys/` и
-отправляет их в сеть. Здесь появляются реальные риски:
+**Live** is the mode where the bot signs real transactions with the key from `keys/` and
+sends them to the network. Real risks appear here:
 
-- цена может уйти вниз между решением и отправкой — вы получите меньше токенов;
-- продажа может не пройти: кривая может «не иметь» SOL, чтобы выкупить ваши токены;
-- каждая неудачная, но попавшая в блок транзакция **всё равно** списывает комиссию;
-- ключ лежит файлом на диске — утечка файла означает потерю всех средств.
+- the price can drop between the decision and the send — you get fewer tokens;
+- the sale may fail: the curve may not have the SOL to buy your tokens back;
+- every failed-but-landed transaction **still** charges a fee;
+- the key sits as a file on disk — leaking the file means losing all funds.
 
-Поэтому порядок такой:
+So the order is:
 
-1. прочитать [security.md](security.md) — там описано, где лежит ключ, что делает
-   код при подписи и что нельзя публиковать;
-2. прогнать dry-run не один час и посмотреть журнал;
-3. создать **отдельный** кошелёк и положить на него сумму, которую не страшно
-   потерять целиком;
-4. запускать live только с двумя переключателями (см. 6.3).
+1. read [security.md](security.md) — it describes where the key lives, what
+   the code does when signing and what must not be published;
+2. run dry-run for more than an hour and look at the journal;
+3. create a **separate** wallet and fund it with an amount you can afford
+   to lose entirely;
+4. start live only with the two switches (see 6.3).
 
-### 6.3 Два переключателя (защита, а не формальность)
+### 6.3 Two switches (a guard, not a formality)
 
-Live включается **только** если одновременно выполнены два условия:
+Live turns on **only** if two conditions hold at once:
 
-1. в командной строке есть флаг `--live`;
-2. в этой же оболочке задана переменная `LIVE_CONFIRM=yes`.
+1. the `--live` flag is on the command line;
+2. the `LIVE_CONFIRM=yes` variable is set in the same shell.
 
-Пример для PowerShell:
+Example for PowerShell:
 
 ```powershell
 $env:LIVE_CONFIRM="yes"; npm run sniper -- --live
 ```
 
-Если забыть второй переключатель, бот остановится **до** подключения к сети:
+If you forget the second switch, the bot stops **before** connecting to the network:
 
 ```
 [config] ERROR: --live requires LIVE_CONFIRM=yes. Set it for this run only, e.g. ...
 ```
 
-Флаг `--dry-run` отменяет `--live`, даже если указаны оба.
+The `--dry-run` flag cancels `--live`, even if both are given.
 
-Зачем так: скопированная из чата команда с `--live` не начнёт тратить деньги, пока
-вы осознанно не зададите переменную в текущей сессии терминала.
+Why: a command copied from a chat with `--live` will not start spending money until
+you deliberately set the variable in the current terminal session.
 
-Есть и дополнительный «третий ключ» для продажи на AMM (после миграции):
-`LIVE_CONFIRM_AMM=yes`. Без него бот не отправляет продажу через PumpSwap — этот
-путь в коде помечен как **непроверенный** на реальной транзакции.
+There is also an extra third switch for selling on AMM (after migration):
+`LIVE_CONFIRM_AMM=yes`. Without it the bot does not send a PumpSwap sale — that
+path is marked **unverified** on a real transaction in the code.
 
 ---
 
-## 7. Глоссарий
+## 7. Glossary
 
-| Термин | Что это простыми словами |
+| Term | What it means in plain words |
 |---|---|
-| **SOL** | основная монета блокчейна Solana; в ней бот платит за покупки и комиссии |
-| **lamport** | самая мелкая единица SOL: 1 SOL = 1 000 000 000 lamport. Внутри кода суммы считаются в lamport, чтобы не терять точность |
-| **dry-run** | «сухой прогон»: бот всё считает и записывает, но не подписывает и не отправляет транзакции |
-| **live** | «боевой» режим: транзакции подписываются реальным ключом и уходят в сеть |
-| **bonding curve** | «кривая связи»: формула цены на pump.fun — чем больше токенов куплено, тем дороже следующий. Это не биржевой стакан |
-| **graduation** (миграция) | момент, когда кривая заполнена и ликвидность переезжает в пул PumpSwap; после этого торговля идёт уже не по кривой |
-| **slippage** (проскальзывание) | разница между ожидаемой и фактической ценой сделки; задаётся в «bps», где 500 bps = 5% |
-| **take profit** (TP) | правило «продать, когда цена выросла до заданного множителя» (например, 2.0×) |
-| **stop loss** (SL) | правило «продать, когда цена упала до заданного множителя» (например, 0.5×), чтобы ограничить убыток |
-| **timeout** | правило «продать по времени»: если ничего не произошло за N секунд, позиция закрывается |
-| **RPC** | сервер-посредник, через который бот читает блокчейн и отправляет транзакции (см. раздел 3) |
-| **журнал** (journal) | файл `data/journal/*.jsonl`, куда бот пишет каждое своё решение; одна запись JSON на строку |
+| **SOL** | the main coin of the Solana blockchain; the bot pays buys and fees in it |
+| **lamport** | the smallest SOL unit: 1 SOL = 1,000,000,000 lamports. Internally amounts are counted in lamports to avoid losing precision |
+| **dry-run** | a dry run: the bot counts and records everything but signs and sends no transaction |
+| **live** | the live mode: transactions are signed with the real key and go to the network |
+| **bonding curve** | the bonding curve: pump.fun's price formula — the more tokens are bought, the pricier the next one. It is not an order book |
+| **graduation** (migration) | the moment the curve is full and the liquidity moves to the PumpSwap pool; after it, trading no longer goes through the curve |
+| **slippage** | the difference between the expected and actual trade price; given in bps, where 500 bps = 5% |
+| **take profit** (TP) | the rule sell when the price rose to a set multiple (for example 2.0×) |
+| **stop loss** (SL) | the rule sell when the price fell to a set multiple (for example 0.5×), to cap the loss |
+| **timeout** | the rule sell by time: if nothing happened for N seconds, the position closes |
+| **RPC** | a relay server through which the bot reads the blockchain and sends transactions (see section 3) |
+| **journal** | the `data/journal/*.jsonl` file where the bot writes every decision; one JSON record per line |
 
 ---
 
-## 8. Частые ошибки
+## 8. Common errors
 
-Полный список с объяснениями — в
-[errors-and-troubleshooting.md](errors-and-troubleshooting.md). Самое частое:
+The full list with explanations is in
+[errors-and-troubleshooting.md](errors-and-troubleshooting.md). The most common:
 
-| Симптом | Что делать |
+| Symptom | What to do |
 |---|---|
-| `[config] ERROR: RPC_URL is required` | нет файла `.env` или в нём пустой `RPC_URL`. Скопируйте `.env.example` в `.env` и впишите адрес |
-| `--live requires LIVE_CONFIRM=yes` | задайте `$env:LIVE_CONFIRM="yes"` (PowerShell) в этой же сессии |
-| `Keypair not found: ...\keys\default.json` | кошелёк не создан: `node lib/wallet.mjs generate` |
-| `FATAL: another sniper instance is already running` | уже запущен второй снайпер. Закройте его через Ctrl+C: два бота на одной папке журнала испортят учёт |
-| `bigint: Failed to load bindings, pure JS will be used` | **безопасное** предупреждение библиотеки, делать ничего не нужно |
-| Бот запустился, но в консоли тишина | чаще всего упёрлись в лимит RPC (429) или публичный адрес не отдаёт события |
-| `429 Too Many Requests` | исчерпана квота RPC: подождите, смените тариф или endpoint |
+| `[config] ERROR: RPC_URL is required` | there is no `.env` file or `RPC_URL` is empty in it. Copy `.env.example` to `.env` and enter the address |
+| `--live requires LIVE_CONFIRM=yes` | set `$env:LIVE_CONFIRM="yes"` (PowerShell) in this same session |
+| `Keypair not found: ...\keys\default.json` | the wallet is not created: `node lib/wallet.mjs generate` |
+| `FATAL: another sniper instance is already running` | a second sniper is already running. Close it with Ctrl+C: two bots on one journal folder will corrupt the accounting |
+| `bigint: Failed to load bindings, pure JS will be used` | a **safe** library warning, nothing to do |
+| The bot started, but the console is silent | most often you hit the RPC limit (429) or the public address does not serve events |
+| `429 Too Many Requests` | the RPC quota is exhausted: wait, change the plan or the endpoint |
 
 ---
 
-## 9. Что дальше
+## 9. What next
 
-- все параметры и значения по умолчанию: [configuration.md](configuration.md);
-- что делает каждый бот и какой у него риск: [bots.md](bots.md);
-- все команды: [commands.md](commands.md);
-- ключи и кошелёк подробнее: [wallet-and-keys.md](wallet-and-keys.md);
-- безопасность: [security.md](security.md);
-- что проверено, а что нет: [verification-status.md](verification-status.md).
+- all parameters and defaults: [configuration.md](configuration.md);
+- what each bot does and its risk: [bots.md](bots.md);
+- all commands: [commands.md](commands.md);
+- keys and the wallet in detail: [wallet-and-keys.md](wallet-and-keys.md);
+- security: [security.md](security.md);
+- what is verified and what is not: [verification-status.md](verification-status.md).
 
-Порядок, который избавит от большинства проблем: **монитор → снайпер в dry-run →
-журнал → и только потом разговор про live**.
+The order that removes most problems: **monitor → the sniper in dry-run →
+the journal → and only then the live talk**.

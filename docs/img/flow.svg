@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-labelledby="flowTitle flowDesc">
-  <title id="flowTitle">Как работает бот: пять шагов</title>
-  <desc id="flowDesc">Пять карточек слева направо: наблюдение за новыми токенами, фильтры и лимиты, покупка в dry-run или live (выделена янтарным), выход по take profit, stop loss или таймауту, журнал и сводка. Стрелки показывают порядок шагов.</desc>
+  <title id="flowTitle">How the bot works: five steps</title>
+  <desc id="flowDesc">Five cards left to right: watching for new tokens, filters and limits, a buy in dry-run or live (highlighted amber), an exit on take profit, stop loss or timeout, the journal and summary. Arrows show the step order.</desc>
   <defs>
     <linearGradient id="flowBg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
@@ -20,8 +20,8 @@
   <rect width="1200" height="280" fill="url(#flowBg)"/>
   <rect width="1200" height="280" fill="url(#flowGrid)" opacity="0.6"/>
 
-  <text x="40" y="46" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="21" font-weight="700" fill="#e6f1ff">Как это работает</text>
-  <text x="40" y="70" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" fill="#8aa0b8">пять шагов, один и тот же порядок для каждого токена</text>
+  <text x="40" y="46" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="21" font-weight="700" fill="#e6f1ff">How it works</text>
+  <text x="40" y="70" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" fill="#8aa0b8">five steps, the same order for every token</text>
 
   <g filter="url(#cardShadow)">
     <rect x="40" y="96" width="192" height="120" rx="14" fill="#122238" stroke="#2dd4bf" stroke-width="1.75"/>
@@ -48,24 +48,24 @@
   </g>
 
   <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" text-anchor="middle">
-    <text x="136" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Наблюдение</text>
-    <text x="136" y="182" font-size="13" fill="#9fb3c8">новые токены</text>
+    <text x="136" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Watch</text>
+    <text x="136" y="182" font-size="13" fill="#9fb3c8">new tokens</text>
     <text x="136" y="201" font-size="11" fill="#6f8299">WebSocket pump.fun</text>
 
-    <text x="368" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Фильтры</text>
-    <text x="368" y="182" font-size="13" fill="#9fb3c8">и лимиты</text>
-    <text x="368" y="201" font-size="11" fill="#6f8299">держатели · сумма · пауза</text>
+    <text x="368" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Filters</text>
+    <text x="368" y="182" font-size="13" fill="#9fb3c8">and limits</text>
+    <text x="368" y="201" font-size="11" fill="#6f8299">holders · amount · pause</text>
 
-    <text x="600" y="158" font-size="17" font-weight="600" fill="#fbbf24">Покупка</text>
-    <text x="600" y="182" font-size="13" fill="#e8c37a">dry-run или live</text>
-    <text x="600" y="201" font-size="11" fill="#b99a5b">два переключателя</text>
+    <text x="600" y="158" font-size="17" font-weight="600" fill="#fbbf24">Buy</text>
+    <text x="600" y="182" font-size="13" fill="#e8c37a">dry-run or live</text>
+    <text x="600" y="201" font-size="11" fill="#b99a5b">two switches</text>
 
-    <text x="832" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Выход</text>
-    <text x="832" y="182" font-size="13" fill="#9fb3c8">TP · SL · таймаут</text>
-    <text x="832" y="201" font-size="11" fill="#6f8299">по цене или по времени</text>
+    <text x="832" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Exit</text>
+    <text x="832" y="182" font-size="13" fill="#9fb3c8">TP · SL · timeout</text>
+    <text x="832" y="201" font-size="11" fill="#6f8299">by price or by time</text>
 
-    <text x="1064" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Журнал</text>
-    <text x="1064" y="182" font-size="13" fill="#9fb3c8">и сводка</text>
+    <text x="1064" y="158" font-size="17" font-weight="600" fill="#e6f1ff">Journal</text>
+    <text x="1064" y="182" font-size="13" fill="#9fb3c8">and summary</text>
     <text x="1064" y="201" font-size="11" fill="#6f8299">data/journal/*.jsonl</text>
   </g>
 
@@ -76,5 +76,5 @@
     <path d="M932 156 H 960"/>
   </g>
 
-  <text x="40" y="252" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">В dry-run третий шаг ничего не подписывает и не отправляет: бот только записывает, что купил бы.</text>
+  <text x="40" y="252" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">In dry-run the third step signs and sends nothing: the bot only records what it would buy.</text>
 </svg>

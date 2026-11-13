@@ -52,7 +52,7 @@ const validShare = rows.length ? valid.length / rows.length : 0;
 console.log(`valid answers: ${valid.length}/${rows.length} = ${(validShare * 100).toFixed(1)}% (empty/no-data: ${empty.length})`);
 console.log(`mayhemMode=true: ${valid.filter((r) => r.mode).length}, mayhemMode=false: ${valid.filter((r) => !r.mode).length}`);
 if (validShare < MIN_VALID) {
-  console.log(`\nRESULT WITHHELD: valid share ${(validShare * 100).toFixed(1)}% < ${(MIN_VALID * 100).toFixed(0)}% -> "нет данных" (retry later, do not publish a disagreement)`);
+  console.log(`\nRESULT WITHHELD: valid share ${(validShare * 100).toFixed(1)}% < ${(MIN_VALID * 100).toFixed(0)}% -> "no data" (retry later, do not publish a disagreement)`);
 } else {
   console.log(`agree ${agree.length}/${valid.length} = ${((agree.length / valid.length) * 100).toFixed(1)}%, disagree ${disagree.length}`);
   console.log("  router=true  & mode=true :", valid.filter((r) => r.router && r.mode).length);

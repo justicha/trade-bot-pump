@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Journal analyzer — задача A-fix.
+// Journal analyzer — task A-fix.
 //
-//   node scripts/analyze-journal.mjs                 # все data/journal/*.jsonl
-//   node scripts/analyze-journal.mjs <file.jsonl>    # один файл
+//   node scripts/analyze-journal.mjs                 # all data/journal/*.jsonl
+//   node scripts/analyze-journal.mjs <file.jsonl>    # one file
 //   OUT_DIR=data/research node scripts/analyze-journal.mjs
 //
-// NET % = pnlSol / buySol (pnlSol уже после costsSol), НЕ валовый pnlPct.
-// n < 30 -> bootstrap CI не печатается ("n too small"). Никаких внешних зависимостей.
+// NET % = pnlSol / buySol (pnlSol already after costsSol), NOT the gross pnlPct.
+// n < 30 -> bootstrap CI is not printed ("n too small"). No external dependencies.
 import fs from "node:fs";
 import path from "node:path";
 import { bootstrapCI } from "../lib/research.mjs";

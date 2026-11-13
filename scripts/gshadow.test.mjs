@@ -207,7 +207,7 @@ const pos = { variant: "J", mint: "MintJ", entryPrice: 1e-7, at: 1_000, tokens }
   asrt(/=== costsScheme: v3-single-slip[^\n]*— 2 trade\(s\) ===/.test(out), "v3 rows have their own table");
   asrt(/=== costsScheme: v4-amm-exit[^\n]*— 1 trade\(s\) ===/.test(out), "a v4 row (AMM exit priced with a 30 bps fee) has its own table: it is NOT averaged with v5");
   asrt(/=== costsScheme: v5-amm-fee[^\n]*— 4 trade\(s\) ===/.test(out), "v5 rows have their own table (not mixed with v3 / v4)");
-  asrt(/смешаны версии учёта \(3\)/.test(out), "the report says three schemes are present");
+  asrt(/mixed accounting versions \(3\)/.test(out), "the report says three schemes are present");
   const v4 = out.slice(out.indexOf("=== costsScheme: v5-amm-fee"));
   asrt(/exit venues: curve=1 amm=1 amm-unpriced=2/.test(v4), `the venue mix is printed: ${(v4.match(/exit venues:.*/) || [""])[0]}`);
   asrt(/UNPRICED: 2 of 4/.test(v4), `unpriced trades are counted separately: ${(v4.match(/UNPRICED.*/) || [""])[0]}`);

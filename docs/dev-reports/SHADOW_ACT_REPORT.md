@@ -1,108 +1,108 @@
 # Shadow lab — ACT report (S1…S5)
 
-Дата: 2026-11-10. Режим: ACT, автономно (вопросов не задавал, консервативные решения записаны в §6).
-Репозиторий: `trade-bot-pump`, ветка `main`, HEAD `a7f1b8d`. **Ничего не закоммичено и не запушено.**
+Date: 2026-11-10. Mode: ACT, autonomous (asked no questions, conservative decisions recorded in §6).
+Repository: `trade-bot-pump`, branch `main`, HEAD `a7f1b8d`. **Nothing committed or pushed.**
 
-## 0. Исходное состояние и бэкап
+## 0. Initial state and backup
 
-| Что | Значение |
+| What | Value |
 |---|---|
-| `git status` (до правок) | пусто (рабочее дерево чистое) |
-| `git diff --stat` (до правок) | пусто |
+| `git status` (before edits) | empty (working tree clean) |
+| `git diff --stat` (before edits) | empty |
 | HEAD | `a7f1b8d docs: rewrite README for beginners, add security and verification pages, flow diagram` |
-| Бэкап | `../backup-before-shadow-act/` — 281 файл, без `.git` и `node_modules`; `shadow.mjs` совпадает по хэшу |
+| Backup | `../backup-before-shadow-act/` — 281 files, no `.git` and `node_modules`; `shadow.mjs` matches by hash |
 
-Правки не откатывались: все пункты дошли до зелёных тестов с первой-второй попытки (см. §1).
+The edits were not reverted: all items reached green tests on the first or second attempt (see §1).
 
-## 1. Статус по пунктам
+## 1. Status by item
 
-| Пункт | Статус | Файлы | Тест |
+| Item | Status | Files | Test |
 |---|---|---|---|
-| S1 — завершение по SIGINT/SIGTERM/`SHADOW_MAX_SEC` | **done** | `bots/graduation-sniper/shadow.mjs` | `scripts/shadow-finish.test.mjs` |
-| S2 — дубли входов при вытеснении `mintState` | **done** | `bots/graduation-sniper/shadow.mjs` | `scripts/shadow-dedupe.test.mjs` |
-| S3 шаг 1 — проверка двойного buy-slippage | **done** (вердикт **DOUBLE**) | — (только чтение кода) | `scripts/shadow-slip.test.mjs` (падал до правки, зелёный после) |
-| S3 шаг 2 — убрать двойной учёт | **done** | `bots/graduation-sniper/shadow.mjs`, `lib/pessimistic.mjs` | `scripts/shadow-slip.test.mjs` |
-| S4 — разделение эпох в анализаторе | **done** | `scripts/analyze-graduation.mjs` | `scripts/graduation-analyze.test.mjs` |
-| S5 — вывод выборки и независимых наблюдений | **done** | `scripts/analyze-graduation.mjs` | `scripts/graduation-analyze.test.mjs` |
+| S1 — finish on SIGINT/SIGTERM/`SHADOW_MAX_SEC` | **done** | `bots/graduation-sniper/shadow.mjs` | `scripts/shadow-finish.test.mjs` |
+| S2 — entry duplicates on `mintState` eviction | **done** | `bots/graduation-sniper/shadow.mjs` | `scripts/shadow-dedupe.test.mjs` |
+| S3 step 1 — the double buy-slippage check | **done** (verdict **DOUBLE**) | — (code read-only) | `scripts/shadow-slip.test.mjs` (failed before the edit, green after) |
+| S3 step 2 — remove the double count | **done** | `bots/graduation-sniper/shadow.mjs`, `lib/pessimistic.mjs` | `scripts/shadow-slip.test.mjs` |
+| S4 — epoch separation in the analyzer | **done** | `scripts/analyze-graduation.mjs` | `scripts/graduation-analyze.test.mjs` |
+| S5 — the sample and independent-observation output | **done** | `scripts/analyze-graduation.mjs` | `scripts/graduation-analyze.test.mjs` |
 
-### S1 — что сделано
+### S1 — what was done
 
-* Закрытие позиций вынесено в `closeAllAtStop(stopReason)`, а вся остановка — в **идемпотентную**
-  `finishShadow(reason)` (флаг `stopping` стоит ДО любого побочного эффекта).
-* Одна и та же функция обслуживает `SIGINT`, `SIGTERM` и `SHADOW_MAX_SEC`; reason записи:
-  `manual stop` (SIGINT и таймер) и `shutdown` (SIGTERM).
-* Позиция без известной цены больше не пропускается: пишется с `unconfirmed: true` и входной ценой
-  в качестве выхода (отсутствующая сделка хуже неточной).
-* Печатается сводка останова (`=== SHADOW STOP (reason) ===`, число закрытых/unconfirmed, путь журнала).
-* Тест: WS_MOCK-фикстура доводит mint до 93 % fill, восемь вариантов открываются, `SHADOW_MAX_SEC`
-  вызывает тот же `finishShadow()` → в журнале **8 `gshadow_open` и 8 `gshadow_trade`**, все
-  `manual stop`, ни одной повторной пары `(variant, mint)`.
+* Position closing was extracted into `closeAllAtStop(stopReason)`, and the whole stop into an **idempotent**
+  `finishShadow(reason)` (the `stopping` flag is set BEFORE any side effect).
+* One function serves `SIGINT`, `SIGTERM` and `SHADOW_MAX_SEC`; the record reason:
+  `manual stop` (SIGINT and the timer) and `shutdown` (SIGTERM).
+* A position without a known price is no longer skipped: it is written with `unconfirmed: true` and the entry price
+  as the exit (a missing trade is worse than an imprecise one).
+* A stop summary is printed (`=== SHADOW STOP (reason) ===`, the closed/unconfirmed count, the journal path).
+* Test: the WS_MOCK fixture drives a mint to 93% fill, eight variants open, `SHADOW_MAX_SEC`
+  calls the same `finishShadow()` → the journal has **8 `gshadow_open` and 8 `gshadow_trade`**, all
+  `manual stop`, no repeated `(variant, mint)` pair.
 
-### S2 — что сделано
+### S2 — what was done
 
-* Добавлен сессионный набор `openedKeys` (`variant:mint`): пара открывается не более одного раза за
-  прогон. Это переживает вытеснение `mintState`, чего не умеет `entered`, живущий внутри состояния.
-* Вытеснение переписано: удаляется только mint, у которого **нет открытой позиции** и который уже
-  открыт **всеми** pre-migration вариантами (`ACTIVE_VARIANTS`, вариант I исключён — он не торгует).
-  Если после прунинга лимит всё ещё превышен, память растёт, а в лог уходит строка (не чаще раза в
-  минуту) — активные записи не удаляются.
-* `SHADOW_MAX_MINTS` (default `20000`) — только для того, чтобы тест мог воспроизвести вытеснение;
-  значение по умолчанию совпадает с прежним порогом.
-* Тест: mint открывается, закрывается по таймауту, три mint-«наполнителя» переполняют кэп, происходит
-  реальный прунинг (`pruned 1 spent mint(s)`), затем тот же mint снова торгуется → **второго
-  `gshadow_open` нет** (8 открытий вместо 16).
+* A session set `openedKeys` (`variant:mint`) was added: a pair opens at most once per
+  run. This survives `mintState` eviction, which `entered` (living inside the state) cannot do.
+* Eviction was rewritten: only a mint with **no open position** that is already
+  opened by **all** pre-migration variants (`ACTIVE_VARIANTS`, variant I excluded — it does not trade).
+  If the limit is still exceeded after pruning, memory grows and a line goes to the log (at most once a
+  minute) — active records are not deleted.
+* `SHADOW_MAX_MINTS` (default `20000`) — only so the test can reproduce eviction;
+  the default matches the previous threshold.
+* Test: a mint opens, closes on timeout, three filler mints overflow the cap, a real prune happens
+  (`pruned 1 spent mint(s)`), then the same mint trades again → **there is no second
+  `gshadow_open`** (8 openings instead of 16).
 
-### S3 шаг 2 — что сделано
+### S3 step 2 — what was done
 
-* `entryPrice` теперь равен спотовой цене кривой; наценка `spot * (1 + slipBps/10000)` удалена.
-  Единственное списание buy-slippage осталось в `roundTripCosts` (видно в разбивке по компонентам).
-* `gshadow_open` и `gshadow_trade` несут `costsScheme` = `v3-single-slip: entry=curve spot, buy slip
-  charged once in roundTripCosts` (константа `SHADOW_COSTS_SCHEME` в `lib/pessimistic.mjs`).
-* Тест фиксирует точное число: плоский round trip (цена не двигалась) → `ratio === 1`,
-  `netPct === -7.63`, `slipBps === 54`, `costsScheme` начинается с `v3-single-slip`.
+* `entryPrice` now equals the curve's spot price; the `spot * (1 + slipBps/10000)` markup was removed.
+  The single buy-slippage charge remains in `roundTripCosts` (visible in the per-component breakdown).
+* `gshadow_open` and `gshadow_trade` carry `costsScheme` = `v3-single-slip: entry=curve spot, buy slip
+  charged once in roundTripCosts` (the `SHADOW_COSTS_SCHEME` constant in `lib/pessimistic.mjs`).
+* The test pins the exact numbers: a flat round trip (price did not move) → `ratio === 1`,
+  `netPct === -7.63`, `slipBps === 54`, `costsScheme` starts with `v3-single-slip`.
 
-### S4 / S5 — что сделано
+### S4 / S5 — what was done
 
-* `gshadow_trade` группируются по `costsScheme`; записи без поля попадают в группу
-  `legacy (no costsScheme)`. На каждую группу — своя таблица; при >1 группе печатается явное
-  предупреждение, что версии смешаны и **общая таблица не выводится**.
-* В шапке каждой группы: `samples: unique mints N | candidates M | per variant: A=9 B=8 …`.
-* Если уникальных mint меньше 30: строка `WARNING: уникальных mints N < 30 — наблюдения сильно
-  коррелированы, вердикт не делать` и вердикт группы помечается `withheld`.
-* Тест: синтетический журнал с двумя схемами → ровно две таблицы, обе метки схем, предупреждение,
-  строки выборки, `withheld`.
+* `gshadow_trade` rows group by `costsScheme`; rows without the field land in the
+  `legacy (no costsScheme)` group. Each group gets its own table; with >1 group an explicit
+  warning is printed that the versions are mixed and **no combined table is shown**.
+* In each group's header: `samples: unique mints N | candidates M | per variant: A=9 B=8 …`.
+* If there are fewer than 30 unique mints: the line `WARNING: unique mints N < 30 — observations are strongly
+  correlated, do not conclude` and the group verdict is marked `withheld`.
+* Test: a synthetic journal with two schemes → exactly two tables, both scheme labels, the warning,
+  the sample lines, `withheld`.
 
 
-## 2. S3 шаг 1 — результат с числами: **DOUBLE**
+## 2. S3 step 1 — the numeric result: **DOUBLE**
 
-Проверка по коду (до правок): `enter()` писал `entryPrice = spot * (1 + slipBps/10000)` (shadow.mjs:77,
-`slipBps = 50 + sizeSlippageBps(0.02) = 50 + 4 = 54`), а `closePos()` → `pessimisticRoundTrip()`
-(`lib/pessimistic.mjs:26-31`) → `roundTripCosts()` (`lib/fees.mjs:36-65`) снова вычитал `buySlip` =
-`slippageBps` от `buySol`. То есть 54 bps списывались дважды: один раз как сдвиг цены входа, второй — как
-компонента издержек.
+The code check (before edits): `enter()` wrote `entryPrice = spot * (1 + slipBps/10000)` (shadow.mjs:77,
+`slipBps = 50 + sizeSlippageBps(0.02) = 50 + 4 = 54`), and `closePos()` → `pessimisticRoundTrip()`
+(`lib/pessimistic.mjs:26-31`) → `roundTripCosts()` (`lib/fees.mjs:36-65`) subtracted `buySlip` =
+`slippageBps` from `buySol` again. So 54 bps were charged twice: once as an entry-price shift, and again as
+a cost component.
 
-Измерение на **реальном пути исполнения** (фикстура «flat»: после входа цена не меняется, поэтому
+A measurement on the **real execution path** (the flat fixture: the price does not move after entry, so
 `exitPrice === spot`), `buySol=0.02`, pump 100+100 bps, tx = 2 × 455 000 lamports:
 
-| Схема | entryPrice | ratio | netPct |
+| Scheme | entryPrice | ratio | netPct |
 |---|---|---|---|
-| v2 (двойной учёт, как было) | `spot × 1.0054` = 1.0217974836905872e-7 | **0.994629** | **−8.16 %** |
-| v3-single-slip (как стало) | `spot` = 1.016309412861137e-7 | **1.000000** | **−7.63 %** |
+| v2 (double count, as it was) | `spot × 1.0054` = 1.0217974836905872e-7 | **0.994629** | **−8.16 %** |
+| v3-single-slip (as it became) | `spot` = 1.016309412861137e-7 | **1.000000** | **−7.63 %** |
 
-Разница **0.53 п.п.** — ровно 54 bps ноционала на buy-ноге. Побочно виден сам дефект: цена не двигалась,
-а `entryPrice ≠ exitPrice` (наценка сидела в цене входа).
+The difference is **0.53 pp** — exactly 54 bps of notional on the buy leg. The defect itself is visible as a side effect: the price did not move,
+but `entryPrice ≠ exitPrice` (the markup sat in the entry price).
 
-Перекрёстная проверка на старом реальном журнале (`data/journal/2026-11-10.jsonl`, сделка по `4E481AX…`):
+A cross-check on the old real journal (`data/journal/2026-11-10.jsonl`, the trade on `4E481AX…`):
 `entryPrice 3.6983235292992076e-7`, `exitPrice 3.678459846130105e-7`, `ratio 0.994629`, `netPct −5.46`
-(другие CU-настройки того прогона) — цена вернулась к споту, а ratio всё равно 0.9946.
+(that run's different CU settings) — the price returned to spot, but the ratio is still 0.9946.
 
-**Итог:** DOUBLE → выполнен шаг 2 (см. §1): убран сдвиг `entryPrice`, учёт оставлен в `roundTripCosts`,
-в журнал добавлен `costsScheme`. Числа будущих прогонов сдвинутся на +0.53 п.п.; старые строки навсегда
-остаются `legacy` и в общую таблицу с новыми не попадут.
+**Result:** DOUBLE → step 2 was done (see §1): the `entryPrice` shift was removed, the accounting stayed in `roundTripCosts`,
+and `costsScheme` was added to the journal. Future run numbers will shift by +0.53 pp; old rows stay
+`legacy` forever and will not enter the combined table with new ones.
 
-## 3. Изменённые файлы
+## 3. Changed files
 
-`git diff --stat` (отслеживаемые файлы):
+`git diff --stat` (tracked files):
 
 ```
  bots/graduation-sniper/shadow.mjs   | 115 ++++++++++++++++++++++++------
@@ -116,23 +116,23 @@
  8 files changed, 264 insertions(+), 69 deletions(-)
 ```
 
-Новые файлы (untracked):
+New files (untracked):
 
 ```
-scripts/mocks/ws-mock-shadow.mjs      # фикстура 405-байтных trade-v3 событий с realSolReserves
+scripts/mocks/ws-mock-shadow.mjs      # a fixture of 405-byte trade-v3 events with realSolReserves
 scripts/shadow-finish.test.mjs        # S1
 scripts/shadow-dedupe.test.mjs        # S2
-scripts/shadow-slip.test.mjs          # S3 (шаг 1 и шаг 2)
-SHADOW_ACT_REPORT.md                  # этот отчёт
+scripts/shadow-slip.test.mjs          # S3 (step 1 and step 2)
+SHADOW_ACT_REPORT.md                  # this report
 ```
 
-Существующие тесты не ослаблялись. `scripts/graduation-analyze.test.mjs` **расширен** (старые assert'ы на
-`gradstats` не тронуты), в `package.json` добавлены три новых теста в цепочку `npm test`.
+Existing tests were not weakened. `scripts/graduation-analyze.test.mjs` was **extended** (the old asserts on
+`gradstats` were not touched), and three new tests were added to the `npm test` chain in `package.json`.
 
 
-## 4. Полный вывод проверок
+## 4. Full check output
 
-### 4.1 `node --check` по изменённым/новым файлам
+### 4.1 `node --check` on the changed/new files
 
 ```
 OK   bots/graduation-sniper/shadow.mjs
@@ -145,7 +145,7 @@ OK   scripts/shadow-slip.test.mjs
 OK   scripts/graduation-analyze.test.mjs
 ```
 
-### 4.2 `npm test` (полный вывод)
+### 4.2 `npm test` (full output)
 
 ```
 
@@ -181,7 +181,7 @@ PASS: lab positions survive a missing price and exit when it returns
 {"rollover":"ok"}
 PASS: MSK day/hour/weekday keys are zone-correct across midnight
 node.exe : bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
-строка:1 знак:1
+line:1 char:1
 + & "<NODE_DIR>/node.exe" "<APPDATA> ...
 + ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     + CategoryInfo          : NotSpecified: (bigint: Failed ...m run rebuild?):String) [], RemoteException
@@ -197,7 +197,7 @@ bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
 {"trades":4,"groups":["4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi:k7FaK87WHGVXzkaoHb7CdVPgkKDQhZ29VLDeBVbDfYn","4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi:p2Yicb86aZig616Eav2VWG9vuXR5mEqhtzshZYBxzsV","8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR:k7FaK87WHGVXzkaoHb7CdVPgkKDQhZ29VLDeBVbDfYn","4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi:null"],"pswapUnresolved":1}
 PASS: multihop events grouped by user+mint (not mixed); unresolved counted
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
-[2026-11-10 14:46:18 MSK] [INFO] SESSION SUMMARY тАФ TEST
+[2026-11-10 14:46:18 MSK] [INFO] SESSION SUMMARY — TEST
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
 [2026-11-10 14:46:18 MSK] [INFO]   mode             : LIVE
 [2026-11-10 14:46:18 MSK] [INFO]   stopped          : MAX_CONSEC_LOSSES hit
@@ -212,10 +212,10 @@ PASS: multihop events grouped by user+mint (not mixed); unresolved counted
 [2026-11-10 14:46:18 MSK] [INFO]   open at stop     : 1 position(s)
 [2026-11-10 14:46:18 MSK] [INFO]   no exit recorded : 1: mint: no tokens in wallet
 [2026-11-10 14:46:18 MSK] [INFO]   wallet           : 1.000000 -> 0.990000 SOL  (delta -0.010000 SOL)
-[2026-11-10 14:46:18 MSK] [INFO]   note             : spent/received are gross тАФ network + priority fees not deducted
+[2026-11-10 14:46:18 MSK] [INFO]   note             : spent/received are gross — network + priority fees not deducted
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
-[2026-11-10 14:46:18 MSK] [INFO] SESSION SUMMARY тАФ TEST2
+[2026-11-10 14:46:18 MSK] [INFO] SESSION SUMMARY — TEST2
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
 [2026-11-10 14:46:18 MSK] [INFO]   mode              : DRY RUN (simulated, nothing was sent on-chain)
 [2026-11-10 14:46:18 MSK] [INFO]   stopped           : stopped
@@ -231,10 +231,10 @@ PASS: multihop events grouped by user+mint (not mixed); unresolved counted
 [2026-11-10 14:46:18 MSK] [INFO]   open at stop      : 1 position(s)
 [2026-11-10 14:46:18 MSK] [INFO]   worst case        : -0.019000 SOL  (if the 1 open position(s) end at 0)
 [2026-11-10 14:46:18 MSK] [INFO]   wallet            : unchanged (dry run)
-[2026-11-10 14:46:18 MSK] [INFO]   note              : spent/received are gross тАФ network + priority fees not deducted
+[2026-11-10 14:46:18 MSK] [INFO]   note              : spent/received are gross — network + priority fees not deducted
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
-[2026-11-10 14:46:18 MSK] [INFO] SESSION SUMMARY тАФ COSTS
+[2026-11-10 14:46:18 MSK] [INFO] SESSION SUMMARY — COSTS
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
 [2026-11-10 14:46:18 MSK] [INFO]   mode            : LIVE
 [2026-11-10 14:46:18 MSK] [INFO]   stopped         : test
@@ -248,10 +248,10 @@ PASS: multihop events grouped by user+mint (not mixed); unresolved counted
 [2026-11-10 14:46:18 MSK] [INFO]   closed trades   : 1W / 0L   best +0.005000 SOL  worst 0.000000 SOL
 [2026-11-10 14:46:18 MSK] [INFO]   open at stop    : 0 position(s)
 [2026-11-10 14:46:18 MSK] [INFO]   wallet          : 1.000000 -> 1.003300 SOL  (delta +0.003300 SOL)
-[2026-11-10 14:46:18 MSK] [INFO]   note            : spent/received are gross тАФ network + priority fees not deducted
+[2026-11-10 14:46:18 MSK] [INFO]   note            : spent/received are gross — network + priority fees not deducted
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
-[2026-11-10 14:46:18 MSK] [INFO] SESSION SUMMARY тАФ PARTIAL
+[2026-11-10 14:46:18 MSK] [INFO] SESSION SUMMARY — PARTIAL
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
 [2026-11-10 14:46:18 MSK] [INFO]   mode              : LIVE
 [2026-11-10 14:46:18 MSK] [INFO]   stopped           : stopped
@@ -266,7 +266,7 @@ PASS: multihop events grouped by user+mint (not mixed); unresolved counted
 [2026-11-10 14:46:18 MSK] [INFO]   closed trades     : 0W / 0L
 [2026-11-10 14:46:18 MSK] [INFO]   open at stop      : 1 position(s)
 [2026-11-10 14:46:18 MSK] [INFO]   worst case        : -0.050000 SOL  (if the 1 open position(s) end at 0)
-[2026-11-10 14:46:18 MSK] [INFO]   note              : spent/received are gross тАФ network + priority fees not deducted
+[2026-11-10 14:46:18 MSK] [INFO]   note              : spent/received are gross — network + priority fees not deducted
 [2026-11-10 14:46:18 MSK] [INFO] ================================================================
 {"netSol":-0.01,"spent":0.1,"received":0.09}
 PASS: limits are terminal (bot exits + prints totals); oversized trade is not; ledger net is exact
@@ -283,7 +283,7 @@ PASS: A-E variants behave (bundle rejected, time-stop, partial+trailing, creator
 PASS: bootstrap CI, 70/30 split, strict verdict (edge only with >=300 hold-out trades and CI>0), CLI runs
 PASS: parser layout verified on fixtures, latency defers fills, slippage monotone, freeze judges only post-freeze trades
 [2026-11-10 14:46:20 MSK] [INFO] [raw] rotated 2026-11-08-10.jsonl.gz (0.0 KB) -> 2026-11-08-11.jsonl.gz
-[2026-11-10 14:46:20 MSK] [INFO] [raw] resuming 2026-11-08-11.jsonl.gz (0.00 MB on disk) тАФ appending
+[2026-11-10 14:46:20 MSK] [INFO] [raw] resuming 2026-11-08-11.jsonl.gz (0.00 MB on disk) — appending
 {"files":2,"records":3}
 PASS: raw capture rotates hourly and replays offline; curve identity accepts a snapshot without neighbours
 [2026-11-10 14:46:21 MSK] [INFO] [raw] rotated 2026-11-08-10.jsonl.gz (0.0 KB) -> 2026-11-08-11.jsonl.gz
@@ -323,7 +323,7 @@ PASS: full-balance sells are split so every part fits realSolReserves (6024 guar
 PASS: fill is computed from real reserves; the virtual formula is provably wrong
 {"pf":1,"maxDD":15,"ciSeed7":{"lo":-0.35,"hi":0.3}}
 PASS: shadow stats (PF, maxDD, bootstrap CI, summarize) behave
-PASS: rescue-sell gate тАФ --dry-run never sends, --live requires LIVE_CONFIRM
+PASS: rescue-sell gate — --dry-run never sends, --live requires LIVE_CONFIRM
 PASS: numeric env validated loudly (watcher COPY_MAX_POSITIONS, rescue SELL_SLIPPAGE_BPS)
 PASS: basic-trader rejects invalid sell percentages before any RPC
 tx sent: 5111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
@@ -342,49 +342,49 @@ PASS: copy-trader filters out foreign wallets' trades in a tx mentioning the tar
 PASS: graduation processes every buy event in a tx (no early break on the first)
 ```
 
-## 5. Что не проверено и почему
+## 5. What is not verified and why
 
-1. **Ветка `unconfirmed: true` при остановке** не воспроизводится интеграционно: позиция всегда имеет
-   известную цену, а mint с открытой позицией по построению (S2) не вытесняется, поэтому «цены нет»
-   на практике недостижимо. Ветка защитная, проверена только чтением кода.
-2. **Доставка SIGINT/SIGTERM самому процессу** не тестируется: на Windows `child.kill()` убивает процесс,
-   не вызывая обработчик (та же причина, что и в `scripts/shutdown.test.mjs`). Тест гоняет **ту же**
-   `finishShadow()` через `SHADOW_MAX_SEC`; обработчики сигналов — однострочные вызовы.
-3. **Повторный сигнал во время закрытия сокета** end-to-end не воспроизведён (см. п.2). Гарантия — порядок
-   операций в `finishShadow` (флаг `stopping` до любых записей) + инвариант «одна запись на пару
+1. **The `unconfirmed: true` branch on stop** is not reproduced in integration: a position always has
+   a known price, and a mint with an open position is by construction (S2) not evicted, so no price
+   is unreachable in practice. The branch is defensive, checked by code reading only.
+2. **Delivery of SIGINT/SIGTERM to the process itself** is not tested: on Windows `child.kill()` kills the process,
+   without invoking the handler (the same reason as in `scripts/shutdown.test.mjs`). The test drives the **same**
+   `finishShadow()` via `SHADOW_MAX_SEC`; the signal handlers are one-line calls.
+3. **A repeated signal during socket close** is not reproduced end-to-end (see item 2). The guarantee is the order
+   of operations in `finishShadow` (the `stopping` flag before any writes) + the one-record-per
    (variant, mint)».
-4. **Новая выборка 30+ независимых mints на вариант** недостижима в герметичном тесте: нужен длинный
-   живой прогон. Тесты проверяют учёт и арифметику, а не стратегию.
-5. **Цифры прибыльности после правки S3** не получены (и не должны были): старый журнал остаётся в схеме
-   `legacy`, новый прогон — отдельная эпоха. Пересчитать старые 66 сделок под v3 можно частично (в
-   `gshadow_open` сохранён `spot`), но это отдельная задача и в scope не входила.
+4. **A new sample of 30+ independent mints per variant** is unreachable in a hermetic test: you need a long
+   live run. The tests check accounting and arithmetic, not the strategy.
+5. **The profitability numbers after the S3 edit** were not obtained (and should not have been): the old journal stays in the
+   `legacy` scheme, a new run is a separate epoch. Recomputing the old 66 trades under v3 is partly possible (in
+   `gshadow_open` the `spot` is kept), but that is a separate task and was out of scope.
 
-## 6. Решения, принятые автономно (консервативные)
+## 6. Decisions taken autonomously (conservative)
 
-1. **`COSTS_SCHEME` в `lib/fees.mjs` не повышен.** Правило самого файла — бампать при изменении арифметики
-   ниже (fees/tx/slippage), а она не менялась; при этом `splitByScheme()` и `scripts/analyze-journal.mjs`
-   распознают эпоху по префиксу `v2`, так что глобальный бамп переклассифицировал бы трейды **всех
-   остальных ботов** в legacy. Вместо этого введена отдельная константа
-   `SHADOW_COSTS_SCHEME = "v3-single-slip: …"` в `lib/pessimistic.mjs` (там же, где модель), и она пишется
-   только в `gshadow_*` строки. Эпохи разделены, другие боты не затронуты.
-2. **`SHADOW_MAX_SEC` теперь закрывает позиции как `manual stop`** (раньше `timeout` / `no_data`) — прямое
-   следствие требования «поведение по SIGTERM и по `SHADOW_MAX_SEC` должно быть тем же самым». Побочный
-   эффект: в отчётах прогонов, остановленных таймером, такие сделки больше не попадают в долю `timeout`.
-3. **Новый env `SHADOW_MAX_MINTS` (default `20000`)** — иначе вытеснение нельзя проверить тестом. Значение
-   по умолчанию совпадает с прежним порогом, поведение по умолчанию не меняется.
-4. **Новый мок `scripts/mocks/ws-mock-shadow.mjs`** вместо `ws-mock.mjs`: последний не заполняет
-   `realSolReserves` (смещение 113), поэтому fill всегда 0 и ни один mint не становится кандидатом.
-5. **Ничего не коммитил и не пушил** — как требовалось.
+1. **`COSTS_SCHEME` in `lib/fees.mjs` was not bumped.** The file's own rule is to bump when the arithmetic below
+   (fees/tx/slippage) changes, and it did not; meanwhile `splitByScheme()` and `scripts/analyze-journal.mjs`
+   recognize the epoch by the `v2` prefix, so a global bump would reclassify the trades of **all
+   other bots** into legacy. Instead a separate constant
+   `SHADOW_COSTS_SCHEME = "v3-single-slip: …"` in `lib/pessimistic.mjs` (where the model lives) was introduced, and it is written
+   only into `gshadow_*` rows. The epochs are separated, other bots untouched.
+2. **`SHADOW_MAX_SEC` now closes positions as `manual stop`** (previously `timeout` / `no_data`) — a direct
+   consequence of the requirement that SIGTERM and `SHADOW_MAX_SEC` behave the same. A side
+   effect: in the reports of timer-stopped runs, such trades no longer land in the `timeout` share.
+3. **A new env `SHADOW_MAX_MINTS` (default `20000`)** — otherwise eviction cannot be tested. The value
+   defaults to the previous threshold, the default behaviour does not change.
+4. **A new mock `scripts/mocks/ws-mock-shadow.mjs`** instead of `ws-mock.mjs`: the latter does not fill
+   `realSolReserves` (offset 113), so fill is always 0 and no mint becomes a candidate.
+5. **Nothing was committed or pushed** — as required.
 
-## 7. Что требует решения человека
+## 7. What requires a human's decision
 
-1. **TP до миграции.** Порог 1.3/1.5 недостижим: от входа на fill≈92 % до выпуска (fill=100 %) цена растёт
-   максимум ~+12 %. На 66 сделках старого прогона доля `tp` = 0 % у всех вариантов. Это параметр и/или
-   логика выхода — по условиям задачи не менял.
-2. **Размер ставки 0.02 SOL.** Фиксированные издержки (2 × 0.000455 SOL priority+base) — ≈4.6 % ноционала,
-   поэтому сделка «в ноль» по цене даёт −7.63 % net. Увеличивать ставку, менять модель издержек или
-   учитывать tx иначе — решение владельца.
-3. **Нужна ли новая выборка.** Анализатор теперь явно требует ≥30 уникальных mints (иначе вердикт
-   `withheld`). Старый прогон: 66 сделок = 8 mints. Нужен длинный прогон для независимых наблюдений.
-4. **Пересчёт старых сделок под схему v3** (из `gshadow_open.spot`) — делать или нет, решает человек;
-   смешивать эпохи анализатор больше не позволит.
+1. **TP before migration.** The 1.3/1.5 threshold is unreachable: from entry at fill≈92% to graduation (fill=100%) the price rises
+   at most ~+12%. Across the old run's 66 trades the `tp` share is 0% for all variants. This is a parameter and/or
+   exit logic — I did not change it per the task's terms.
+2. **The 0.02 SOL stake size.** The fixed costs (2 × 0.000455 SOL priority+base) are ≈4.6% of notional,
+   so a trade flat on price gives −7.63% net. Raising the stake, changing the cost model or
+   accounting for tx differently is the owner's decision.
+3. **Whether a new sample is needed.** The analyzer now explicitly requires ≥30 unique mints (otherwise the verdict
+   is `withheld`). The old run: 66 trades = 8 mints. A long run is needed for independent observations.
+4. **Recomputing the old trades under the v3 scheme** (from `gshadow_open.spot`) — whether to do it is the human's call;
+   the analyzer will no longer allow mixing epochs.

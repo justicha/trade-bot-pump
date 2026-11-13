@@ -1,4 +1,4 @@
-"""Роль кошелька в его транзакциях: signer / writable / изменение SOL / какие программы.
+"""A wallet's role in its transactions: signer / writable / SOL change / which programs.
 python3 research/roles.py <wallet>"""
 import collections
 import json

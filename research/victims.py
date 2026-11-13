@@ -1,14 +1,14 @@
-"""Жизнь токена от запуска до выхода создателя: кто заработал, кто потерял.
+"""A token's life from launch to the creator's exit: who made money, who lost.
 python3 research/victims.py data/windows.json
 
-Учёт по реальным изменениям балансов (а не по событиям): для каждой успешной tx берём fee payer'а,
-его ΔSOL (+ΔWSOL) и Δтокена. Это корректно и для BuyV2/SellV2 с не-SOL котировкой.
+Accounting by real balance changes (not by events): for each successful tx we take the fee payer,
+their ΔSOL (+ΔWSOL) and Δtoken. This is correct even for BuyV2/SellV2 with non-SOL quotes.
 
-Категории участников:
-  dev     — создатель + кошельки, получившие от него SOL в нашей выборке (суб-кошельки) + со-подписанты create-tx
-  slot0   — сторонние кошельки, купившие в том же слоте, что и create (бандл или сверхбыстрый снайпер)
-  sniper  — купили в первые 10 слотов (~4 с)
-  late    — все остальные
+Participant categories:
+  dev     — the creator + wallets that received SOL from them in our sample (sub-wallets) + create-tx co-signers
+  slot0   — third-party wallets that bought in the same slot as create (a bundle or an ultra-fast sniper)
+  sniper  — bought in the first 10 slots (~4 s)
+  late    — everyone else
 """
 import collections
 import json
@@ -80,7 +80,7 @@ for w in windows:
             p["first"] = off
         ev = [e for e in events(t) if e["mint"] == mint and e["quote_is_sol"] and e["vtok"]]
         if ev:
-            last_price = ev[-1]["vsol"] / ev[-1]["vtok"]  # цена кривой после сделки
+            last_price = ev[-1]["vsol"] / ev[-1]["vtok"]  # curve price after the trade
         elif abs(sol) > 0.05 and abs(tok) > 0:
             last_price = abs(sol) / abs(tok)
         cb = compute_budget(t["transaction"]["message"]["instructions"])
@@ -110,20 +110,20 @@ for w in windows:
     row = dict(mint=mint, creator=creator[:6], window_sigs=len(sigs), fail_share=fail,
                **{f"{k}_{m}": v[m] for k, v in groups.items() for m in ("n", "sol", "left", "losers")})
     summary.append(row)
-    print(f"\n{mint[:10]} (creator {creator[:6]}): подписей в окне {len(sigs)}, упавших {fail * 100:.0f}%")
+    print(f"\n{mint[:10]} (creator {creator[:6]}): signatures in the window {len(sigs)}, failed {fail * 100:.0f}%")
     for k in ("dev", "slot0", "sniper", "late"):
         if k in groups:
             g = groups[k]
-            print(f"  {k:6s}: {g['n']:3d} кошельков, реализовано {g['sol']:+8.2f} SOL, остаток ~{g['left']:6.2f} SOL, в минусе {g['losers']}")
+            print(f"  {k:6s}: {g['n']:3d} wallets, realized {g['sol']:+8.2f} SOL, remainder ~{g['left']:6.2f} SOL, at a loss {g['losers']}")
 
-print("\n===== ИТОГО =====")
+print("\n===== TOTAL =====")
 tot = collections.defaultdict(lambda: [0, 0.0, 0.0, 0])
 for r in summary:
     for k in ("dev", "slot0", "sniper", "late"):
         if f"{k}_n" in r:
             t = tot[k]; t[0] += r[f"{k}_n"]; t[1] += r[f"{k}_sol"]; t[2] += r[f"{k}_left"]; t[3] += r[f"{k}_losers"]
 for k, (n, s, l, lo) in tot.items():
-    print(f"{k:6s}: {n:4d} кошельков; реализовано {s:+8.2f} SOL; остаток ~{l:6.2f}; итого {s + l:+8.2f}; в минусе {lo} ({lo / max(n, 1) * 100:.0f}%)")
-print(f"медиана доли упавших подписей в окне: {st.median([r['fail_share'] for r in summary]) * 100:.0f}%")
+    print(f"{k:6s}: {n:4d} wallets; realized {s:+8.2f} SOL; remainder ~{l:6.2f}; total {s + l:+8.2f}; at a loss {lo} ({lo / max(n, 1) * 100:.0f}%)")
+print(f"median share of failed signatures in the window: {st.median([r['fail_share'] for r in summary]) * 100:.0f}%")
 json.dump(summary, open(os.path.join(ROOT, "data", "victims_summary.json"), "w"), indent=1)
 json.dump(launch, open(os.path.join(ROOT, "data", "launch_trades.json"), "w"), indent=1)

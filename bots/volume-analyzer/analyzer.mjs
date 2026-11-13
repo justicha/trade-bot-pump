@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Volume Analyzer: анализирует кошелёк или токен (эвристики на данных обычного RPC).
+// Volume Analyzer: analyses a wallet or a token (heuristics on plain RPC data).
 //   node bots/volume-analyzer/analyzer.mjs wallet <address>
 //   node bots/volume-analyzer/analyzer.mjs token <mint>
-// Определяет: тип стратегии, multi-wallet кластеры (по общим transfer-получателям),
-// launch-слот (эвристика), координированные exits, rapid buy-sell. Ограничения — в конце.
+// Detects: strategy type, multi-wallet clusters (by shared transfer recipients),
+// launch slot (heuristic), coordinated exits, rapid buy-sell. Limitations are at the end.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -156,7 +156,7 @@ async function analyzeWallet(addr) {
   log(`  Buys: ${buys.length}, Sells: ${sells.length}`);
   log(`  Trades: event.user matched=${evMatched}, added via token-delta=${addedDelta} (buy ${addedBuy}/sell ${addedSell}), fee-payer-only=${feePayerExtra}`);
   log(`  SOL in: ${solIn.toFixed(4)}, SOL out: ${solOut.toFixed(4)}`);
-  log(`  PnL: ${pnl >= 0 ? "+" : ""}${pnl.toFixed(4)} SOL  (выборка ${sample} tx из ${sigs.length} sigs)`);
+  log(`  PnL: ${pnl >= 0 ? "+" : ""}${pnl.toFixed(4)} SOL  (sample ${sample} tx of ${sigs.length} sigs)`);
   log(`  Unique mints: ${mints.size}`);
   log(`  Median CU price: ${medCU.toLocaleString()} µlamports/CU`);
   log(`  Error rate: ${(errorRate * 100).toFixed(0)}%`);
@@ -171,17 +171,17 @@ async function analyzeWallet(addr) {
   }
 
   let strategy;
-  if (errorRate > 0.8) strategy = "BRUTE_FORCE — спамит транзакциями, >80% фейлятся";
-  else if (tradeCount === 0) strategy = "NO_TRADES — нет pump.fun сделок в выборке";
-  else if (buys.length === 0 && sells.length > 0) strategy = "SELL_ONLY (в выборке) — возможно pre-loaded / другой кошелёк";
-  else if (sells.length === 0 && buys.length > 0) strategy = "BUY_ONLY (в выборке) — holding / выход в другом месте";
+  if (errorRate > 0.8) strategy = "BRUTE_FORCE — spams transactions, >80% fail";
+  else if (tradeCount === 0) strategy = "NO_TRADES — no pump.fun trades in the sample";
+  else if (buys.length === 0 && sells.length > 0) strategy = "SELL_ONLY (in the sample) — possibly pre-loaded / another wallet";
+  else if (sells.length === 0 && buys.length > 0) strategy = "BUY_ONLY (in the sample) — holding / exiting elsewhere";
   else if (hasCustomProg) {
     strategy = programs.size === 1
-      ? `CUSTOM_BOT — собственная программа ${[...programs.keys()][0].slice(0, 16)}…`
-      : "MULTI_PROGRAM — несколько нестандартных программ";
+      ? `CUSTOM_BOT — own program ${[...programs.keys()][0].slice(0, 16)}…`
+      : "MULTI_PROGRAM — several non-standard programs";
   }
-  else if (medCU === 0 && tradeCount >= 3) strategy = "DIRECT_HIGHFREQ — без CU price, приоритет через bundle/landing";
-  else strategy = "DIRECT_TRADER — прямой трейдер";
+  else if (medCU === 0 && tradeCount >= 3) strategy = "DIRECT_HIGHFREQ — no CU price, priority via bundle/landing";
+  else strategy = "DIRECT_TRADER — a direct trader";
 
   const confidence = sample >= 15 ? "medium" : sample >= 7 ? "low" : "very low";
   log(`\n  >>> STRATEGY: ${strategy}`);
@@ -223,10 +223,10 @@ async function analyzeToken(mint) {
   try { pk = new PublicKey(mint); } catch { log(`Invalid mint: ${mint}`); process.exit(1); }
 
   const sigs = await getSignaturesPaged(pk, 1000);
-  log(`\nSignatures scanned: ${sigs.length} (depth cap 1000 — launch slot точный только если токенов < cap)`);
+  log(`\nSignatures scanned: ${sigs.length} (depth cap 1000 — launch slot is exact only when tokens < cap)`);
 
   const ok = sigs.filter((s) => !s.err);
-  const window = ok.slice(-30); // oldest 30 => район запуска (getSignaturesForAddress идёт новое->старое)
+  const window = ok.slice(-30); // oldest 30 => launch area (getSignaturesForAddress goes newest->oldest)
   const detailsArr = await poolMap(window, CONCURRENCY, (s) => fetchTxDetails(s.signature));
 
   const traders = new Map(); // user -> { buys, sells, solIn, solOut, dests:Set }
@@ -269,13 +269,13 @@ async function analyzeToken(mint) {
   const firstSlot = timeline.length ? Math.min(...timeline.map((t) => t.slot)) : null;
   const sameSlot = firstSlot == null ? [] : timeline.filter((t) => t.slot === firstSlot);
   if (sameSlot.length > 1) {
-    log(`  [!]  ${sameSlot.length} сделок в launch-слоте (+0) — это может быть бандл ИЛИ конкурирующие снайперы:`);
+    log(`  [!]  ${sameSlot.length} trades in the launch slot (+0) — could be a bundle OR competing snipers:`);
     for (const t of sameSlot.slice(0, 8)) log(`    ${t.user.slice(0, 12)} ${t.isBuy ? "BUY" : "SELL"} ${t.sol.toFixed(4)} SOL`);
   }
 
   const sellOnly = sorted.filter((t) => t.buys === 0 && t.sells > 0);
   if (sellOnly.length) {
-    log(`\n  [!]  ${sellOnly.length} sell-only кошельков в выборке (bought раньше / pre-loaded — не гарантия):`);
+    log(`\n  [!]  ${sellOnly.length} sell-only wallets in the sample (bought earlier / pre-loaded — not proof):`);
     for (const t of sellOnly.slice(0, 5)) log(`    ${t.addr.slice(0, 16)} → ${t.solOut.toFixed(4)} SOL out`);
   }
 
@@ -290,11 +290,11 @@ async function analyzeToken(mint) {
     }
   }
   if (rapid.length) {
-    log(`\n  [!]  ${rapid.length} кошельков с rapid buy-sell (<3 слотов) — быстрый скальп/MEV (не обязательно wash):`);
+    log(`\n  [!]  ${rapid.length} wallets with rapid buy-sell (<3 slots) — quick scalp/MEV (not necessarily wash):`);
     for (const t of rapid.slice(0, 5)) log(`    ${t.addr.slice(0, 16)} (${t.gap} slot gap)`);
   }
 
-  // Coordinated exits: >=3 разных кошелька продают в одном слоте
+  // Coordinated exits: >=3 distinct wallets sell in one slot
   const sellsBySlot = new Map();
   for (const t of timeline) {
     if (t.isBuy) continue;
@@ -303,11 +303,11 @@ async function analyzeToken(mint) {
   }
   const coordinated = [...sellsBySlot.entries()].filter(([, s]) => s.size >= COORDINATED_EXIT_MIN_WALLETS).sort((a, b) => b[1].size - a[1].size);
   if (coordinated.length) {
-    log(`\n  [!]  Координированные exits (>=3 кошелька продают в одном слоте):`);
-    for (const [slot, set] of coordinated.slice(0, 5)) log(`    slot ${slot}: ${set.size} кошельков`);
+    log(`\n  [!]  Coordinated exits (>=3 wallets sell in one slot):`);
+    for (const [slot, set] of coordinated.slice(0, 5)) log(`    slot ${slot}: ${set.size} wallets`);
   }
 
-  // Дешёвая кластеризация: общие transfer-получатели (не Jito — они у всех одинаковые)
+  // Cheap clustering: shared transfer recipients (not Jito — those are the same for everyone)
   const destUsers = new Map();
   for (const [user, t] of traders) {
     for (const dest of t.dests) {
@@ -323,7 +323,7 @@ async function analyzeToken(mint) {
     .filter(([, s]) => s.size >= 2 && s.size < traderCount)
     .sort((a, b) => b[1].size - a[1].size);
   if (clusters.length) {
-    log(`\n  [!]  Кластеры кошельков по общим transfer-получателям:`);
+    log(`\n  [!]  Wallet clusters by shared transfer recipients:`);
     for (const [dest, set] of clusters.slice(0, 5)) log(`    → ${dest.slice(0, 16)}… : ${[...set].map((u) => u.slice(0, 8)).join(",")}`);
   }
 
@@ -335,10 +335,10 @@ async function analyzeToken(mint) {
     log(`  +${String(off).padStart(5)} | ${time} | ${t.user.slice(0, 12)} | ${t.isBuy ? "BUY " : "SELL"} | ${t.sol.toFixed(4)} SOL`);
   }
 
-  log(`\n--- LIMITS (обычный RPC) ---`);
-  log(`  • bundle vs competing snipers: одним слотом не различить — нужен getBlock/Jito API`);
-  log(`  • coordinated exits/кластеры — эвристика по слоту/получателям, не доказывает связь`);
-  log(`  • PumpSwap(AMM): события парсятся (base, quote с комиссиями, user, mint через user_base_token_account); неразрешённые считаются в COVERAGE как pswapUnresolved`);
+  log(`\n--- LIMITS (plain RPC) ---`);
+  log(`  • bundle vs competing snipers: not distinguishable by one slot — getBlock/Jito API is needed`);
+  log(`  • coordinated exits/clusters — a slot/recipient heuristic, does not prove a link`);
+  log(`  • PumpSwap(AMM): events are parsed (base, quote with fees, user, mint via user_base_token_account); unresolved ones count in COVERAGE as pswapUnresolved`);
   coverageLine();
 }
 

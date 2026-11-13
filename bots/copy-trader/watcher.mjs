@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// Копи-трейдер: следит за кошельками успешных трейдеров и повторяет их сделки (V3 API)
+// Copy trader: watches successful traders' wallets and repeats their trades (V3 API)
 //
-// Использование: node bots/copy-trader/watcher.mjs [--live]   (по умолчанию dry-run; --live включает реальную торговлю)
+// Usage: node bots/copy-trader/watcher.mjs [--live]   (dry-run by default; --live enables real trading)
 //
-// Конфиг через ENV или .env:
-//   COPY_TARGETS=addr1,addr2,...  — кошельки для копирования
-//   COPY_BUY_SOL=0.05            — сумма покупки (фиксированная)
-//   COPY_SELL_PCT=100             — процент продажи при продаже целью
-//   COPY_MAX_POSITIONS=5          — максимум одновременных позиций
-//   COPY_MAX_HOLD_SEC=1800        — страховка: если цель не продала за N секунд после нашей покупки,
-//                                   бот продаёт сам (весь остаток); 0 = выключено. Не стратегия (не TP/SL).
-//   SELL_MAX_ATTEMPTS=3           — максимум попыток продажи позиции (backoff 2 с, 4 с, …), затем STUCK
+// Config via ENV or .env:
+//   COPY_TARGETS=addr1,addr2,...  — wallets to copy
+//   COPY_BUY_SOL=0.05            — buy amount (fixed)
+//   COPY_SELL_PCT=100             — percent sold when the target sells
+//   COPY_MAX_POSITIONS=5          — max concurrent positions
+//   COPY_MAX_HOLD_SEC=1800        — safety net: if the target has not sold within N seconds of our buy,
+//                                   the bot sells the whole remainder itself; 0 = off. Not a strategy (no TP/SL).
+//   SELL_MAX_ATTEMPTS=3           — max sell attempts per position (backoff 2 s, 4 s, ...), then STUCK
 
 import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";

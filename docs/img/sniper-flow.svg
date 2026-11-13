@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="sniperTitle sniperDesc">
-  <title id="sniperTitle">Схема работы снайпера</title>
-  <desc id="sniperDesc">Поток bots/sniper/sniper.mjs: создание токена, фильтр первой покупки автора, ожидание держателей, проверка толпы, пауза и слоты, покупка, затем опрос выходов и продажа по take profit, stop loss или таймауту, запись в журнал и итог сессии.</desc>
+  <title id="sniperTitle">Sniper flow diagram</title>
+  <desc id="sniperDesc">The bots/sniper/sniper.mjs flow: token creation, the author's first-buy filter, waiting for holders, the crowd check, pause and slots, the buy, then exit polling and a sell on take profit, stop loss or timeout, a journal record and the session summary.</desc>
   <defs>
     <linearGradient id="snBg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
@@ -20,7 +20,7 @@
   <rect width="1200" height="620" fill="url(#snBg)"/>
   <rect width="1200" height="620" fill="url(#snGrid)" opacity="0.5"/>
 
-  <text x="32" y="40" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#e6f1ff">sniper.mjs — порядок решений (в подписях — имена переменных)</text>
+  <text x="32" y="40" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="19" font-weight="700" fill="#e6f1ff">sniper.mjs — decision order (the captions name variables)</text>
 
   <g filter="url(#snShadow)">
     <rect x="32" y="64" width="266" height="64" rx="12" fill="#141d2b" stroke="#3b5578" stroke-width="1.6"/>
@@ -40,49 +40,49 @@
   </g>
 
   <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
-    <text x="48" y="92" font-size="14" font-weight="600" fill="#dbe7f5">Создание токена</text>
-    <text x="48" y="114" font-size="11.5" fill="#8aa0b8">Create / CreateV2 в логах</text>
+    <text x="48" y="92" font-size="14" font-weight="600" fill="#dbe7f5">Token creation</text>
+    <text x="48" y="114" font-size="11.5" fill="#8aa0b8">Create / CreateV2 in the logs</text>
 
-    <text x="48" y="172" font-size="14" font-weight="600" fill="#dbe7f5">Фильтр первой покупки</text>
-    <text x="48" y="194" font-size="11.5" fill="#8aa0b8">SNIPER_MIN_DEV_BUY (0 = выключен)</text>
+    <text x="48" y="172" font-size="14" font-weight="600" fill="#dbe7f5">First-buy filter</text>
+    <text x="48" y="194" font-size="11.5" fill="#8aa0b8">SNIPER_MIN_DEV_BUY (0 = off)</text>
 
-    <text x="48" y="252" font-size="14" font-weight="600" fill="#dbe7f5">Держатели</text>
-    <text x="48" y="274" font-size="11.5" fill="#8aa0b8">SNIPER_MIN_HOLDERS разных кошельков</text>
-    <text x="48" y="292" font-size="11.5" fill="#8aa0b8">за SNIPER_HOLDER_WAIT_SEC</text>
+    <text x="48" y="252" font-size="14" font-weight="600" fill="#dbe7f5">Holders</text>
+    <text x="48" y="274" font-size="11.5" fill="#8aa0b8">SNIPER_MIN_HOLDERS distinct wallets</text>
+    <text x="48" y="292" font-size="11.5" fill="#8aa0b8">within SNIPER_HOLDER_WAIT_SEC</text>
 
-    <text x="48" y="346" font-size="14" font-weight="600" fill="#dbe7f5">Проверка толпы</text>
+    <text x="48" y="346" font-size="14" font-weight="600" fill="#dbe7f5">Crowd check</text>
     <text x="48" y="368" font-size="10.5" fill="#8aa0b8">SNIPER_MIN_SLOTS · SNIPER_MIN_DELAY_MS</text>
 
-    <text x="48" y="426" font-size="14" font-weight="600" fill="#dbe7f5">Пауза и слоты</text>
+    <text x="48" y="426" font-size="14" font-weight="600" fill="#dbe7f5">Pause and slots</text>
     <text x="48" y="448" font-size="10" fill="#8aa0b8">SNIPER_COOLDOWN_SEC · SNIPER_MAX_POSITIONS</text>
 
-    <text x="48" y="506" font-size="14" font-weight="600" fill="#fbbf24">Покупка</text>
-    <text x="48" y="528" font-size="11.5" fill="#c9b48a">SNIPER_BUY_SOL · лимиты сессии</text>
+    <text x="48" y="506" font-size="14" font-weight="600" fill="#fbbf24">Buy</text>
+    <text x="48" y="528" font-size="11.5" fill="#c9b48a">SNIPER_BUY_SOL · session limits</text>
 
-    <text x="356" y="252" font-size="13.5" font-weight="600" fill="#dbe7f5">Нет: токен отброшен</text>
-    <text x="356" y="274" font-size="11" fill="#8aa0b8">денег не потрачено,</text>
-    <text x="356" y="290" font-size="11" fill="#8aa0b8">в журнале одна строка</text>
+    <text x="356" y="252" font-size="13.5" font-weight="600" fill="#dbe7f5">No: token dropped</text>
+    <text x="356" y="274" font-size="11" fill="#8aa0b8">no money spent,</text>
+    <text x="356" y="290" font-size="11" fill="#8aa0b8">one line in the journal</text>
 
-    <text x="356" y="426" font-size="13.5" font-weight="600" fill="#dbe7f5">Пропуск: не сейчас</text>
-    <text x="356" y="448" font-size="11" fill="#8aa0b8">пауза или лимит позиций</text>
+    <text x="356" y="426" font-size="13.5" font-weight="600" fill="#dbe7f5">Skip: not now</text>
+    <text x="356" y="448" font-size="11" fill="#8aa0b8">pause or position limit</text>
 
-    <text x="356" y="506" font-size="13.5" font-weight="600" fill="#fbbf24">Позиция открыта</text>
-    <text x="356" y="528" font-size="11" fill="#c9b48a">цена входа — из сделки</text>
+    <text x="356" y="506" font-size="13.5" font-weight="600" fill="#fbbf24">Position open</text>
+    <text x="356" y="528" font-size="11" fill="#c9b48a">entry price — from the trade</text>
 
-    <text x="628" y="506" font-size="13.5" font-weight="600" fill="#dbe7f5">Опрос выходов</text>
-    <text x="628" y="528" font-size="11" fill="#8aa0b8">POLL_MS 3000 мс: TP · SL · таймаут</text>
+    <text x="628" y="506" font-size="13.5" font-weight="600" fill="#dbe7f5">Exit polling</text>
+    <text x="628" y="528" font-size="11" fill="#8aa0b8">POLL_MS 3000 ms: TP · SL · timeout</text>
 
-    <text x="628" y="426" font-size="13.5" font-weight="600" fill="#dbe7f5">Правила выхода</text>
-    <text x="628" y="448" font-size="11" fill="#8aa0b8">TP 1.5 · SL 0.7 · таймаут 300 с</text>
+    <text x="628" y="426" font-size="13.5" font-weight="600" fill="#dbe7f5">Exit rules</text>
+    <text x="628" y="448" font-size="11" fill="#8aa0b8">TP 1.5 · SL 0.7 · timeout 300 s</text>
 
-    <text x="628" y="346" font-size="13.5" font-weight="600" fill="#dbe7f5">Продажа и журнал</text>
-    <text x="628" y="368" font-size="11" fill="#8aa0b8">запись итога → счётчик убытков</text>
+    <text x="628" y="346" font-size="13.5" font-weight="600" fill="#dbe7f5">Sell and journal</text>
+    <text x="628" y="368" font-size="11" fill="#8aa0b8">record the result → the loss counter</text>
 
-    <text x="628" y="266" font-size="13.5" font-weight="600" fill="#fbbf24">Итог сессии</text>
+    <text x="628" y="266" font-size="13.5" font-weight="600" fill="#fbbf24">Session summary</text>
     <text x="628" y="288" font-size="11" fill="#c9b48a">MAX_SESSION_SOL · MAX_CONSEC_LOSSES</text>
 
-    <text x="628" y="186" font-size="13.5" font-weight="600" fill="#dbe7f5">Закрытие позиций</text>
-    <text x="628" y="208" font-size="11" fill="#8aa0b8">manual stop, затем SESSION SUMMARY</text>
+    <text x="628" y="186" font-size="13.5" font-weight="600" fill="#dbe7f5">Closing positions</text>
+    <text x="628" y="208" font-size="11" fill="#8aa0b8">manual stop, then SESSION SUMMARY</text>
   </g>
 
   <g stroke="#2dd4bf" stroke-width="2" fill="none" marker-end="url(#snArrow)">
@@ -100,7 +100,7 @@
     <path d="M738 238 V 222"/>
   </g>
 
-  <text x="32" y="592" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">В dry-run тот же путь, но вместо транзакции — виртуальная сделка. Замок в файле не даёт запустить два снайпера на одной папке журнала.</text>
-  <text x="32" y="612" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#6f8299">Полные имена: SNIPER_TAKE_PROFIT, SNIPER_STOP_LOSS, SNIPER_TIMEOUT_SEC, SNIPER_MAX_SEC, POLL_MS — в docs/bots.md.</text>
+  <text x="32" y="592" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#8aa0b8">In dry-run the path is the same, but a virtual trade replaces the transaction. The lock file stops two snipers from running on one journal folder.</text>
+  <text x="32" y="612" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#6f8299">Full names: SNIPER_TAKE_PROFIT, SNIPER_STOP_LOSS, SNIPER_TIMEOUT_SEC, SNIPER_MAX_SEC, POLL_MS — in docs/bots.md.</text>
 </svg>
 

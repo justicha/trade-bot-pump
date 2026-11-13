@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="bannerTitle bannerDesc">
-  <title id="bannerTitle">pump-bot — торговые боты для pump.fun на Solana</title>
-  <desc id="bannerDesc">Тёмный баннер с сеткой. Слева крупная надпись pump-bot, подзаголовок «торговые боты для pump.fun · Solana» и три бейджа: «DRY-RUN по умолчанию», «Solana», «pump.fun → PumpSwap». Справа схема жизни токена: неоново-зелёная bonding curve растёт по мере заполнения от 0 до 100 процентов, заштрихованная полоса входа, границы задаёт пользователь (на схеме меняется от ~60 до ~95 процентов) отмечает, где входит бот (янтарная точка), пунктир graduation на 100 процентах (около 85 SOL) с пульсирующим кольцом, после него бирюзовая линия цены в пуле PumpSwap. Внизу мелко: не финансовый совет, прибыль не гарантирована.</desc>
+  <title id="bannerTitle">pump-bot — trading bots for pump.fun on Solana</title>
+  <desc id="bannerDesc">A dark grid banner. On the left the large pump-bot wordmark, the subtitle trading bots for pump.fun · Solana and three badges: DRY-RUN by default, Solana, pump.fun → PumpSwap. On the right a diagram of a token's life: a neon-green bonding curve rising as it fills from 0 to 100 percent, a shaded entry band whose bounds the user sets (in the diagram it varies from ~60 to ~95 percent), marking where the bot enters (an amber dot), a dashed graduation line at 100 percent (about 85 SOL) with a pulsing ring, and after it a teal price line in the PumpSwap pool. At the bottom, small: not financial advice, profit not guaranteed.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#070d18"/>
@@ -56,12 +56,12 @@
     <text x="64" y="74" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" letter-spacing="3" fill="#4ade80">SOLANA · PUMP.FUN · NODE.JS</text>
     <text x="60" y="148" font-size="80" font-weight="800" letter-spacing="-2" fill="#4ade80" opacity="0.45" filter="url(#blur)">pump-bot</text>
     <text x="60" y="148" font-size="80" font-weight="800" letter-spacing="-2" fill="url(#title)">pump-bot</text>
-    <text x="64" y="188" font-size="24" fill="#c7d6e8">торговые боты для <tspan fill="#4ade80" font-weight="700">pump.fun</tspan> · Solana</text>
+    <text x="64" y="188" font-size="24" fill="#c7d6e8">trading bots for <tspan fill="#4ade80" font-weight="700">pump.fun</tspan> · Solana</text>
 
     <g font-size="14" font-weight="600">
       <rect x="64" y="210" width="210" height="34" rx="17" fill="#0b2a1a" stroke="#4ade80" stroke-width="1.5"/>
       <circle cx="82" cy="227" r="5" fill="#4ade80"/>
-      <text x="94" y="232" fill="#86efac">DRY-RUN по умолчанию</text>
+      <text x="94" y="232" fill="#86efac">DRY-RUN by default</text>
 
       <rect x="284" y="210" width="92" height="34" rx="17" fill="#0a2629" stroke="#2dd4bf" stroke-width="1.5"/>
       <circle cx="302" cy="227" r="5" fill="#2dd4bf"/>
@@ -72,7 +72,7 @@
       <text x="416" y="232" fill="#fcd34d">pump.fun → PumpSwap</text>
     </g>
 
-    <text x="64" y="284" font-size="14" fill="#7f93a8">исследовательский инструмент · не финансовый совет · прибыль не гарантирована</text>
+    <text x="64" y="284" font-size="14" fill="#7f93a8">a research tool · not financial advice · profit not guaranteed</text>
   </g>
 
   <!-- right: life of a token -->
@@ -111,11 +111,11 @@
     <text x="652" y="46" fill="#4ade80">bonding curve</text>
     <text x="1060" y="44" text-anchor="middle" fill="#e6f1ff">graduation</text>
     <text x="1170" y="44" text-anchor="middle" fill="#22d3ee">PumpSwap</text>
-    <text x="938" y="118" text-anchor="end" fill="#fcd34d">вход бота</text>
+    <text x="938" y="118" text-anchor="end" fill="#fcd34d">bot entry</text>
     <g font-weight="500" fill="#8aa0b8">
       <text x="640" y="288">0%</text>
       <text x="850" y="288" text-anchor="middle">50%</text>
-      <text x="986" y="288" text-anchor="middle" fill="#fcd34d">↔ настраивается</text>
+      <text x="986" y="288" text-anchor="middle" fill="#fcd34d">↔ configurable</text>
       <text x="1066" y="288">100% ≈ 85 SOL</text>
     </g>
   </g>

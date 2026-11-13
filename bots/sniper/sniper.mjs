@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// Снайпер: покупает новые токены на pump.fun при появлении BondingCurveV3,
-// продаёт по take-profit / stop-loss / timeout (V3 API)
+// Sniper: buys new pump.fun tokens when BondingCurveV3 appears,
+// sells on take-profit / stop-loss / timeout (V3 API)
 //
-// Использование: node bots/sniper/sniper.mjs [--live]   (по умолчанию dry-run; --live включает реальную торговлю)
+// Usage: node bots/sniper/sniper.mjs [--live]   (dry-run by default; --live enables real trading)
 //
-// Конфиг через ENV или .env:
-//   SNIPER_BUY_SOL=0.1          — сколько SOL на покупку
-//   SNIPER_TAKE_PROFIT=2.0      — продать при 2x
-//   SNIPER_STOP_LOSS=0.5        — продать если цена упала до 0.5x
-//   SNIPER_TIMEOUT_SEC=120      — продать через 120 секунд
-//   SNIPER_MAX_POSITIONS=3      — максимум одновременных позиций
-//   SNIPER_MIN_DEV_BUY=0.5      — минимальная покупка dev'а (SOL)
-//   SNIPER_COOLDOWN_SEC=10      — пауза между покупками
+// Config via ENV or .env:
+//   SNIPER_BUY_SOL=0.1          — SOL to buy
+//   SNIPER_TAKE_PROFIT=2.0      — sell at 2x
+//   SNIPER_STOP_LOSS=0.5        — sell if the price falls to 0.5x
+//   SNIPER_TIMEOUT_SEC=120      — sell after 120 seconds
+//   SNIPER_MAX_POSITIONS=3      — max concurrent positions
+//   SNIPER_MIN_DEV_BUY=0.5      — min dev buy (SOL)
+//   SNIPER_COOLDOWN_SEC=10      — pause between buys
 
 import { PublicKey } from "@solana/web3.js";
 import path from "node:path";

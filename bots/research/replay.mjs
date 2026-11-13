@@ -9,7 +9,7 @@
 //   * thresholds are chosen on the FIRST 70% of the trades (by time),
 //   * every variant is judged ONCE on the LAST 30%,
 //   * a variant "wins" only with >= REPLAY_MIN_TRADES test trades AND a bootstrap CI lower
-//     bound above 0 after costs. Otherwise the verdict is "устойчивого перевеса нет".
+//     bound above 0 after costs. Otherwise the verdict is "no stable edge".
 import fs from "node:fs";
 import path from "node:path";
 import { readJournal, excludeDegraded } from "../../lib/journal.mjs";
@@ -161,15 +161,15 @@ if (frozen && !freezeArg) {
 const winners = results.filter((r) => r.pass);
 console.log("");
 if (!winners.length) {
-  console.log("ВЕРДИКТ: устойчивого перевеса нет.");
+  console.log("VERDICT: no stable edge.");
   const closest = results[0];
   if (closest) {
     console.log(
-      `  ближе всех: ${closest.variant} — средняя ${closest.test.meanPct}%, CI [${closest.test.ciLo}..${closest.test.ciHi}], тест-сделок ${closest.nTest} (нужно ${MIN_TRADES})`,
+      `  closest: ${closest.variant} — mean ${closest.test.meanPct}%, CI [${closest.test.ciLo}..${closest.test.ciHi}], test trades ${closest.nTest} (need ${MIN_TRADES})`,
     );
   }
-  console.log("  нужно больше данных (собрать ещё прогонов) и/или другие гипотезы, а не подкрутка порогов.");
+  console.log("  need more data (collect more runs) and/or different hypotheses, not threshold tuning.");
 } else {
-  console.log(`ВЕРДИКТ: прошли критерий: ${winners.map((w) => w.variant).join(", ")} — на hold-out данных, с комиссиями.`);
-  console.log("  это статистика прошлого, а не гарантия будущего: решение всё равно за лимитами размера позиции.");
+  console.log(`VERDICT: passed the criterion: ${winners.map((w) => w.variant).join(", ")} — on hold-out data, with fees.`);
+  console.log("  this is past statistics, not a guarantee of the future: the position size limits still decide.");
 }

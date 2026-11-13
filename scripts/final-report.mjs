@@ -96,11 +96,11 @@ const secondPes = evalHalf(H2, "pessimistic");
 printTable(`Half 2 (validation, n=${H2.length}) — pessimistic`, secondPes);
 
 // ---- V4/V5 no-data (>30% => conclusion impossible) ----
-console.log("\n## V4/V5 no-data (>30% => вывод невозможен)");
+console.log("\n## V4/V5 no-data (>30% => no conclusion)");
 for (const v of secondPes.variants) {
   if (v.id !== "V4" && v.id !== "V5") continue;
   const share = v.noDataShare === null ? 0 : v.noDataShare;
-  console.log(`- ${v.id}: noData ${v.noData}/${v.n + v.noData} (${(share * 100).toFixed(0)}%)${share > 0.3 ? " — вывод невозможен" : ""}`);
+  console.log(`- ${v.id}: noData ${v.noData}/${v.n + v.noData} (${(share * 100).toFixed(0)}%)${share > 0.3 ? " — no conclusion" : ""}`);
 }
 
 // ---- aggregate helper ----
@@ -164,6 +164,6 @@ for (const v of secondPes.variants) {
 console.log(
   anyAccepted
     ? "\nRESULT: at least one variant passes the 95% bar on half 2 (pessimistic)."
-    : `\nRESULT: положительного ожидания нет ни в одном варианте (half 2, pessimistic, n>=${MIN_N}, 95% CI lo > 0).`,
+    : `\nRESULT: no positive expectancy in any variant (half 2, pessimistic, n>=${MIN_N}, 95% CI lo > 0).`,
 );
 

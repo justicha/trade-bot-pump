@@ -1,24 +1,24 @@
 #!/usr/bin/env node
-// Graduation Sniper: покупает токены перед graduation (миграцией с bonding curve на PumpSwap AMM)
+// Graduation Sniper: buys tokens before graduation (migration from the bonding curve to the PumpSwap AMM)
 //
-// Стратегия: мониторит bonding curve reserves из V3 trade events.
-// Когда virtual_sol_reserves приближается к порогу graduation (~85 SOL),
-// покупает токен. После graduation цена обычно растёт из-за:
-// - Ликвидность на PumpSwap AMM
-// - Листинг на Jupiter (больше видимость)
-// - FOMO от статуса "graduated"
-// - Fee distribution для холдеров
+// Strategy: watches the bonding curve reserves from V3 trade events.
+// When virtual_sol_reserves approaches the graduation threshold (~85 SOL),
+// it buys the token. After graduation the price usually rises because of:
+// - Liquidity on the PumpSwap AMM
+// - Jupiter listing (more visibility)
+// - FOMO from the "graduated" status
+// - Fee distribution for holders
 //
-// Использование: node bots/graduation-sniper/graduation.mjs [--live]   (по умолчанию dry-run; --live включает реальную торговлю)
+// Usage: node bots/graduation-sniper/graduation.mjs [--live]   (dry-run by default; --live enables real trading)
 //
-// Конфиг через ENV или .env:
-//   GRAD_BUY_SOL=0.1              — сумма покупки
-//   GRAD_MIN_FILL_PCT=92          — минимальный % заполнения для покупки
-//   GRAD_TAKE_PROFIT=1.5          — продать при 1.5x
-//   GRAD_STOP_LOSS=0.7            — стоп-лосс при 0.7x
-//   GRAD_TIMEOUT_SEC=300          — таймаут позиции (5 мин)
-//   GRAD_MAX_POSITIONS=3          — макс. позиций
-//   GRAD_COOLDOWN_SEC=30          — пауза между покупками
+// Config via ENV or .env:
+//   GRAD_BUY_SOL=0.1              — buy amount
+//   GRAD_MIN_FILL_PCT=92          — minimum curve fill % to buy
+//   GRAD_TAKE_PROFIT=1.5          — sell at 1.5x
+//   GRAD_STOP_LOSS=0.7            — stop loss at 0.7x
+//   GRAD_TIMEOUT_SEC=300          — position timeout (5 min)
+//   GRAD_MAX_POSITIONS=3          — max positions
+//   GRAD_COOLDOWN_SEC=30          — pause between buys
 
 import fs from "node:fs";
 import path from "node:path";
@@ -326,7 +326,7 @@ async function buyToken(mint, fillPct, virtualSolReserves, virtualTokenReserves,
     fillBasis: "realSolReserves/85",
     holders,
     holdersSource: "stream-since-first-sighting (lower bound)",
-    top10Share: null, // нет данных: в потоке нет балансов токенов
+    top10Share: null, // no data: the stream has no token balances
     spotSolPerToken: quotePrice,
   };
 

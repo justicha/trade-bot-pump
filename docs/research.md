@@ -150,5 +150,4 @@ npm run journal
 ```
 
 Nothing here is a result until you have a labelled sample size and the execution model attached to it.
-If the analyzer prints "положительного ожидания нет ни в одном варианте" (no positive expectancy in any
-variant), that is a valid and useful outcome.
+If the analyzer prints "no positive expectancy in any variant", that is a valid and useful outcome.

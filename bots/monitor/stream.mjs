@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Монитор новых токенов на pump.fun в реальном времени (V3 API)
-// Подписывается на логи программы pump.fun через WebSocket
-// Использование: node bots/monitor/stream.mjs [--filter-dev-buy <min_sol>]
+// Real-time monitor of new pump.fun tokens (V3 API)
+// Subscribes to the pump.fun program logs over WebSocket
+// Usage: node bots/monitor/stream.mjs [--filter-dev-buy <min_sol>]
 
 import { PublicKey } from "@solana/web3.js";
 import {

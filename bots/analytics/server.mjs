@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Аналитический дашборд: собирает статистику pump.fun в реальном времени (V3 API)
-// HTTP API на порту 3000, фронтенд на bots/analytics/dashboard.html
+// Analytics dashboard: collects pump.fun statistics in real time (V3 API)
+// HTTP API on port 3000, frontend at bots/analytics/dashboard.html
 //
-// Использование: node bots/analytics/server.mjs
+// Usage: node bots/analytics/server.mjs
 
 import http from "node:http";
 import fs from "node:fs";

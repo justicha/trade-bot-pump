@@ -1,20 +1,20 @@
-# Отчёты разработки
+# Development reports
 
-Здесь лежат рабочие отчёты по коду. **Это не результаты торговли** и не подтверждение прибыли:
-это записи о том, что проверяли в коде и что из этого вышло.
+Working code reports live here. **These are not trading results** and not proof of profit:
+they are notes about what was checked in the code and what came of it.
 
-| Файл | О чём |
+| File | About |
 |---|---|
-| `ACT_REPORT.md` | отчёт по активации и правкам: что менялось и зачем |
-| `SHADOW_ACT_REPORT.md` | отчёт по теневому (бумажному) прогону graduation-снайпера |
-| `BUGS_VERIFICATION.md` | разбор 29 найденных проблем: вердикт и статус по каждой строке |
-| `AUDIT_SELL.md` | аудит продажи: почему продажа иногда невозможна, что проверено, что нет |
+| `ACT_REPORT.md` | activation and edit report: what changed and why |
+| `SHADOW_ACT_REPORT.md` | report on the shadow (paper) run of the graduation sniper |
+| `BUGS_VERIFICATION.md` | review of 29 reported problems: a verdict and status per row |
+| `AUDIT_SELL.md` | sell audit: why a sale is sometimes impossible, what was checked and what was not |
 
-Как читать:
+How to read:
 
-- строка **FIXED** обычно называет тест, который это подтверждает;
-- строка **DEFERRED** или **NEEDS VERIFICATION** означает «в журнале аудита не обновлено»,
-  а не «проблема точно есть в текущем коде»;
-- номера строк в этих файлах относятся к коду на момент аудита и со временем сдвигаются.
+- a **FIXED** row usually names the test that confirms it;
+- a **DEFERRED** or **NEEDS VERIFICATION** row means "not updated in the audit log",
+  not "the problem is definitely in the current code";
+- line numbers in these files refer to the code at audit time and drift over time.
 
-Общий статус проверки — в [../verification-status.md](../verification-status.md).
+The overall verification status is in [../verification-status.md](../verification-status.md).

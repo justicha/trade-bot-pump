@@ -75,15 +75,15 @@ assert.equal(s.ci95, null, "n=4 -> no CI");
   const code = await new Promise((resolve) => child.on("exit", (c) => resolve(c)));
   assert.equal(code, 0, "the analyzer exits 0");
 
-  assert.ok(/смешаны версии учёта \(2\)/.test(out), `the report states that two schemes are mixed:\n${out}`);
-  assert.ok(/общая таблица НЕ выводится/.test(out), "the report refuses to print a combined table");
+  assert.ok(/mixed accounting versions \(2\)/.test(out), `the report states that two schemes are mixed:\n${out}`);
+  assert.ok(/a combined table is NOT printed/.test(out), "the report refuses to print a combined table");
   assert.ok(/=== costsScheme: v2[^-]*— 4 trade\(s\) ===/.test(out), "one table for the v2 epoch (4 trades)");
   assert.ok(/=== costsScheme: v3-single-slip[^-]*— 3 trade\(s\) ===/.test(out), "one table for the v3 epoch (3 trades)");
   assert.equal((out.match(/variant  n     win%/g) || []).length, 2, "exactly one table per scheme, no combined table");
   // S5: sample size — unique mints, candidates, trades per variant, and the correlation warning
   assert.ok(/samples: unique mints 2 \| candidates 1 \| per variant: A=2 B=2/.test(out), `the v2 group reports its sample: ${(out.match(/samples:.*/) || [""])[0]}`);
   assert.ok(/samples: unique mints 1 \| candidates 1 \| per variant: A=3/.test(out), "the v3 group reports its sample");
-  assert.ok(/WARNING: уникальных mints \d+ < 30 — наблюдения сильно коррелированы/.test(out), "a tiny sample is flagged");
+  assert.ok(/WARNING: unique mints \d+ < 30 — observations are strongly correlated/.test(out), "a tiny sample is flagged");
   assert.ok(/withheld — \d+ distinct mints < 30/.test(out), "the verdict is withheld for a correlated sample");
   fs.rmSync(dir, { recursive: true, force: true });
 }

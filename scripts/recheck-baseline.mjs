@@ -111,16 +111,16 @@ const questionableShare = rows.length ? artifacts.length / rows.length : 0;
 const cleanNet = sum(clean, "netPnlSol");
 const verdict =
   questionableShare > 0.1
-    ? "вывод недоказуем"
+    ? "conclusion unprovable"
     : cleanNet > 0
-      ? "плюс (на чистых сделках, после издержек)"
-      : "минус (на чистых сделках, после издержек)";
-console.log(`\n=== ВЕРДИКТ: ${verdict} ===`);
+      ? "positive (on clean trades, after costs)"
+      : "negative (on clean trades, after costs)";
+console.log(`\n=== VERDICT: ${verdict} ===`);
 console.log(
-  `  цены под вопросом: ${artifacts.length}/${rows.length} (${(questionableShare * 100).toFixed(1)}%)` +
-    (questionableShare > 0.1 ? " > 10% — числа выше нельзя читать как плюс или минус" : " <= 10%"),
+  `  prices in question: ${artifacts.length}/${rows.length} (${(questionableShare * 100).toFixed(1)}%)` +
+    (questionableShare > 0.1 ? " > 10% — the numbers above cannot be read as plus or minus" : " <= 10%"),
 );
-console.log(`  чистая выборка: ${clean.length} сделок, ${sol(cleanNet)}, ${clean.filter((r) => r.recordedPnlPct > 0).length} в плюс`);
+console.log(`  clean sample: ${clean.length} trades, ${sol(cleanNet)}, ${clean.filter((r) => r.recordedPnlPct > 0).length} in profit`);
 
 const out = path.join(ROOT, "data", "research", "baseline_recheck.json");
 fs.mkdirSync(path.dirname(out), { recursive: true });

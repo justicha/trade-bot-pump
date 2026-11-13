@@ -42,7 +42,7 @@ for (const f of files) {
 }
 
 if (!trades.length) {
-  console.log("graduation shadow: нет данных — no gshadow_trade lines in data/journal.");
+  console.log("graduation shadow: no data — no gshadow_trade lines in data/journal.");
   console.log("run: $env:SHADOW_MAX_SEC='3600'; node bots/graduation-sniper/shadow.mjs");
   process.exit(0);
 }
@@ -63,8 +63,8 @@ const pf = (x) => (x == null ? "n/a" : x === Infinity ? "inf" : x.toFixed(2));
 
 console.log(`graduation shadow: ${trades.length} trade(s) from ${files.length} file(s) | candidates seen: ${candidates.size}`);
 if (byScheme.size > 1) {
-  console.log(`смешаны версии учёта (${byScheme.size}): ${[...byScheme].map(([k, v]) => `${k}=${v.length}`).join(" | ")}`);
-  console.log("таблицы ниже разделены по схеме; общая таблица НЕ выводится — netPct разных схем несравнимы");
+  console.log(`mixed accounting versions (${byScheme.size}): ${[...byScheme].map(([k, v]) => `${k}=${v.length}`).join(" | ")}`);
+  console.log("the tables below are split by scheme; a combined table is NOT printed — netPct of different schemes is not comparable");
 }
 
 // ---- one table per epoch -----------------------------------------------------------------
@@ -80,7 +80,7 @@ function reportGroup(scheme, list) {
     `samples: unique mints ${mints.size} | candidates ${candidates.size} | per variant: ${[...per].sort().map(([v, n]) => `${v}=${n}`).join(" ")}`,
   );
   if (mints.size < MIN_INDEPENDENT_MINTS) {
-    console.log(`WARNING: уникальных mints ${mints.size} < ${MIN_INDEPENDENT_MINTS} — наблюдения сильно коррелированы, вердикт не делать`);
+    console.log(`WARNING: unique mints ${mints.size} < ${MIN_INDEPENDENT_MINTS} — observations are strongly correlated, no verdict`);
   }
 
   // Exit venues (v4-amm-exit rows): where each position was priced. A migrated position without a
@@ -163,5 +163,5 @@ function reportGroup(scheme, list) {
 // more than one scheme is present (see the header): averaging v2 and v3 netPct would be a lie.
 for (const [scheme, list] of [...byScheme].sort((a, b) => b[1].length - a[1].length)) reportGroup(scheme, list);
 
-console.log(`\nvariant I (enter after migration): нет данных — the trade stream carries no AMM price.`);
+console.log(`\nvariant I (enter after migration): no data — the trade stream carries no AMM price.`);
 

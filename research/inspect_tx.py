@@ -1,4 +1,4 @@
-"""Человекочитаемый дамп одной транзакции: python3 research/inspect_tx.py <file.json> [wallet]"""
+"""Human-readable dump of one transaction: python3 research/inspect_tx.py <file.json> [wallet]"""
 import json
 import sys
 

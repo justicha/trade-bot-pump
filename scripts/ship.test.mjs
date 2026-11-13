@@ -1,13 +1,13 @@
 import "./lib/test-env.mjs";
-// scripts/ship.mjs: запрещённые пути проверяются только у добавленных/изменённых/переименованных
-// файлов (удаление test-output.txt — не утечка), ключи — только в добавленных строках diff.
+// scripts/ship.mjs: forbidden paths are checked only for added/modified/renamed
+// files (deleting test-output.txt is not a leak), keys — only in added diff lines.
 //
-// Исходная логика проверяла `git diff --cached --name-only` целиком (с удалениями) и весь diff
-// (с удаляемыми "-" строками), поэтому коммит, который УДАЛЯЕТ test-output.txt, блокировался.
+// The original logic checked the whole `git diff --cached --name-only` (with deletions) and the whole diff
+// (with removed "-" lines), so a commit that DELETES test-output.txt was blocked.
 //
-// Сценарий ship (npm test / commit / push) здесь НЕ запускается. Все git-операции — во временном
-// репозитории в os.tmpdir(): без remote, без сети, с пустым глобальным конфигом (не зависим от
-// хуков, подписи и autocrlf разработчика).
+// The ship scenario (npm test / commit / push) is NOT run here. All git operations run in a temp
+// repository in os.tmpdir(): no remote, no network, an empty global config (independent of
+// the developer's hooks, signature and autocrlf).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -20,15 +20,15 @@ const shipPath = path.join(here, "ship.mjs");
 const ship = await import(pathToFileURL(shipPath).href);
 const { forbiddenPaths, addedLines, findLeaks, findLeaksInDiff, diffByFile, stagedPaths, stagedStatus, stagedDiff, maskSecret } = ship;
 
-// Ключи собираются по частям: в исходнике теста не должно быть строки, похожей на ключ, иначе
-// ship заблокирует коммит самого теста.
-const KEY = "Ab3dE" + "f9Hk2Lm7Np4Qr8St" + "Uv6Wx1Yz0aBcDeFg"; // 32 символа [A-Za-z0-9]
+// Keys are assembled in parts: the test source must not contain a line that looks like a key, otherwise
+// ship would block the commit of the test itself.
+const KEY = "Ab3dE" + "f9Hk2Lm7Np4Qr8St" + "Uv6Wx1Yz0aBcDeFg"; // 32 chars [A-Za-z0-9]
 const API = "api" + "-key=";
 const API_US = "api" + "_key=";
 const PK = "PRIVATE" + "_KEY";
 
 // ---------------------------------------------------------------------------------------------
-// 1. Чистые функции
+// 1. Pure functions
 // ---------------------------------------------------------------------------------------------
 {
   const blocked = ["test-output.txt", ".env", "keys/x.json", "data/journal/a.jsonl", "agents/TASK.md", ".claude/s.json", "node_modules/x/y.js", "sub/.env", "sub/keys/a.json", "logs/test-output.txt"];
@@ -54,7 +54,7 @@ const PK = "PRIVATE" + "_KEY";
   assert.deepEqual(addedLines(""), []);
 }
 {
-  // удаляемая строка с ключом — НЕ утечка; добавленная — утечка
+  // a removed line with a key is NOT a leak; an added one is a leak
   assert.deepEqual(findLeaks(addedLines(`-url=https://x.invalid/?${API}${KEY}`)), [], "a removed line with a key is not a leak");
   const add = findLeaks(addedLines(`+url=https://x.invalid/?${API}${KEY}`));
   assert.equal(add.length, 1, "an added line with a key is a leak");
@@ -102,15 +102,15 @@ const PK = "PRIVATE" + "_KEY";
 }
 
 // ---------------------------------------------------------------------------------------------
-// 2. Временный git-репозиторий: настоящие команды git из ship.mjs
+// 2. A temp git repository: the real git commands from ship.mjs
 // ---------------------------------------------------------------------------------------------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ship-test-"));
 const repo = path.join(tmp, "repo");
 fs.mkdirSync(repo);
 const emptyCfg = path.join(tmp, "gitconfig");
 fs.writeFileSync(emptyCfg, "");
-// Изоляция от настроек разработчика (хуки, подпись, autocrlf, defaultBranch): пустой глобальный
-// конфиг, системный отключён. Действует и на git, который зовут функции ship.mjs.
+// Isolation from the developer's settings (hooks, signature, autocrlf, defaultBranch): an empty global
+// config, the system one disabled. Also applies to the git that ship.mjs functions call.
 process.env.GIT_CONFIG_GLOBAL = emptyCfg;
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_TERMINAL_PROMPT = "0";
@@ -129,7 +129,7 @@ const rm = (rel) => fs.rmSync(path.join(repo, rel));
 git("init", "-q", "-b", "main");
 assert.equal(git("remote").trim(), "", "the temp repo has no remote (nothing can be pushed)");
 
-// --- удаление test-output.txt проходит -----------------------------------------------------
+// --- deleting test-output.txt passes -----------------------------------------------------
 write("README.md", "readme\n");
 write("test-output.txt", "old log\n");
 git("add", "-A");
@@ -141,14 +141,14 @@ git("add", "-A");
   assert.deepEqual(s.all, ["test-output.txt"], "the deletion is staged: there IS something to commit");
   assert.deepEqual(s.checked, [], "ACMR list is empty for a pure deletion");
   assert.deepEqual(forbiddenPaths(s.checked), [], "deleting test-output.txt is allowed");
-  // Исходная логика: forbidden по полному списку -> блокировка. Это и был баг.
+  // The original logic: forbidden over the full list -> blocked. That was the bug.
   assert.deepEqual(forbiddenPaths(s.all), ["test-output.txt"], "(old logic would have blocked this commit)");
   assert.deepEqual(stagedStatus(repo), [{ status: "D", path: "test-output.txt" }], "status list shows D test-output.txt");
   assert.deepEqual(findLeaksInDiff(stagedDiff(repo)), [], "no leaks in a deletion");
 }
 git("commit", "-q", "-m", "remove log");
 
-// --- добавление запрещённых файлов блокируется ---------------------------------------------
+// --- adding forbidden files is blocked ---------------------------------------------
 write("test-output.txt", "new log\n");
 write(".env", "X=1\n");
 write("keys/x.json", "[1,2,3]\n");
@@ -164,7 +164,7 @@ git("add", "-A");
 git("reset", "-q");
 for (const f of ["test-output.txt", ".env", "keys/x.json", "lib/ok.mjs"]) rm(f);
 
-// --- добавленная строка с ключом блокируется; удаление строки с ключом — нет ------------------
+// --- an added line with a key is blocked; removing a key line is not ------------------
 write("config.txt", `endpoint=https://rpc.invalid/?${API}${KEY}\n`);
 git("add", "-A");
 {
@@ -183,7 +183,7 @@ git("add", "-A");
 }
 git("commit", "-q", "-m", "drop key");
 
-// --- переименование: проверяется НОВЫЙ путь ---------------------------------------------------
+// --- rename: the NEW path is checked ---------------------------------------------------
 write("notes.txt", "some notes that are long enough to be detected as a rename\n");
 write("data/old.txt", "old data file content, long enough for rename detection\n");
 git("add", "-A");
@@ -204,20 +204,20 @@ git("mv", "data/old.txt", "docs/old.txt"); // forbidden -> allowed
 }
 git("reset", "-q");
 
-// --- нечего коммитить ------------------------------------------------------------------------
+// --- nothing to commit ------------------------------------------------------------------------
 git("checkout", "-q", "--", ".");
 git("clean", "-qfd");
 assert.deepEqual(stagedPaths(repo).all, [], "empty index -> nothing to commit");
 
 // ---------------------------------------------------------------------------------------------
-// 3. Импорт модуля ничего не запускает (ни npm test, ни git). cwd — временный репозиторий, так
-//    что даже ошибка в проверке не задела бы настоящий.
+// 3. Importing the module runs nothing (no npm test, no git). cwd is a temp repository, so
+//    even an error in a check could not touch the real one.
 // ---------------------------------------------------------------------------------------------
 {
   const head = git("rev-parse", "HEAD").trim();
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(shipPath).href)});`], { cwd: repo, encoding: "utf8" });
   assert.equal(r.status, 0, `import exits 0 (stderr: ${r.stderr})`);
-  assert.equal(r.stdout.trim(), "", "import prints nothing (no 'Ветка', no npm test)");
+  assert.equal(r.stdout.trim(), "", "import prints nothing (no 'Branch', no npm test)");
   assert.ok(!/STOP/.test(r.stderr), "import does not reach the CLI checks");
   assert.equal(git("rev-parse", "HEAD").trim(), head, "no commit was made");
   assert.equal(git("status", "--porcelain").trim(), "", "the index and the working tree are untouched");
