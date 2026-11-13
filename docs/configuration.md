@@ -19,6 +19,8 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `SLIPPAGE_BPS` | `500` | `0–1500` | Slippage tolerance in basis points (500 = 5%). Used for buy/sell minimums and as the default `BUY_SLIPPAGE_BPS`. |
 | `CU_PRICE` | `1500000` | `≥ 0` | Priority fee price, micro-lamports per compute unit. |
 | `CU_LIMIT` | `300000` | `≥ 0` | Compute unit limit. **The priority fee is charged on this limit**, so raising it raises the fee of every transaction. `CU_PRICE × CU_LIMIT / 1e6` must stay ≤ 0.002 SOL or the process exits at startup. `.env.example` ships `120000`. |
+| `AMM_SELL_CU_LIMIT` | `160000` | `≥ 0` | Compute-unit limit of the PumpSwap (AMM) sell transaction only; the same priority-fee cap check as `CU_LIMIT` (`CU_PRICE × limit / 1e6` ≤ 2 000 000 lamports); `CU_LIMIT` stays for every other tx |
+| `STALL_GUARD_SEC` | `30` | `≥ 0` | Stall guard of graduation / sniper / copy-trader (process stall, stale stream events); `0` = off |
 | `MAX_TRADE_SOL` | `0.05` | `≥ 0` | Per-trade cap. A trade above it is skipped; the bot keeps running. `0` blocks every trade. |
 | `MAX_SESSION_SOL` | `0.2` | `≥ 0` | Total SOL a session may put into buys. Exhausted → the session ends. `0` = no cap. `.env.example` ships `0.1`. |
 | `MAX_CONSEC_LOSSES` | `3` | `≥ 0` | Consecutive losing trades that end a session. `0` = no limit. |

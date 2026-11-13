@@ -4,7 +4,7 @@ Short answer: **the code is tested, the strategy is not proven.** Those are diff
 
 ## What is tested
 
-- `npm test` runs **75 test files** (the list lives in `package.json`). All of them run offline and
+- `npm test` runs **80 test files** (the list lives in `package.json`). All of them run offline and
   without a wallet: the ones that touch the network point at local RPC/WebSocket fixtures, and the
   rest are pure unit tests that boot a temporary data directory. No network, no SOL.
 - The suite covers the parts that are easy to get silently wrong: the log parser, the curve and fee
@@ -24,6 +24,10 @@ makes money.
 - The token-ATA close after a full live sale (and the `close-empty-atas.mjs` sweep) is verified on mocks only, never on a real transaction.
 - The bounded sell retries (sniper/copy-trader) and `COPY_MAX_HOLD_SEC` are verified on mocks only, never on a real transaction.
 - The shadow rev 5 clock guards and variants K-N are verified on mocks only, never run on a live stream.
+- The AMM fee model was checked against 10 real `SellEvent`s (read-only), but the AMM sell is still never sent or simulated on a real transaction.
+- `AMM_SELL_CU_LIMIT` 160k is derived from other wallets' transactions, not from our own measurement.
+- The late-landing sale and the stall guard are verified on mocks only.
+- Known: `scripts/rescue-sell.mjs` and `scripts/probe-sell-sim.mjs` use the same quote and the same CU limit as the bots; the rescue-sell live branch is verified only by source and mocks.
 
 ## The audit log
 

@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 // probe-sell-sim: SIMULATE one PumpSwap sell and print everything the simulation says.
 //
-// Purpose: close TODO(verify) V1/V2/V4 — is the 21-account `sell` layout accepted by the deployed
-// program, are the volume-accumulator accounts required, does our quote match the program's maths.
-// It answers those questions WITHOUT sending a transaction:
+// Purpose: close TODO(verify) V1/V2 — is the 21-account `sell` layout accepted by the deployed
+// program, are the volume-accumulator accounts required. It answers those questions WITHOUT
+// sending a transaction. (V4, the quote maths and the fee split, is closed: lib/pumpswap.mjs
+// ammSellQuote reproduces real SellEvents to the lamport — scripts/amm-fee.test.mjs.)
+//
+// The quote and the transaction are the bots' own (ammSellQuote + lib/amm-sell.mjs ammSellTxIxs,
+// AMM_SELL_CU_LIMIT), so what is simulated here is what a live AMM sale would send:
 //
 //   node scripts/probe-sell-sim.mjs --mint <mint> [--tokens <raw>] [--slip <bps>]
 //
@@ -15,26 +19,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PublicKey } from "@solana/web3.js";
-import {
-  createAssociatedTokenAccountIdempotentInstruction,
-  createCloseAccountInstruction,
-  getAssociatedTokenAddressSync,
-} from "@solana/spl-token";
-import { ROOT, numOr } from "../lib/config.mjs";
-import { TOKEN_2022_PROGRAM, WSOL } from "../lib/constants.mjs";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { AMM_SELL_CU_LIMIT, ROOT, numOr } from "../lib/config.mjs";
+import { TOKEN_2022_PROGRAM } from "../lib/constants.mjs";
 import { connection } from "../lib/rpc.mjs";
 import { getBondingCurveState } from "../lib/pumpfun.mjs";
 import { describeTxError } from "../lib/pump-errors.mjs";
-import { buildVersionedTx, computeBudgetIxs } from "../lib/tx.mjs";
+import { buildVersionedTx } from "../lib/tx.mjs";
 import { loadKeypair } from "../lib/wallet.mjs";
-import {
-  AMM_GLOBAL_CONFIG,
-  TOKEN_PROGRAM,
-  ammSellIx,
-  canonicalPool,
-  decodeGlobalConfig,
-  decodePool,
-} from "../lib/pumpswap-sell.mjs";
+import { canonicalPool, decodePool } from "../lib/pumpswap-sell.mjs";
+import { ammSellQuote } from "../lib/pumpswap.mjs";
+import { ammSellTxIxs } from "../lib/amm-sell.mjs";
 
 const DEFAULTS = [
   "322es1iMfEghyuqi6Hby3eLkMsbfAKBCacmiZqG8pump",
@@ -106,41 +101,27 @@ const p = decodePool(pi.data);
 say(`[probe] pool owner=${pi.owner.toBase58()} base=${p.baseMint.toBase58()} quote=${p.quoteMint.toBase58()}`);
 say(`[probe] isMayhem=${p.isMayhem} isCashback=${p.isCashback} creator=${p.coinCreator.toBase58()} creatorFeeBps=${p.creatorFeeBps}`);
 
-const gc = await connection.getAccountInfo(AMM_GLOBAL_CONFIG).catch(() => null);
-if (!gc) say("[probe] global config unreadable — the sell would fall back to default fees.");
-const g = gc
-  ? decodeGlobalConfig(gc.data)
-  : { lpFeeBps: 20, protocolFeeBps: 5, coinCreatorFeeBps: 5, protocolFeeRecipients: [], reservedFeeRecipient: null, reservedFeeRecipients: [], buybackFeeRecipients: [] };
-
-// --- quote + transaction ---
-const [bv, qv] = await Promise.all([
-  connection.getTokenAccountBalance(p.baseVault).catch(() => null),
-  connection.getTokenAccountBalance(p.quoteVault).catch(() => null),
-]);
-if (!bv || !qv) {
-  say("[probe] pool vaults unreadable -> cannot price the sell.");
+// --- quote + transaction: the bots' own (lib/pumpswap.mjs ammSellQuote, lib/amm-sell.mjs) ---
+// The fee is the pool's REAL one: the fee program's tier of the pool's market cap (FeeConfig), not
+// the 30 bps of GlobalConfig. feeSource "fallback" = FeeConfig or the mint supply was unreadable,
+// so the most expensive tier (125 bps) is assumed.
+const q = await ammSellQuote(connection, mintPk, total).catch(() => null);
+if (!q) {
+  say("[probe] pool or its vaults unreadable -> cannot price the sell.");
   process.exit(1);
 }
-const baseReserve = BigInt(bv.value.amount);
-const quoteReserve = BigInt(qv.value.amount);
-const gross = quoteReserve + (p.virtualQuoteReserves > 0n ? p.virtualQuoteReserves : 0n);
-const grossOut = (gross * total) / (baseReserve + total);
-const feeBps = g.lpFeeBps + g.protocolFeeBps + (p.creatorFeeBps > 0n ? Number(p.creatorFeeBps) : g.coinCreatorFeeBps);
-const quote = (grossOut * BigInt(10000 - feeBps)) / 10000n; // TODO(verify) V4: fee split unconfirmed
-const minOut = (quote * BigInt(10000 - slip)) / 10000n;
-say(`[probe] reserves: base ${baseReserve} quote ${quoteReserve} virtualQuote ${p.virtualQuoteReserves}`);
-say(`[probe] quote: gross ${grossOut} lamports, fee ${feeBps} bps, net ${quote}, min_out ${minOut}`);
+if (!q.g.protocolFeeRecipients.length) say("[probe] global config unreadable — no fee recipients, the sell cannot be built.");
+const { baseReserve, quoteReserve, grossOut, feeBps, feeSource, fees } = q;
+const quote = q.solOut;
+const { ixs, minOut, sellIx } = ammSellTxIxs(wallet, mintPk, q, total, slip);
+say(`[probe] reserves: base ${baseReserve} quote ${quoteReserve} virtualQuote ${q.p.virtualQuoteReserves}`);
+say(
+  `[probe] quote: gross ${grossOut} lamports, fee ${feeBps} bps (${feeSource}: lp ${fees.lpFeeBps} + protocol ${fees.protocolFeeBps} + creator ${fees.creatorFeeBps}` +
+    `${q.marketCapLamports == null ? "" : `, market cap ${q.marketCapLamports} lamports`}), net ${quote}, min_out ${minOut}`,
+);
 
-const userWsol = getAssociatedTokenAddressSync(WSOL, wallet.publicKey, false, TOKEN_PROGRAM);
-const sellIx = ammSellIx(wallet.publicKey, mintPk, pool, p, g, total, minOut);
-const ixs = [
-  ...computeBudgetIxs(),
-  createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, userWsol, wallet.publicKey, WSOL, TOKEN_PROGRAM),
-  sellIx,
-  createCloseAccountInstruction(userWsol, wallet.publicKey, wallet.publicKey, [], TOKEN_PROGRAM),
-];
 const tx = await buildVersionedTx(wallet, ixs);
-say(`[probe] transaction built: ${ixs.length} instructions, sell ix has ${sellIx.keys.length} accounts`);
+say(`[probe] transaction built: ${ixs.length} instructions, CU limit ${AMM_SELL_CU_LIMIT}, sell ix has ${sellIx.keys.length} accounts`);
 
 // --- the actual simulation: read-only, nothing is sent ---
 const sim = await connection.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true }).catch((e) => ({
@@ -180,8 +161,17 @@ fs.writeFileSync(
         isCashback: p.isCashback,
         creatorFeeBps: Number(p.creatorFeeBps),
       },
-      reserves: { base: baseReserve.toString(), quote: quoteReserve.toString(), virtualQuote: p.virtualQuoteReserves.toString() },
-      quote: { grossOut: grossOut.toString(), feeBps, netLamports: quote.toString(), minOutLamports: minOut.toString() },
+      reserves: { base: baseReserve.toString(), quote: quoteReserve.toString(), virtualQuote: q.p.virtualQuoteReserves.toString() },
+      quote: {
+        grossOut: grossOut.toString(),
+        feeBps,
+        feeSource,
+        fees: { lpFeeBps: fees.lpFeeBps, protocolFeeBps: fees.protocolFeeBps, creatorFeeBps: fees.creatorFeeBps },
+        marketCapLamports: q.marketCapLamports == null ? null : q.marketCapLamports.toString(),
+        netLamports: quote.toString(),
+        minOutLamports: minOut.toString(),
+      },
+      cuLimit: AMM_SELL_CU_LIMIT,
       accounts: sellIx.keys.map((k) => ({ pubkey: k.pubkey.toBase58(), isSigner: k.isSigner, isWritable: k.isWritable })),
       err,
       describe: err ? describeTxError(err) : null,
@@ -194,4 +184,4 @@ fs.writeFileSync(
 );
 say("");
 say(`[probe] written to ${file}`);
-say("[probe] NOTHING WAS SENT. Paste this file (or the log block above) back to close V1/V2/V4.");
+say("[probe] NOTHING WAS SENT. Paste this file (or the log block above) back to close V1/V2.");

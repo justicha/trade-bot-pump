@@ -16,21 +16,11 @@
 // The PumpSwap (AMM) sell layout is built from the official pump-amm IDL and is marked
 // UNVERIFIED until one live rescue succeeds. Curve sells reuse the bots' instruction.
 import { PublicKey } from "@solana/web3.js";
-import {
-  getAssociatedTokenAddressSync,
-  createAssociatedTokenAccountIdempotentInstruction,
-  createCloseAccountInstruction,
-} from "@solana/spl-token";
-import { DRY_RUN, LIVE, numOr } from "../lib/config.mjs";
-import { TOKEN_2022_PROGRAM, WSOL } from "../lib/constants.mjs";
-import {
-  AMM_GLOBAL_CONFIG,
-  TOKEN_PROGRAM,
-  ammSellIx,
-  canonicalPool,
-  decodeGlobalConfig,
-  decodePool,
-} from "../lib/pumpswap-sell.mjs";
+import { AMM_SELL_CU_LIMIT, DRY_RUN, LIVE, numOr } from "../lib/config.mjs";
+import { TOKEN_2022_PROGRAM } from "../lib/constants.mjs";
+import { TOKEN_PROGRAM } from "../lib/pumpswap-sell.mjs";
+import { ammSellQuote } from "../lib/pumpswap.mjs";
+import { ammMinOut, ammSellTxIxs } from "../lib/amm-sell.mjs";
 import { connection, getSOLBalance, sendTxWithRetry } from "../lib/rpc.mjs";
 import {
   calcSellSol,
@@ -122,41 +112,26 @@ async function quoteVenue(mintStr, raw) {
     };
   }
   const curveNote = !state ? "curve gone" : state.complete ? "curve complete" : "curve drained (rSol=0)";
-  const pool = canonicalPool(mint);
-  const pi = await connection.getAccountInfo(pool);
-  if (!pi || pi.data.length < 287) {
-    return { venue: "none", expectedSol: null, note: `${curveNote}; no canonical pool`, sellable: false };
+  // The bots' own quote (lib/pumpswap.mjs ammSellQuote), not a copy of its formula: constant
+  // product minus the pool's REAL fee — the fee program's tier of the pool's market cap (125 / 120
+  // bps right after a migration), not the 30 bps of GlobalConfig. `feeSource` "fallback" = FeeConfig
+  // or the mint supply was unreadable and the most expensive tier is assumed. null = the pool or
+  // its vaults cannot be read; a read error must not kill the whole rescue cycle.
+  const quote = await ammSellQuote(connection, mint, raw).catch(() => null);
+  if (!quote) {
+    return { venue: "none", expectedSol: null, note: `${curveNote}; no canonical pool (or it is unreadable)`, sellable: false };
   }
-  const p = decodePool(pi.data);
-  const [bv, qv] = await Promise.all([
-    connection.getTokenAccountBalance(p.baseVault).catch(() => null),
-    connection.getTokenAccountBalance(p.quoteVault).catch(() => null),
-  ]);
-  if (!bv || !qv) return { venue: "pool", expectedSol: null, note: `${curveNote}; vaults unreadable`, sellable: false, pool, p };
-  const baseReserve = BigInt(bv.value.amount);
-  const quoteReserve = BigInt(qv.value.amount);
-  const gross = quoteReserve + (p.virtualQuoteReserves > 0n ? p.virtualQuoteReserves : 0n);
-  const out = (gross * raw) / (baseReserve + raw);
-  // .catch like lib/pumpswap.mjs: an unreadable global config must degrade to the fallback fees,
-  // not throw and kill the whole rescue cycle.
-  const gc = await connection.getAccountInfo(AMM_GLOBAL_CONFIG).catch(() => null);
-  const g = gc
-    ? decodeGlobalConfig(gc.data)
-    : { lpFeeBps: 20, protocolFeeBps: 5, coinCreatorFeeBps: 5, protocolFeeRecipients: [], reservedFeeRecipient: null, reservedFeeRecipients: [], buybackFeeRecipients: [] };
-  const feeBps = g.lpFeeBps + g.protocolFeeBps + (p.creatorFeeBps > 0n ? Number(p.creatorFeeBps) : g.coinCreatorFeeBps);
-  const net = (out * BigInt(10000 - feeBps)) / 10000n;
   return {
     venue: "pool",
-    expectedSol: Number(net) / 1e9,
-    // Raw lamports of the quote: the min_out must be BigInt arithmetic on this, never
-    // Math.floor(expectedSol * 1e9) (float rounding, AUDIT_SELL.md §4).
-    expectedLamports: net,
-
-    note: `${curveNote}; pool ${pool.toBase58().slice(0, 8)} fee≈${(feeBps / 100).toFixed(2)}%`,
+    expectedSol: Number(quote.solOut) / 1e9,
+    // Raw lamports of the quote: the min_out is BigInt arithmetic on this (lib/amm-sell.mjs
+    // ammMinOut), never Math.floor(expectedSol * 1e9) (float rounding, AUDIT_SELL.md §4).
+    expectedLamports: quote.solOut,
+    note:
+      `${curveNote}; pool ${quote.pool.toBase58().slice(0, 8)} fee=${(quote.feeBps / 100).toFixed(2)}% (${quote.feeBps} bps, ${quote.feeSource})` +
+      `; net ${quote.solOut} lamports, min_out ${ammMinOut(quote.solOut, SLIP)} lamports`,
     sellable: true,
-    pool,
-    p,
-    g,
+    quote,
   };
 }
 
@@ -218,16 +193,10 @@ for (const h of targets) {
       }
     } else {
       const amountRaw = h.raw;
-      // BigInt lamports straight from the quote (no float round trip): min_out is then exact
-      // integer arithmetic on the net quote (AUDIT_SELL.md §4).
-      const quoteOut = q.expectedLamports;
-      const userWsol = getAssociatedTokenAddressSync(WSOL, wallet.publicKey, false, TOKEN_PROGRAM);
-      const ixs = [
-        ...computeBudgetIxs(),
-        createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, userWsol, wallet.publicKey, WSOL, TOKEN_PROGRAM),
-        ammSellIx(wallet.publicKey, new PublicKey(h.mint), q.pool, q.p, q.g, amountRaw, (quoteOut * BigInt(10000 - SLIP)) / 10000n),
-        createCloseAccountInstruction(userWsol, wallet.publicKey, wallet.publicKey, [], TOKEN_PROGRAM),
-      ];
+      // The very transaction the bots send (lib/amm-sell.mjs ammSellTxIxs): AMM_SELL_CU_LIMIT (a
+      // pool sell does not fit a 120k CU_LIMIT), the WSOL ATA, the sell with min_out = the net
+      // quote above x (1 - slippage) in BigInt lamports, the WSOL close.
+      const { ixs } = ammSellTxIxs(wallet, new PublicKey(h.mint), q.quote, amountRaw, SLIP);
       console.log("  NOTE: AMM sell layout is UNVERIFIED — the first live rescue is its test.");
       const tx = await buildVersionedTx(wallet, ixs);
       const sim = await simulateTx(tx);
@@ -235,7 +204,7 @@ for (const h of targets) {
         console.log(`  simulation failed: ${describeTxError(sim.err)} — not sending`);
         continue;
       }
-      await sendTxWithRetry(tx, { skipPreflight: true });
+      await sendTxWithRetry(tx, { skipPreflight: true, cuLimit: AMM_SELL_CU_LIMIT });
       console.log(`  sold ${(Number(amountRaw) / 1e6).toFixed(0)} tokens.`);
     }
   } catch (e) {

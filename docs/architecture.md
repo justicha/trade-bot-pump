@@ -273,6 +273,56 @@ Known limitation: if a failed attempt actually landed in the chain later, the re
 balance and removes the position without recording the sale (the revenue is not booked). **Verified
 on mocks only, not on a real transaction.**
 
+### PumpSwap sell fee (FeeConfig tiers)
+
+The real sell fee comes from the `fee_config` account of the pump-amm fee program
+(PDA `["fee_config", pump-amm program id]`): tiers by pool capitalization, where capitalization =
+(quote vault + `pool.virtual_quote_reserves`) × mint supply / base vault, computed BEFORE the trade;
+the tier is the last one whose threshold <= the capitalization; each of the three fees is rounded
+UP from the gross and then subtracted. First tiers: < 420 SOL -> 2+93+30 = 125 bps; 420-1470 ->
+120 bps; 1470-2460 -> 115 bps; the top tier -> 30 bps. The `GlobalConfig` 30 bps is NOT the pool
+fee. Without a `fee_config` (or the supply) the quote falls back to 125 bps with
+`feeSource: "fallback"`; the `FeeConfig` is cached for 5 min. Verified against 10 real `SellEvent`s
+to the lamport (`scripts/fixtures/amm-sell-events.json`); only `min_quote_amount_out` changed in the
+live sell bytes.
+
+`costsScheme` changed with this: shadow `v4-amm-exit` -> `v5-amm-fee` (v4 AMM exits overstated revenue
+by ~0.95% — do not mix them); live/dry `COSTS_SCHEME` `v2.3` -> `v2.4` (the dry graduation exit after
+migration changes; live `pnlSol` is by fact of execution and unchanged). AMM trade rows now carry
+`ammFeeSource` and the real `ammFeeBps`.
+
+### Late-landing sale (zero balance)
+
+The signatures of failed sell attempts are kept on the position. When the balance reads 0, the bot
+does a read-only check of those signatures: if a landed sale is found, it is booked as a normal sale
+with `reconciledFromSig` (revenue and fees from the transaction meta); if nothing is found, the
+position becomes `stuck` with reason `"tokens gone, no landed sale found"` and `lossAssumed: true`
+(the remaining entry is an assumed loss); if the network does not answer, the bot retries 2 s / 4 s
+up to 3 checks, then `stuck` with `lookupFailed: true`. Limitations: a partial sale that landed late
+while the balance is NOT zero is still not handled; a lagging RPC that reports 0 while the balance is
+alive now ends in a cautious `stuck lossAssumed` (an assumed loss without the fact).
+
+### Stall guard (live bots)
+
+The three live bots run a `STALL_GUARD_SEC` stall guard: a 1 s tick that journals a `stall` row and
+raises an ALERT when the process was frozen longer than the threshold, then re-evaluates positions
+from the network right away (a stream notification older than the threshold does not trigger a buy and
+is journaled as `stale_events`). It does NOT prevent the freeze (that is the paused Windows console —
+QuickEdit), only behaves correctly after it; run bots in Windows Terminal / the VS Code terminal and
+do not select text in the window.
+
+New journal rows and fields:
+
+| Row / field | Meaning |
+|---|---|
+| `stall` | `{ stallSec, open, mints, at, thresholdSec }` — a live bot froze past `STALL_GUARD_SEC` |
+| `stale_events` | `{ events, maxLagSec, thresholdSec }` — stream backlog dropped |
+| `stuck`, reason `"tokens gone, no landed sale found"` | `{ lossAssumed: true, tokens: "0", failedSigs }`, `lookupFailed: true` if the network did not answer |
+| `sell_reconciled` (copy-trader) | `{ reconciledFromSig, pnlSol, live fields, amountRaw, balanceRaw }` |
+| sale rows | `reconciledFromSig` (graduation, `reconciled: true`) |
+| sell sim / attempt rows | `feeSource` (`onchain` / `fallback`), `feeBps` (real tier) |
+| `gshadow_trade` | `ammFeeSource`, real `ammFeeBps`, `costsScheme: "v5-amm-fee"` |
+
 Rotation: ticks rotate by size and are drained at stop (`SNIPER_DRAIN_MAX_SEC`); raw captures rotate
 hourly by local hour (`data/raw/YYYY-MM-DD-HH.jsonl.gz`).
 
