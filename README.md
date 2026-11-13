@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/img/banner.svg" alt="pump-bot — trading bots for pump.fun on Solana: the token curve rises to graduation at 100%, the bot enters in the fill band you set (GRAD_MIN_FILL_PCT–GRAD_MAX_FILL_PCT), then the price lives in the PumpSwap pool; badges DRY-RUN by default, Solana, pump.fun → PumpSwap" width="100%"></p>
+<p align="center"><img src="docs/img/banner.svg" alt="pump-bot — research bots for pump.fun on Solana. Animated: bonding curve, configurable entry band, graduation to PumpSwap, exit. Dry-run by default; not financial advice." width="100%"></p>
 
 <p align="center"><b>Bots for pump.fun (Solana) · dry-run by default · a research tool, not a way to make money.</b></p>
 

@@ -1,122 +1,119 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="bannerTitle bannerDesc">
-  <title id="bannerTitle">pump-bot — trading bots for pump.fun on Solana</title>
-  <desc id="bannerDesc">A dark grid banner. On the left the large pump-bot wordmark, the subtitle trading bots for pump.fun · Solana and three badges: DRY-RUN by default, Solana, pump.fun → PumpSwap. On the right a diagram of a token's life: a neon-green bonding curve rising as it fills from 0 to 100 percent, a shaded entry band whose bounds the user sets (in the diagram it varies from ~60 to ~95 percent), marking where the bot enters (an amber dot), a dashed graduation line at 100 percent (about 85 SOL) with a pulsing ring, and after it a teal price line in the PumpSwap pool. At the bottom, small: not financial advice, profit not guaranteed.</desc>
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#070d18"/>
-      <stop offset="0.6" stop-color="#0b1424"/>
-      <stop offset="1" stop-color="#08101d"/>
-    </linearGradient>
-    <radialGradient id="glowL" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#22c55e" stop-opacity="0.16"/>
-      <stop offset="1" stop-color="#22c55e" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glowR" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#f0fdf4"/>
-      <stop offset="0.55" stop-color="#bbf7d0"/>
-      <stop offset="1" stop-color="#5eead4"/>
-    </linearGradient>
-    <linearGradient id="curve" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#2dd4bf"/>
-      <stop offset="1" stop-color="#4ade80"/>
-    </linearGradient>
-    <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#4ade80" stop-opacity="0.30"/>
-      <stop offset="1" stop-color="#4ade80" stop-opacity="0"/>
-    </linearGradient>
-    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-      <path d="M32 0H0V32" fill="none" stroke="#14233a" stroke-width="1"/>
-    </pattern>
-    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-      <rect width="8" height="8" fill="#fbbf24" fill-opacity="0.07"/>
-      <path d="M0 0V8" stroke="#fbbf24" stroke-opacity="0.22" stroke-width="2"/>
-    </pattern>
-    <filter id="glow" x="-20%" y="-40%" width="140%" height="180%">
-      <feGaussianBlur stdDeviation="5" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-    <filter id="blur" x="-10%" y="-30%" width="120%" height="160%">
-      <feGaussianBlur stdDeviation="10"/>
-    </filter>
-    <path id="life" d="M640 270 L682 260.5 L724 248.8 L766 234.6 L808 218.1 L850 199.3 L892 178.1 L934 154.6 L976 128.7 L1018 100.5 L1060 70 L1080 78 L1100 73 L1120 89 L1140 84 L1160 99 L1180 94 L1200 107 L1220 102 L1236 111"/>
-  </defs>
-
-  <!-- background -->
-  <rect width="1280" height="320" fill="url(#bg)"/>
-  <rect width="1280" height="320" fill="url(#grid)" opacity="0.8"/>
-  <circle cx="220" cy="150" r="260" fill="url(#glowL)"/>
-  <circle cx="1060" cy="110" r="300" fill="url(#glowR)"/>
-
-  <!-- left: name, subtitle, badges -->
-  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif">
-    <text x="64" y="74" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" letter-spacing="3" fill="#4ade80">SOLANA · PUMP.FUN · NODE.JS</text>
-    <text x="60" y="148" font-size="80" font-weight="800" letter-spacing="-2" fill="#4ade80" opacity="0.45" filter="url(#blur)">pump-bot</text>
-    <text x="60" y="148" font-size="80" font-weight="800" letter-spacing="-2" fill="url(#title)">pump-bot</text>
-    <text x="64" y="188" font-size="24" fill="#c7d6e8">trading bots for <tspan fill="#4ade80" font-weight="700">pump.fun</tspan> · Solana</text>
-
-    <g font-size="14" font-weight="600">
-      <rect x="64" y="210" width="210" height="34" rx="17" fill="#0b2a1a" stroke="#4ade80" stroke-width="1.5"/>
-      <circle cx="82" cy="227" r="5" fill="#4ade80"/>
-      <text x="94" y="232" fill="#86efac">DRY-RUN by default</text>
-
-      <rect x="284" y="210" width="92" height="34" rx="17" fill="#0a2629" stroke="#2dd4bf" stroke-width="1.5"/>
-      <circle cx="302" cy="227" r="5" fill="#2dd4bf"/>
-      <text x="314" y="232" fill="#5eead4">Solana</text>
-
-      <rect x="386" y="210" width="202" height="34" rx="17" fill="#271c07" stroke="#fbbf24" stroke-width="1.5"/>
-      <circle cx="404" cy="227" r="5" fill="#fbbf24"/>
-      <text x="416" y="232" fill="#fcd34d">pump.fun → PumpSwap</text>
-    </g>
-
-    <text x="64" y="284" font-size="14" fill="#7f93a8">a research tool · not financial advice · profit not guaranteed</text>
-  </g>
-
-  <!-- right: life of a token -->
-  <rect x="616" y="22" width="636" height="276" rx="16" fill="#0a1322" fill-opacity="0.82" stroke="#1d3150" stroke-width="1.5"/>
-  <rect x="1060" y="56" width="176" height="214" fill="#2dd4bf" fill-opacity="0.06"/>
-  <rect x="955" y="56" width="63" height="214" fill="url(#hatch)">
-    <animate attributeName="x" values="955;892;892;955;955" keyTimes="0;0.25;0.5;0.75;1" dur="8s" repeatCount="indefinite" calcMode="linear"/>
-    <animate attributeName="width" values="63;126;147;84;63" keyTimes="0;0.25;0.5;0.75;1" dur="8s" repeatCount="indefinite" calcMode="linear"/>
-  </rect>
-  <path d="M640 270H1236" stroke="#2a4163" stroke-width="1.5"/>
-  <g stroke="#1a2b45" stroke-width="1">
-    <path d="M640 220H1236M640 170H1236M640 120H1236"/>
-  </g>
-
-  <path d="M640 270 L682 260.5 L724 248.8 L766 234.6 L808 218.1 L850 199.3 L892 178.1 L934 154.6 L976 128.7 L1018 100.5 L1060 70 L1060 270 Z" fill="url(#area)"/>
-  <path d="M640 270 L682 260.5 L724 248.8 L766 234.6 L808 218.1 L850 199.3 L892 178.1 L934 154.6 L976 128.7 L1018 100.5 L1060 70" fill="none" stroke="url(#curve)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
-  <path d="M1060 70 L1080 78 L1100 73 L1120 89 L1140 84 L1160 99 L1180 94 L1200 107 L1220 102 L1236 111" fill="none" stroke="#22d3ee" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
-
-  <path d="M1060 52V270" stroke="#e6f1ff" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="5 5"/>
-  <circle cx="1060" cy="70" r="9" fill="none" stroke="#e6f1ff" stroke-width="2" opacity="0.8">
-    <animate attributeName="r" values="9;20;9" dur="2.4s" repeatCount="indefinite"/>
-    <animate attributeName="opacity" values="0.8;0;0.8" dur="2.4s" repeatCount="indefinite"/>
-  </circle>
-  <circle cx="1060" cy="70" r="6" fill="#e6f1ff"/>
-
-  <circle cx="984" cy="123.3" r="13" fill="#fbbf24" fill-opacity="0.18"/>
-  <circle cx="984" cy="123.3" r="7" fill="#fbbf24" stroke="#0a1322" stroke-width="2"/>
-
-  <circle r="4.5" fill="#f0fdf4" filter="url(#glow)">
-    <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
-      <mpath href="#life" xlink:href="#life"/>
-    </animateMotion>
-  </circle>
-
-  <g font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600">
-    <text x="652" y="46" fill="#4ade80">bonding curve</text>
-    <text x="1060" y="44" text-anchor="middle" fill="#e6f1ff">graduation</text>
-    <text x="1170" y="44" text-anchor="middle" fill="#22d3ee">PumpSwap</text>
-    <text x="938" y="118" text-anchor="end" fill="#fcd34d">bot entry</text>
-    <g font-weight="500" fill="#8aa0b8">
-      <text x="640" y="288">0%</text>
-      <text x="850" y="288" text-anchor="middle">50%</text>
-      <text x="986" y="288" text-anchor="middle" fill="#fcd34d">↔ configurable</text>
-      <text x="1066" y="288">100% ≈ 85 SOL</text>
-    </g>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="bannerTitle bannerDesc">
+<title id="bannerTitle">pump-bot — trading bots for pump.fun on Solana</title>
+<desc id="bannerDesc">Animated banner for pump-bot, open-source research bots for pump.fun on Solana. A new token's price rises along a bonding curve; the bot's configurable entry band lights up and the bot buys inside it; at 100% (≈ 85 SOL) the token graduates to a PumpSwap pool where the price often falls; the bot exits by take-profit, stop-loss or timeout. Dry-run by default; a research tool, not financial advice, profit not guaranteed.</desc>
+<style>
+text{font-family:system-ui,"Segoe UI",Roboto,Arial,sans-serif}
+.an{animation-duration:12s;animation-iteration-count:infinite;animation-timing-function:linear}
+.fb{transform-box:fill-box;transform-origin:center}
+#band{transform-box:fill-box;transform-origin:50% 100%;opacity:.85}
+#dotMove{transform:translate(1220px,188px)}
+#shine{transform-box:fill-box;transform-origin:center;transform:translateX(-420px) skewX(-20deg)}
+#shineO,.bu,.pu{opacity:0}
+#dryDot{opacity:.65;animation:dd 3s infinite}
+#dyn{animation-name:dyn}#dotMove{animation-name:mv}#dotCore{animation-name:pDot}#curve{animation-name:tc}#pool{animation-name:tp}#pos{animation-name:ts}#band{animation-name:band}#lCfg{animation-name:rCfg}#b1{animation-name:bu1}#b2{animation-name:bu2}#b3{animation-name:bu3}#b4{animation-name:bu4}#b5{animation-name:bu5}#entryDot{animation-name:pEntry}#lEntry{animation-name:rEntry}#gradLine{animation-name:rGline}#lGrad{animation-name:rGrad}#gradMarker{animation-name:pGrad}#poolTint{animation-name:rTint}#exitMark{animation-name:pExit}#x1{animation-name:rX1}#x2{animation-name:rX2}#x3{animation-name:rX3}#x4{animation-name:rX4}#shine{animation-name:shM}#shineO{animation-name:shO}#puD{animation-name:puD}#puP{animation-name:puP}#disc{animation-name:disc}
+@keyframes dyn{0%{opacity:1}12.5%{opacity:1;animation-timing-function:cubic-bezier(.65,0,.35,1)}16.667%{opacity:0}18.333%{opacity:0}18.417%{opacity:1}100%{opacity:1}}
+@keyframes mv{0%{transform:translate(1220px,188px)}16.667%{transform:translate(1220px,188px)}17.5%{transform:translate(676px,252px)}23.333%{transform:translate(676px,252px)}23.889%{transform:translate(676.37px,251.98px)}24.444%{transform:translate(677.54px,251.91px)}25%{transform:translate(679.61px,251.79px)}25.556%{transform:translate(682.69px,251.63px)}26.111%{transform:translate(686.9px,251.41px)}26.667%{transform:translate(692.39px,251.13px)}27.222%{transform:translate(699.32px,250.77px)}27.778%{transform:translate(707.82px,250.3px)}28.333%{transform:translate(718.05px,249.69px)}28.889%{transform:translate(730.08px,248.85px)}29.444%{transform:translate(743.89px,247.62px)}30%{transform:translate(759.32px,245.97px)}30.556%{transform:translate(775.99px,243.85px)}31.111%{transform:translate(793.35px,241.18px)}31.667%{transform:translate(810.76px,237.97px)}32.222%{transform:translate(827.63px,234.48px)}32.778%{transform:translate(843.49px,230.71px)}33.333%{transform:translate(858px,226.63px)}33.889%{transform:translate(870.99px,222.25px)}34.444%{transform:translate(882.47px,217.8px)}35%{transform:translate(892.55px,213.47px)}35.556%{transform:translate(901.35px,209.36px)}36.111%{transform:translate(908.99px,205.52px)}36.667%{transform:translate(915.57px,201.94px)}37.222%{transform:translate(921.15px,198.55px)}37.778%{transform:translate(925.87px,195.45px)}38.333%{transform:translate(929.86px,192.66px)}38.889%{transform:translate(933.2px,190.22px)}39.444%{transform:translate(935.99px,188.13px)}40%{transform:translate(938.29px,186.39px)}40.556%{transform:translate(940.14px,184.96px)}41.111%{transform:translate(941.6px,183.85px)}41.667%{transform:translate(942.68px,183.01px)}42.222%{transform:translate(943.43px,182.44px)}42.778%{transform:translate(943.86px,182.11px)}43.333%{transform:translate(944px,182px)}43.889%{transform:translate(944.32px,181.75px)}44.444%{transform:translate(945.3px,181px)}45%{transform:translate(946.93px,179.71px)}45.556%{transform:translate(949.21px,177.88px)}46.111%{transform:translate(952.11px,175.47px)}46.667%{transform:translate(955.59px,172.47px)}47.222%{transform:translate(959.58px,168.89px)}47.778%{transform:translate(964.03px,164.76px)}48.333%{transform:translate(968.84px,160.13px)}48.889%{transform:translate(973.94px,155.1px)}49.444%{transform:translate(979.13px,149.69px)}50%{transform:translate(984.22px,143.95px)}50.556%{transform:translate(989.13px,138.06px)}51.111%{transform:translate(993.81px,132.2px)}51.667%{transform:translate(998.17px,126.52px)}52.222%{transform:translate(1002.2px,121.2px)}52.778%{transform:translate(1005.84px,116.34px)}53.333%{transform:translate(1009.04px,112.04px)}53.889%{transform:translate(1011.78px,108.35px)}54.444%{transform:translate(1014.03px,105.32px)}55%{transform:translate(1015.77px,102.97px)}55.556%{transform:translate(1017.02px,101.31px)}56.111%{transform:translate(1017.76px,100.32px)}56.667%{transform:translate(1018px,100px)}59.167%{transform:translate(1018px,100px)}59.722%{transform:translate(1018.89px,100.44px)}60.278%{transform:translate(1021.58px,101.79px)}60.833%{transform:translate(1026.13px,104.06px)}61.389%{transform:translate(1032.55px,106.76px)}61.944%{transform:translate(1041.04px,103.13px)}62.5%{transform:translate(1049.86px,105.38px)}63.056%{transform:translate(1058.55px,115.22px)}63.611%{transform:translate(1071.5px,114.25px)}64.167%{transform:translate(1082.34px,123.27px)}64.722%{transform:translate(1093.99px,132.29px)}65.278%{transform:translate(1108.2px,134.16px)}65.833%{transform:translate(1118.78px,149.67px)}66.389%{transform:translate(1134.83px,146.56px)}66.944%{transform:translate(1145.5px,161.49px)}67.5%{transform:translate(1160.15px,159.79px)}68.056%{transform:translate(1170.33px,170.66px)}68.611%{transform:translate(1180.1px,178.67px)}69.167%{transform:translate(1191.81px,174.98px)}69.722%{transform:translate(1199.01px,183.61px)}70.278%{transform:translate(1204.92px,190.7px)}70.833%{transform:translate(1211.26px,190.5px)}71.389%{transform:translate(1216.15px,189.1px)}71.944%{transform:translate(1219.05px,188.27px)}72.5%{transform:translate(1220px,188px)}100%{transform:translate(1220px,188px)}}
+@keyframes pDot{0%{transform:scale(1)}16.667%{transform:scale(1)}17.5%{transform:scale(0)}20%{transform:scale(0);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}23.75%{transform:scale(1)}100%{transform:scale(1)}}
+@keyframes tc{0%{stroke-dashoffset:0}16.667%{stroke-dashoffset:0}17.5%{stroke-dashoffset:1.01}23.333%{stroke-dashoffset:1.01;animation-timing-function:cubic-bezier(.45,0,.35,1)}43.333%{stroke-dashoffset:0.2824;animation-timing-function:cubic-bezier(.4,0,.6,1)}56.667%{stroke-dashoffset:0}100%{stroke-dashoffset:0}}
+@keyframes tp{0%{stroke-dashoffset:0}16.667%{stroke-dashoffset:0}17.5%{stroke-dashoffset:1.01}59.167%{stroke-dashoffset:1.01;animation-timing-function:cubic-bezier(.4,0,.6,1)}72.5%{stroke-dashoffset:0}100%{stroke-dashoffset:0}}
+@keyframes ts{0%{stroke-dashoffset:0}16.667%{stroke-dashoffset:0}17.5%{stroke-dashoffset:1.01}43.333%{stroke-dashoffset:1.01;animation-timing-function:cubic-bezier(.4,0,.6,1)}56.667%{stroke-dashoffset:0.7099}59.167%{stroke-dashoffset:0.7099;animation-timing-function:cubic-bezier(.4,0,.6,1)}72.5%{stroke-dashoffset:0}100%{stroke-dashoffset:0}}
+@keyframes band{0%{transform:scale(1,1);opacity:0.85}16.667%{transform:scale(1,1);opacity:0.85}17.5%{transform:scale(1,0);opacity:0.85}24.167%{transform:scale(1,0);opacity:0.85;animation-timing-function:cubic-bezier(.16,1,.3,1)}30%{transform:scale(1,1);opacity:0.85}31.667%{transform:scale(1,1);opacity:0.85;animation-timing-function:cubic-bezier(.65,0,.35,1)}35.833%{transform:scale(1.74,1);opacity:0.85;animation-timing-function:cubic-bezier(.65,0,.35,1)}40%{transform:scale(1,1);opacity:0.85}43.333%{transform:scale(1,1);opacity:0.85;animation-timing-function:cubic-bezier(.16,1,.3,1)}44.583%{transform:scale(1,1);opacity:1;animation-timing-function:cubic-bezier(.65,0,.35,1)}49.167%{transform:scale(1,1);opacity:0.85}100%{transform:scale(1,1);opacity:0.85}}
+@keyframes rCfg{0%{opacity:1}16.667%{opacity:1}17.5%{opacity:0}28.333%{opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}31.667%{opacity:1}100%{opacity:1}}
+@keyframes bu1{0%{opacity:0;transform:scale(0.3)}19.917%{opacity:0;transform:scale(0.3)}20%{opacity:0.8;transform:scale(0.3);animation-timing-function:cubic-bezier(.16,1,.3,1)}26.667%{opacity:0;transform:scale(4)}100%{opacity:0;transform:scale(4)}}
+@keyframes bu2{0%{opacity:0;transform:scale(0.4)}43.25%{opacity:0;transform:scale(0.4)}43.333%{opacity:0.8;transform:scale(0.4);animation-timing-function:cubic-bezier(.16,1,.3,1)}50%{opacity:0;transform:scale(4)}100%{opacity:0;transform:scale(4)}}
+@keyframes bu3{0%{opacity:0;transform:scale(0.5)}56.583%{opacity:0;transform:scale(0.5)}56.667%{opacity:0.8;transform:scale(0.5);animation-timing-function:cubic-bezier(.16,1,.3,1)}64.167%{opacity:0;transform:scale(3.2)}100%{opacity:0;transform:scale(3.2)}}
+@keyframes bu4{0%{opacity:0;transform:scale(0.5)}58.25%{opacity:0;transform:scale(0.5)}58.333%{opacity:0.8;transform:scale(0.5);animation-timing-function:cubic-bezier(.16,1,.3,1)}65.833%{opacity:0;transform:scale(2.6)}100%{opacity:0;transform:scale(2.6)}}
+@keyframes bu5{0%{opacity:0;transform:scale(0.5)}72.417%{opacity:0;transform:scale(0.5)}72.5%{opacity:0.8;transform:scale(0.5);animation-timing-function:cubic-bezier(.16,1,.3,1)}80%{opacity:0;transform:scale(3.4)}100%{opacity:0;transform:scale(3.4)}}
+@keyframes pEntry{0%{transform:scale(1)}16.667%{transform:scale(1)}17.5%{transform:scale(0)}43.333%{transform:scale(0);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}46.667%{transform:scale(1)}100%{transform:scale(1)}}
+@keyframes rEntry{0%{opacity:1;transform:translateY(0px)}16.667%{opacity:1;transform:translateY(0px)}17.5%{opacity:0;transform:translateY(6px)}44.167%{opacity:0;transform:translateY(6px);animation-timing-function:cubic-bezier(.16,1,.3,1)}47.5%{opacity:1;transform:translateY(0px)}100%{opacity:1;transform:translateY(0px)}}
+@keyframes rGline{0%{opacity:1}16.667%{opacity:1}17.5%{opacity:0}54.167%{opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}57.5%{opacity:1}100%{opacity:1}}
+@keyframes rGrad{0%{opacity:1;transform:translateY(0px)}16.667%{opacity:1;transform:translateY(0px)}17.5%{opacity:0;transform:translateY(6px)}55.833%{opacity:0;transform:translateY(6px);animation-timing-function:cubic-bezier(.16,1,.3,1)}59.167%{opacity:1;transform:translateY(0px)}100%{opacity:1;transform:translateY(0px)}}
+@keyframes pGrad{0%{transform:scale(1)}16.667%{transform:scale(1)}17.5%{transform:scale(0)}56.667%{transform:scale(0);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}60%{transform:scale(1)}100%{transform:scale(1)}}
+@keyframes rTint{0%{opacity:1}16.667%{opacity:1}17.5%{opacity:0}56.667%{opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}63.333%{opacity:1}100%{opacity:1}}
+@keyframes pExit{0%{transform:scale(1)}16.667%{transform:scale(1)}17.5%{transform:scale(0)}72.5%{transform:scale(0);animation-timing-function:cubic-bezier(.34,1.56,.64,1)}75.833%{transform:scale(1)}100%{transform:scale(1)}}
+@keyframes rX1{0%{fill-opacity:1}16.667%{fill-opacity:1}17.5%{fill-opacity:0}73.333%{fill-opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}75.833%{fill-opacity:1}100%{fill-opacity:1}}
+@keyframes rX2{0%{fill-opacity:1}16.667%{fill-opacity:1}17.5%{fill-opacity:0}75%{fill-opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}77.5%{fill-opacity:1}100%{fill-opacity:1}}
+@keyframes rX3{0%{fill-opacity:1}16.667%{fill-opacity:1}17.5%{fill-opacity:0}76.667%{fill-opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}79.167%{fill-opacity:1}100%{fill-opacity:1}}
+@keyframes rX4{0%{fill-opacity:1}16.667%{fill-opacity:1}17.5%{fill-opacity:0}78.333%{fill-opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}80.833%{fill-opacity:1}100%{fill-opacity:1}}
+@keyframes shM{0%{transform:translateX(-420px) skewX(-20deg)}16.667%{transform:translateX(-420px) skewX(-20deg);animation-timing-function:cubic-bezier(.65,0,.35,1)}24.167%{transform:translateX(560px) skewX(-20deg)}100%{transform:translateX(560px) skewX(-20deg)}}
+@keyframes shO{0%{opacity:0}16.667%{opacity:0}17.5%{opacity:1}23.333%{opacity:1}24.167%{opacity:0}100%{opacity:0}}
+@keyframes puD{0%{opacity:0}43.333%{opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}45.417%{opacity:1;animation-timing-function:cubic-bezier(.65,0,.35,1)}52.5%{opacity:0}100%{opacity:0}}
+@keyframes puP{0%{opacity:0}56.667%{opacity:0;animation-timing-function:cubic-bezier(.16,1,.3,1)}58.75%{opacity:1;animation-timing-function:cubic-bezier(.65,0,.35,1)}65.833%{opacity:0}100%{opacity:0}}
+@keyframes disc{0%{fill:#7f93a8}74.167%{fill:#7f93a8;animation-timing-function:cubic-bezier(.65,0,.35,1)}78.333%{fill:#c7d6e8}90%{fill:#c7d6e8;animation-timing-function:cubic-bezier(.65,0,.35,1)}95.833%{fill:#7f93a8}100%{fill:#7f93a8}}
+@keyframes dd{0%{opacity:.65;animation-timing-function:cubic-bezier(.65,0,.35,1)}50%{opacity:1;animation-timing-function:cubic-bezier(.65,0,.35,1)}100%{opacity:.65}}
+@media (prefers-reduced-motion:reduce){*{animation:none !important}}
+</style>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#070d18"/><stop offset="1" stop-color="#0b1424"/></linearGradient>
+<radialGradient id="glowL"><stop offset="0" stop-color="#2dd4bf" stop-opacity=".10"/><stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/></radialGradient>
+<pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#1b2c45" stroke-width=".8"/></pattern>
+<pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="rgba(251,191,36,.16)"/><rect width="1.5" height="8" fill="rgba(251,191,36,.35)"/></pattern>
+<linearGradient id="wm" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#e8fff4"/><stop offset="1" stop-color="#2dd4bf"/></linearGradient>
+<linearGradient id="cg" gradientUnits="userSpaceOnUse" x1="676" y1="0" x2="1018" y2="0"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#4ade80"/></linearGradient>
+<linearGradient id="shG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".75"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<filter id="glow" filterUnits="userSpaceOnUse" x="620" y="20" width="640" height="290"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="glow6" filterUnits="userSpaceOnUse" x="0" y="20" width="640" height="150"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="soft" filterUnits="userSpaceOnUse" x="20" y="166" width="630" height="76"><feGaussianBlur stdDeviation="3"/></filter>
+<clipPath id="frame"><rect width="1280" height="320" rx="20"/></clipPath>
+<clipPath id="wmClip"><text x="40" y="122" font-size="96" font-weight="800" letter-spacing="-2" textLength="430" lengthAdjust="spacingAndGlyphs">pump-bot</text></clipPath>
+</defs>
+<g clip-path="url(#frame)">
+<rect width="1280" height="320" fill="url(#bg)"/>
+<rect width="1280" height="320" fill="url(#grid)" opacity=".5"/>
+<ellipse cx="240" cy="130" rx="320" ry="140" fill="url(#glowL)"/>
+</g>
+<rect x="640" y="20" width="608" height="280" rx="18" fill="#0a1322" stroke="#1d3a52" stroke-width="1.5"/>
+<path d="M664 102H1236M664 152H1236M664 202H1236" stroke="#16283f" stroke-width="1"/>
+<path d="M664 252H1236" stroke="#22405c" stroke-width="1.5"/>
+<g id="dyn" class="an">
+<rect id="poolTint" class="an" x="1018" y="64" width="218" height="188" fill="rgba(34,211,238,.08)"/>
+<rect id="band" class="an" x="940" y="64" width="46" height="188" fill="url(#hatch)" stroke="#fbbf24" stroke-opacity=".6" stroke-width="1.5"/>
+<line id="gradLine" class="an" x1="1018" y1="64" x2="1018" y2="252" stroke="#c7d6e8" stroke-opacity=".55" stroke-dasharray="4 5"/>
+<path id="pos" class="an" d="M944 182C954 174.33 962.33 166.5 970 159C977.67 151.5 982 146.83 990 137C998 127.17 1013.33 106.17 1018 100L1032 107L1046 101L1061 118L1075 113L1090 134L1104 128L1119 150L1133 144L1148 165L1162 159L1177 180L1191 174L1206 192L1220 188" pathLength="1" stroke-dasharray="1 2" fill="none" stroke="#fbbf24" stroke-width="10" stroke-opacity=".28" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="curve" class="an" d="M676 252C686.67 251.33 719.33 250 740 248C760.67 246 780 243.67 800 240C820 236.33 841.67 231.83 860 226C878.33 220.17 896 212.33 910 205C924 197.67 934 189.67 944 182C954 174.33 962.33 166.5 970 159C977.67 151.5 982 146.83 990 137C998 127.17 1013.33 106.17 1018 100" pathLength="1" stroke-dasharray="1 2" fill="none" stroke="url(#cg)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+<path id="pool" class="an" d="M1018 100L1032 107L1046 101L1061 118L1075 113L1090 134L1104 128L1119 150L1133 144L1148 165L1162 159L1177 180L1191 174L1206 192L1220 188" pathLength="1" stroke-dasharray="1 2" fill="none" stroke="#22d3ee" stroke-width="3.5" stroke-linejoin="round" filter="url(#glow)"/>
+<path id="guide" d="M676 252C686.67 251.33 719.33 250 740 248C760.67 246 780 243.67 800 240C820 236.33 841.67 231.83 860 226C878.33 220.17 896 212.33 910 205C924 197.67 934 189.67 944 182C954 174.33 962.33 166.5 970 159C977.67 151.5 982 146.83 990 137C998 127.17 1013.33 106.17 1018 100L1032 107L1046 101L1061 118L1075 113L1090 134L1104 128L1119 150L1133 144L1148 165L1162 159L1177 180L1191 174L1206 192L1220 188" pathLength="1" stroke-dasharray="1 2" fill="none" stroke="none"/>
+<g filter="url(#glow)"><g transform="translate(944 182)"><circle id="entryDot" class="an fb" r="7" fill="#fbbf24" stroke="#07101c" stroke-width="2"/></g></g>
+<g transform="translate(1018 100)"><circle id="gradMarker" class="an fb" r="12" fill="none" stroke="#c7d6e8" stroke-opacity=".55" stroke-width="1.5"/></g>
+<g filter="url(#glow)"><g transform="translate(1220 188)"><circle id="exitMark" class="an fb" r="10" fill="none" stroke="#fbbf24" stroke-width="3"/></g></g>
+<g fill="none" stroke-width="2">
+<g transform="translate(676 252)"><circle id="b1" class="an fb bu" r="10" stroke="#2dd4bf"/></g>
+<g transform="translate(944 182)"><circle id="b2" class="an fb bu" r="10" stroke="#fbbf24"/></g>
+<g transform="translate(1018 100)"><circle id="b3" class="an fb bu" r="10" stroke="#c7d6e8"/><circle id="b4" class="an fb bu" r="10" stroke="#22d3ee"/></g>
+<g transform="translate(1220 188)"><circle id="b5" class="an fb bu" r="10" stroke="#fbbf24"/></g>
+</g>
+<g filter="url(#glow)"><g id="dotMove" class="an"><circle id="dotCore" class="an fb" r="6" fill="#fff"/></g></g>
+<g font-size="18" font-weight="600">
+<text id="lCfg" class="an" x="1008" y="282" text-anchor="end" fill="#fbbf24">↔ configurable</text>
+<text id="lEntry" class="an" x="926" y="170" text-anchor="end" fill="#fbbf24">bot entry</text>
+<text id="lGrad" class="an" x="1018" y="50" text-anchor="middle" fill="#c7d6e8">graduation</text>
+<text x="1030" y="224" fill="#fbbf24" textLength="206" lengthAdjust="spacingAndGlyphs"><tspan id="x1" class="an">exit:</tspan><tspan id="x2" class="an"> TP</tspan><tspan id="x3" class="an"> / SL</tspan><tspan id="x4" class="an"> / timeout</tspan></text>
+</g>
+</g>
+<g font-size="18" font-weight="600">
+<text x="664" y="50" fill="#4ade80">bonding curve</text>
+<text x="1228" y="50" text-anchor="end" fill="#22d3ee">PumpSwap</text>
+<text x="676" y="282" fill="#7f93a8">0%</text>
+<text x="1030" y="282" fill="#7f93a8">100% ≈ 85 SOL</text>
+</g>
+<path d="M1018 252V258" stroke="#7f93a8" stroke-width="1.5"/>
+<text x="40" y="122" font-size="96" font-weight="800" letter-spacing="-2" textLength="430" lengthAdjust="spacingAndGlyphs" fill="url(#wm)" filter="url(#glow6)">pump-bot</text>
+<text x="40" y="164" font-size="28" textLength="470" lengthAdjust="spacingAndGlyphs" fill="#c7d6e8">trading bots for <tspan fill="#4ade80" font-weight="700">pump.fun</tspan> · Solana</text>
+<g stroke-width="1.5" filter="url(#soft)">
+<rect id="puD" class="an pu" x="40" y="186" width="224" height="36" rx="18" fill="none" stroke="#4ade80"/>
+<rect id="puP" class="an pu" x="398" y="186" width="228" height="36" rx="18" fill="none" stroke="#fbbf24"/>
+</g>
+<g stroke-width="1.5" font-size="18" font-weight="600">
+<rect x="40" y="186" width="224" height="36" rx="18" fill="rgba(74,222,128,.10)" stroke="#4ade80"/>
+<circle id="dryDot" cx="58" cy="204" r="5" fill="#4ade80"/>
+<text x="76" y="210" fill="#d9fbe6" textLength="170" lengthAdjust="spacingAndGlyphs">DRY-RUN by default</text>
+<rect x="276" y="186" width="110" height="36" rx="18" fill="rgba(45,212,191,.10)" stroke="#2dd4bf"/>
+<circle cx="294" cy="204" r="5" fill="#2dd4bf"/>
+<text x="312" y="210" fill="#c9f7f0" textLength="56" lengthAdjust="spacingAndGlyphs">Solana</text>
+<rect x="398" y="186" width="228" height="36" rx="18" fill="rgba(251,191,36,.10)" stroke="#fbbf24"/>
+<circle cx="416" cy="204" r="5" fill="#fbbf24"/>
+<text x="434" y="210" fill="#fde9a8" textLength="176" lengthAdjust="spacingAndGlyphs">pump.fun → PumpSwap</text>
+</g>
+<text id="disc" class="an" x="40" y="262" font-size="15" fill="#7f93a8" textLength="470" lengthAdjust="spacingAndGlyphs">a research tool · not financial advice · profit not guaranteed</text>
+<g clip-path="url(#wmClip)"><g id="shineO" class="an"><rect id="shine" class="an" x="40" y="40" width="180" height="140" fill="url(#shG)"/></g></g>
 </svg>
