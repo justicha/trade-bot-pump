@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/img/banner.svg" alt="pump-bot — research bots for pump.fun on Solana. Animated: bonding curve, configurable entry band, graduation to PumpSwap, exit. Dry-run by default; not financial advice." width="100%"></p>
+<p align="center"><img src="docs/img/banner.svg" alt="pump-bot — research bots for pump.fun on Solana. Animated: buy window on the bonding curve, then four exits after the buy: take-profit, stop-loss, timeout, graduation → sell. Dry-run by default; not financial advice." width="100%"></p>
 
 <p align="center"><b>Bots for pump.fun (Solana) · dry-run by default · a research tool, not a way to make money.</b></p>
 
