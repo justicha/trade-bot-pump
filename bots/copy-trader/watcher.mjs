@@ -8,6 +8,9 @@
 //   COPY_BUY_SOL=0.05            — сумма покупки (фиксированная)
 //   COPY_SELL_PCT=100             — процент продажи при продаже целью
 //   COPY_MAX_POSITIONS=5          — максимум одновременных позиций
+//   COPY_MAX_HOLD_SEC=1800        — страховка: если цель не продала за N секунд после нашей покупки,
+//                                   бот продаёт сам (весь остаток); 0 = выключено. Не стратегия (не TP/SL).
+//   SELL_MAX_ATTEMPTS=3           — максимум попыток продажи позиции (backoff 2 с, 4 с, …), затем STUCK
 
 import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
@@ -37,6 +40,7 @@ import { roundTripCosts } from "../../lib/fees.mjs";
 import { SessionLedger } from "../../lib/session.mjs";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
+import { createSellRetry, DEFAULT_SELL_MAX_ATTEMPTS } from "../../lib/sell-retry.mjs";
 import { applyLiveSell, balanceBeforeSell, liveEntry } from "../../lib/live-pnl.mjs";
 import { createAtaCloser } from "../../lib/close-ata.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
@@ -50,6 +54,14 @@ const BUY_SOL = numOr(process.env.COPY_BUY_SOL, 0.05, "COPY_BUY_SOL");
 const SELL_PCT = numOr(process.env.COPY_SELL_PCT, 100, "COPY_SELL_PCT");
 const MAX_POSITIONS = numOr(process.env.COPY_MAX_POSITIONS, 5, "COPY_MAX_POSITIONS");
 const TARGETS = (process.env.COPY_TARGETS || "").split(",").filter(Boolean);
+// P5 (human decision 2026-11-12): safety net against a position that never exits. If the target has
+// not sold within COPY_MAX_HOLD_SEC of OUR buy, the bot sells on its own. 0 = off. This is not a
+// strategy exit — there is still no TP/SL here; the target's sale stays the main exit.
+const MAX_HOLD_SEC = numOr(process.env.COPY_MAX_HOLD_SEC, 1800, "COPY_MAX_HOLD_SEC");
+// M6: a failed LIVE sell is retried at most SELL_MAX_ATTEMPTS times (backoff 2 s, 4 s, …), then the
+// position is STUCK (lib/sell-retry.mjs). The same env var and default as graduation-sniper.
+const SELL_MAX_ATTEMPTS = numOr(process.env.SELL_MAX_ATTEMPTS, DEFAULT_SELL_MAX_ATTEMPTS, "SELL_MAX_ATTEMPTS");
+const EXIT_POLL_MS = 2000; // exit timer: sell retries + max-hold check (same cadence as the sniper poll)
 
 let totalPnl = 0;
 let totalTrades = 0;
@@ -103,6 +115,21 @@ function requestStop(reason) {
   stopReason = reason;
   setImmediate(() => { void finish(reason); });
 }
+
+// M6: bounded retries of a failed LIVE sell — counts the attempt, journals `sell_failed`, backs
+// off, and after SELL_MAX_ATTEMPTS books the position as STUCK (assumed loss for the limits) and
+// removes it from the book. A DRY RUN never fails a sell, so it never gets here.
+const sellRetry = createSellRetry({
+  maxAttempts: SELL_MAX_ATTEMPTS,
+  positions,
+  journal,
+  recordResult,
+  session,
+  log,
+  buySol: BUY_SOL,
+  fields: { mode: "LIVE" },
+});
+let exitTimer = null; // set in Main, cleared in finish()
 
 // Mints with a buy in flight. Counted in the position-cap check so concurrent WS callbacks
 // (several targets, several trades per notification) can't overshoot MAX_POSITIONS or buy the
@@ -194,12 +221,43 @@ async function copyBuyUnlocked(mint, copiedFrom) {
   }
 }
 
-async function copySell(mint, copiedFrom) {
+// ---- exit: sell + bounded retries + max-hold (M6, P5) --------------------------------------------
+// One sale per mint at a time. A sale can now start from three places — the target's own sale (WS),
+// the exit timer (retry / max-hold) and finish() — and two of them running together would read the
+// same balance and sell it twice (the loser's failure would then be counted against a position
+// that was already sold). Calls for the same mint are queued; the later one finds the position
+// gone, or sells what is left.
+const selling = new Map(); // mint -> tail of that mint's sale queue
+
+function copySell(mint, copiedFrom, opts = {}) {
+  const prev = selling.get(mint) || Promise.resolve();
+  // The queue entry is removed as soon as the last queued sale of the mint settles.
+  const run = prev
+    .then(() => copySellOnce(mint, copiedFrom, opts))
+    .finally(() => {
+      if (selling.get(mint) === tail) selling.delete(mint);
+    });
+  const tail = run.catch(() => {}); // the queue itself never rejects
+  selling.set(mint, tail);
+  return run;
+}
+
+// opts.reason — why we sell when it is not the target's own sale ("max-hold timeout", "stop");
+// opts.retry  — the exit timer repeating a failed sale;
+// opts.final  — the stop path: one last attempt, the retry backoff is not waited out.
+async function copySellOnce(mint, copiedFrom, { reason = null, retry = false, final = false } = {}) {
   const pos = positions.get(mint);
   if (!pos) return;
+  // M6: a failed sale is backing off. The exit timer retries it at nextSellAt; another sale by the
+  // target in between must not burn the attempt budget without the pause.
+  if (!final && !sellRetry.due(pos)) {
+    log(`  sell of ${mint.slice(0, 8)} is backing off after a failed attempt — the exit timer retries it`);
+    return;
+  }
 
   const mintPk = new PublicKey(mint);
-  log(`COPY SELL from ${copiedFrom.slice(0, 8)}...`);
+  const why = retry ? `retry ${(pos.attempts || 0) + 1}/${SELL_MAX_ATTEMPTS}: ${reason || "target sold"}` : reason;
+  log(`COPY SELL from ${copiedFrom.slice(0, 8)}...${why ? ` (${why})` : ""}`);
 
   if (DRY_RUN) {
     const state = await getBondingCurveState(mintPk, 0);
@@ -231,7 +289,10 @@ async function copySell(mint, copiedFrom) {
       return;
     }
 
-    const sellAmount = SELL_PCT >= 100 ? total : (total * BigInt(SELL_PCT)) / 100n;
+    // P5: a max-hold exit sells everything — a COPY_SELL_PCT share would leave a remainder that the
+    // safety net exists to prevent.
+    const sellAll = pos.exitFull === true || SELL_PCT >= 100;
+    const sellAmount = sellAll ? total : (total * BigInt(SELL_PCT)) / 100n;
     const state = await getBondingCurveState(mintPk, 0);
     if (!state || state.complete) {
       // No AMM sell in this bot: the tokens stay in the wallet. Journal it as STUCK and book the
@@ -280,6 +341,8 @@ async function copySell(mint, copiedFrom) {
     else Object.assign(pos, sale.remainder);
     // Full sale, confirmed and booked: now (and only now) try to close the empty ATA.
     if (sale.closed) ataCloser.schedule(mint, { venue: "curve" });
+    // A partial sale went through: the remainder is no longer on its way out, fresh retry budget.
+    if (!sale.closed) releaseExit(pos);
   } catch (err) {
     // C2: the sell may have landed even though confirmTransaction failed. If the chain shows the
     // tokens left the wallet, record the sale instead of leaving the position open to be re-sold.
@@ -301,10 +364,60 @@ async function copySell(mint, copiedFrom) {
         if (sale.closed) positions.delete(mint);
         else Object.assign(pos, sale.remainder);
         if (sale.closed) ataCloser.schedule(mint, { venue: "curve" });
+        if (!sale.closed) releaseExit(pos);
         return;
       }
     }
     log(`  copy sell failed: ${err.message}`);
+    // M6: not a landed sale (that returned above). Count the attempt and back off; the position is
+    // now "on its way out" (pendingExit) and the exit timer repeats the sale without waiting for
+    // the target to sell again. When the budget (SELL_MAX_ATTEMPTS) is gone it becomes STUCK.
+    const stopSale = reason === "stop";
+    const exitReason = (stopSale ? null : reason) || pos.exitReason || "target sold";
+    const res = sellRetry.fail(mint, pos, err, { reason: stopSale ? "stop" : exitReason, tokens: total, extra: { copiedFrom } });
+    if (!res.stale && !res.stuck) {
+      pos.pendingExit = true;
+      pos.exitReason = exitReason;
+    }
+  }
+}
+
+// A partial sale closed part of the position: what is left is a normal open position again.
+function releaseExit(pos) {
+  sellRetry.reset(pos); // attempts 0, no backoff, pendingExit false
+  pos.exitFull = false;
+  pos.exitReason = null;
+}
+
+// Exit timer (every EXIT_POLL_MS), DRY RUN and LIVE:
+//   P5 — a position held for COPY_MAX_HOLD_SEC without a sale by the target is sold by the bot
+//        itself (the usual copySell; the whole balance);
+//   M6 — a position whose sale failed (pendingExit) is sold again once its backoff is over.
+// One cycle at a time; a mint with a sale in flight is skipped.
+let exitChecking = false;
+async function checkExits() {
+  if (stopping || exitChecking) return;
+  exitChecking = true;
+  try {
+    for (const [mint, pos] of [...positions]) {
+      if (stopping) break;
+      if (positions.get(mint) !== pos) continue; // closed while this cycle was running
+      if (selling.has(mint)) continue; // a sale of this mint is in flight
+      if (MAX_HOLD_SEC > 0 && !pos.exitFull && Date.now() - pos.entryTime >= MAX_HOLD_SEC * 1000) {
+        pos.pendingExit = true;
+        pos.exitFull = true;
+        pos.exitReason = "max-hold timeout";
+        log(`  max hold ${MAX_HOLD_SEC}s reached for ${mint.slice(0, 8)}: the target has not sold — selling`);
+      }
+      if (!pos.pendingExit || !sellRetry.due(pos)) continue;
+      try {
+        await copySell(mint, pos.copiedFrom, { reason: pos.exitReason || "target sold", retry: (pos.attempts || 0) > 0 });
+      } catch (err) {
+        log(`  exit check error ${mint.slice(0, 8)}: ${err.message}`);
+      }
+    }
+  } finally {
+    exitChecking = false;
   }
 }
 
@@ -317,10 +430,11 @@ async function finish(reason = stopReason || "stopped") {
   stopReason = reason;
   log(`\n=== STOPPING: ${reason} ===`);
   await ws.close().catch(() => {}); // wait for the socket: exiting mid-close trips a libuv assertion
+  if (exitTimer) clearInterval(exitTimer);
   if (LIVE && positions.size > 0) {
     log(`  closing ${positions.size} open position(s) before exit...`);
     for (const [mint, pos] of [...positions]) {
-      try { await copySell(mint, pos.copiedFrom); }
+      try { await copySell(mint, pos.copiedFrom, { reason: "stop", final: true }); }
       catch (err) { log(`  close failed ${mint.slice(0, 8)}: ${err.message}`); }
     }
   }
@@ -342,6 +456,7 @@ log(`Targets: ${TARGETS.map((t) => t.slice(0, 12) + "...").join(", ")}`);
 log(`Config: buy=${BUY_SOL} SOL, sell=${SELL_PCT}%, max=${MAX_POSITIONS} positions`);
 if (LIVE) log(`MODE: LIVE — real transactions will be sent`);
 else log(`MODE: DRY RUN (no real transactions) — pass --live to trade`);
+log(`Exit safety: max hold ${MAX_HOLD_SEC > 0 ? `${MAX_HOLD_SEC}s` : "off"} (COPY_MAX_HOLD_SEC), sell attempts <= ${SELL_MAX_ATTEMPTS} (SELL_MAX_ATTEMPTS)`);
 
 const ws = new SolanaWs();
 await ws.connect();
@@ -381,6 +496,9 @@ for (const target of TARGETS) {
   });
   log(`Subscribed to ${target.slice(0, 12)}...`);
 }
+
+// Exit timer: sell retries (M6) + max-hold safety (P5). Skips itself while the bot is stopping.
+exitTimer = setInterval(() => void checkExits(), EXIT_POLL_MS);
 
 log("\nListening for target wallet trades...\n");
 

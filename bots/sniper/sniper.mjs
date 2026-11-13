@@ -47,6 +47,7 @@ import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
 import { applyLiveSell, liveEntry } from "../../lib/live-pnl.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
+import { createSellRetry, DEFAULT_SELL_MAX_ATTEMPTS } from "../../lib/sell-retry.mjs";
 import { createAtaCloser } from "../../lib/close-ata.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
@@ -78,6 +79,9 @@ const MIN_DELAY_MS = numOr(process.env.SNIPER_MIN_DELAY_MS, 0, "SNIPER_MIN_DELAY
 // Journal: after a sell, keep sampling the price for N seconds to see what was left on the table.
 const POST_EXIT_SEC = numOr(process.env.SNIPER_POST_EXIT_SEC, 300, "SNIPER_POST_EXIT_SEC");
 const POLL_MS = 2000;
+// M6: a failed LIVE sell is retried at most SELL_MAX_ATTEMPTS times (backoff 2 s, 4 s, …), then the
+// position is STUCK (lib/sell-retry.mjs). The same env var and default as graduation-sniper.
+const SELL_MAX_ATTEMPTS = numOr(process.env.SELL_MAX_ATTEMPTS, DEFAULT_SELL_MAX_ATTEMPTS, "SELL_MAX_ATTEMPTS");
 
 let totalPnl = 0;
 let totalTrades = 0;
@@ -224,6 +228,19 @@ const ataCloser = createAtaCloser({
   log,
   warn: (m) => logger.warn(m),
   meta: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA },
+});
+// M6: bounded retries of a failed LIVE sell. Counts the attempt, journals `sell_failed`, backs off,
+// and after SELL_MAX_ATTEMPTS books the position as STUCK (assumed loss for the limits) and removes
+// it from the book. A DRY RUN never fails a sell, so it never gets here.
+const sellRetry = createSellRetry({
+  maxAttempts: SELL_MAX_ATTEMPTS,
+  positions,
+  journal,
+  recordResult,
+  session,
+  log,
+  buySol: BUY_SOL,
+  fields: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mode: "LIVE" },
 });
 // Launch price of a standard pump.fun curve in RAW units (30 SOL virtual / 1.073e9 tokens).
 // Recorded as the price basis used for the premium metric; source is marked "assumed" because the
@@ -516,10 +533,13 @@ async function executeSell(mint, reason, exitInfo = null) {
     return;
   }
 
+  // Wallet balance read before this attempt; the catch journals it with a failed attempt.
+  let walletTokens = null;
   try {
     const ata = getAssociatedTokenAddressSync(mintPk, wallet.publicKey, false, TOKEN_2022_PROGRAM);
     const info = await connection.getTokenAccountBalance(ata);
     const tokenAmount = BigInt(info.value.amount);
+    walletTokens = tokenAmount;
 
     if (tokenAmount === 0n) {
       log(`  no tokens in wallet`);
@@ -642,6 +662,9 @@ async function executeSell(mint, reason, exitInfo = null) {
       }
     }
     log(`  sell failed: ${err.message}`);
+    // M6: not a landed sale (that returned above). Count the attempt and back off; when the budget
+    // (SELL_MAX_ATTEMPTS) is gone the position becomes STUCK — an assumed loss for the limits.
+    sellRetry.fail(mint, pos, err, { reason, tokens: walletTokens });
   }
 }
 
@@ -825,6 +848,9 @@ async function checkPositions() {
         else if (candRatio <= STOP_LOSS) { rule = "stop-loss"; detail = `${candRatio.toFixed(2)}x`; }
         else if (holdSec >= TIMEOUT_SEC) { rule = "timeout"; detail = `${holdSec.toFixed(0)}s`; }
         if (!rule) continue;
+        // M6: a failed sell is backing off — keep tracking the position (price and peak above), but
+        // do not confirm or sell before nextSellAt.
+        if (!sellRetry.due(pos)) continue;
 
         // CONFIRM on-chain before acting (item 1). The stream can spike (esp. the Mayhem SOL side)
         // while the account is unchanged: that is a phantom trigger, not an exit.
@@ -1099,6 +1125,7 @@ log(`Config: buy=${BUY_SOL} SOL, TP=${TAKE_PROFIT}x, SL=${STOP_LOSS}x, timeout=$
 log(`Max positions: ${MAX_POSITIONS}, cooldown: ${COOLDOWN_SEC}s`);
 if (LIVE) log(`MODE: LIVE — real transactions will be sent`);
 else log(`MODE: DRY RUN (no real transactions) — pass --live to trade`);
+if (LIVE) log(`Sell retries: at most ${SELL_MAX_ATTEMPTS} attempts per position (backoff 2s, 4s, …), then STUCK`);
 if (MIN_DEV_BUY) log(`Filter: dev buy >= ${MIN_DEV_BUY} SOL`);
 if (MIN_HOLDERS) log(`Filter: >= ${MIN_HOLDERS} holders within ${HOLDER_WAIT_SEC}s (no instant buy at create)`);
 const startupSolUsd = await getSolUsd();
