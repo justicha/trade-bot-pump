@@ -66,16 +66,24 @@ the graduation fill band instead of producing nonsense prices.
 
 ## Graduation shadow lab
 
-`bots/graduation-sniper/shadow.mjs` is the graduation counterpart of the lab. Ten variants
+`bots/graduation-sniper/shadow.mjs` is the graduation counterpart of the lab. Fourteen variants
 (`A` baseline, `B` holders 7, `C` holders 15, `D` max fill 95, `E` max fill 97, `F` exit check,
-`G` B+E+F, `H` TP 1.3, `I` enter after migration, `J` the live config) share one candidate stream and one virtual wallet
+`G` B+E+F, `H` TP 1.3, `I` enter after migration, `J` the live config, `K` late entry, `L` momentum, `M` J with SL 0.5, `N` exit on migration) share one candidate stream and one virtual wallet
 each.
 
 `scripts/analyze-graduation.mjs` prints, per variant: `n`, win %, mean/median net %, profit factor,
 max drawdown, the TP/SL/timeout/STUCK mix and a 95% bootstrap CI (only for n ≥ 30). Each variant's
 series is split in half by time: the first half is the fit window, the second is the hold-out.
 Acceptance rule: the lower CI bound on the **second** half must be above zero, in the pessimistic
-model. Variant `I` reports "no data" because the trade stream carries no AMM price.
+model. Variant `I` is a stub, not a bug: the stream has no AMM entry price and the repo has no
+PumpSwap buy quote, so `I` trades nothing.
+
+Revision 5 adds four variants: `K` late entry (fill 88-95, holders >= 20), `L` momentum (fill 75-90,
+holders >= 5, and the fill grew by >= `SHADOW_MOMENTUM_PP` percentage points over `SHADOW_MOMENTUM_SEC`
+seconds), `M` (`J` with SL 0.5) and `N` (`J`, but a migrated position exits at the first pool quote
+with reason `migration-exit`). `K` and `L` exit at TP 1.5 / SL 0.7 / 300 s. Because `L` uses fill 75,
+the candidate threshold is now 75% (more `gshadow_candidate` rows); the entries of `A`-`J` are
+unchanged.
 
 ### Variant J — the live config
 
@@ -99,8 +107,33 @@ node bots/graduation-sniper/shadow.mjs
 node scripts/analyze-graduation.mjs
 ```
 
-The startup line must read `candidate threshold 75% | J live config: fill 75-90%, holders>=5,
-TP 1.5, SL 0.7, hold 300s`. If it shows `92-97 / 7`, the `GRAD_*` variables were not read.
+The startup prints two lines after "Listening for candidates...": `variants <ACTIVE> | candidate
+threshold <MIN_FILL>% | J live config: fill <min>-<max>%, holders>=<n>, TP <tp>, SL <sl>, hold <sec>s`
+and `clock guards <LATE>s (stall / late timeout / stale events) | L momentum +<pp>pp / <sec>s | do not
+select text in this window: a paused console freezes the lab`. With the defaults the first line is
+`variants ABCDEFGHJKLMN | candidate threshold 75% | J live config: fill 80-90%, holders>=5, TP 1.5,
+SL 0.7, hold 300s`; if `J` shows `92-97 / 7`, the `GRAD_*` variables were not read.
+
+### Clock guards (shadow rev 5)
+
+Three times the whole lab froze for 22-39 min, each within ~1.3 s after a fill >= 100% event. The most
+likely cause is a paused Windows console (QuickEdit / text selection — clicking or selecting text in a
+classic PowerShell or cmd window blocks `console.log` and freezes the event loop); **not proven**.
+Revision 5 adds three guards (`SHADOW_LATE_SEC`, default 30, `0` = off):
+
+- a process stall is journaled (`gshadow_stall`), and the positions that lived through it are marked
+  with `stallSec`;
+- a timeout noticed later than `SHADOW_LATE_SEC` after its deadline is journaled WITHOUT a result
+  (`late: true`, `netSol null`) instead of a wrong backdated price;
+- stream events older than `SHADOW_LATE_SEC` are dropped (a `gshadow_stale_events` summary row),
+  instead of opening positions on stale data.
+
+Run the lab in Windows Terminal or the VS Code terminal, and do not select text in the bot window.
+
+Reading old exports: rows without `shadowRev` are pre-rev-5 and can contain freeze artifacts — for the
+2026-11-12/13 exports exclude rows with `holdSec > 330` (not the whole mint). Rows with `stallSec` are
+positions that lived through a stall; rows without a result (`netSol null`) stay outside the averages.
+`costsScheme` is still `v4-amm-exit`.
 
 ## How to run a real study
 

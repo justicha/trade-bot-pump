@@ -71,7 +71,7 @@ asrt(t.netPct === -7.63, `flat round trip nets -7.63% (fees+one slip+tx), got ${
 asrt(
   // v4-amm-exit keeps the v3-single-slip arithmetic for curve exits (the numbers above are the
   // same); only the label moved because migrated positions are priced differently now.
-  typeof t.costsScheme === "string" && t.costsScheme.startsWith("v4-amm-exit") && t.exitVenue === "curve" && t.migrated === false,
+  typeof t.costsScheme === "string" && t.costsScheme.startsWith("v5-amm-fee") && t.exitVenue === "curve" && t.migrated === false,
   `the line carries the new accounting scheme, got ${t.costsScheme}`,
 );
 asrt(t.slipBps === 54, `the reported slippage is 50 assumed + 4 size = 54 bps, got ${t.slipBps}`);

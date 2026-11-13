@@ -100,6 +100,10 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `SHADOW_MAX_MINTS` | `20000` | Shadow lab memory bound; only fully spent mints are ever evicted |
 | `SHADOW_STALE_SEC` | `15` | Seconds of silence on a mint with an open position before re-checking whether its curve finished |
 | `SHADOW_AMM_POLL_MS` | `5000` | Minimum interval between pool quotes for a migrated position |
+| `SHADOW_LATE_SEC` | `30` | Threshold of the three clock guards (process stall, late timeout, stale stream events); `0` = off |
+| `SHADOW_MOMENTUM_PP` | `5` | Variant L: minimum fill growth, percentage points |
+| `SHADOW_MOMENTUM_SEC` | `60` | Variant L: window, seconds |
+| `SHADOW_VARIANTS` | all | Which variants trade, letters, e.g. `ABCDEFGHJ` |
 | `REPLAY_MIN_TRADES` / `REPLAY_TEST_FRACTION` / `REPLAY_RESAMPLES` | `300` / `0.7` / `2000` | Replay strictness |
 | `SLIPPAGE_ASSUMED_BPS` | `50` | Extra slippage assumed by the cost model (`lib/fees.mjs`, `lib/pessimistic.mjs`) |
 

@@ -510,7 +510,8 @@ for (const [name, setup, reason] of [
 }
 
 // ---- 10. accounting scheme: pnlSol did not change, so the stamp did not either ------------------
-asrt(COSTS_SCHEME.startsWith("v2.3"), `COSTS_SCHEME is untouched (v2.3), got ${COSTS_SCHEME}`);
+// v2.3 -> v2.4 in KODING №10 (the AMM quote's fee); closing ATAs still does not touch the scheme.
+asrt(COSTS_SCHEME.startsWith("v2.4"), `COSTS_SCHEME is not changed by the ATA closer (v2.4), got ${COSTS_SCHEME}`);
 
 // ---- 11. wiring in the three bots ---------------------------------------------------------------
 const read = (rel) => fs.readFileSync(path.join(here, "..", rel), "utf8");

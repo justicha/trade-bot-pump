@@ -201,7 +201,7 @@ const V = G.buildVariants({ minFill: 92, sl: 0.65, holdSec: 240, live, momentum:
   asrt(o.gainPp === 68 && o.params.momentumPp === 5 && o.label === "momentum", "L open row: the gain it entered on + its parameters");
   const oj = G.openRow({ variantId: "J", v: V.J, mint: "M", fill: 80, holders: 6, spot: 1e-7, buySol: BUY, tokens: 1n, gainPp: 68 });
   asrt(oj.gainPp === undefined, "only a momentum variant journals gainPp");
-  for (const r of [late, un, row, o, oj]) asrt(r.shadowRev === 5 && G.SHADOW_REV === 5 && r.costsScheme === SHADOW_COSTS_SCHEME && r.costsScheme.startsWith("v4-amm-exit"), "rows carry shadowRev 5; the cost scheme is still v4 (costs did not change)");
+  for (const r of [late, un, row, o, oj]) asrt(r.shadowRev === 5 && G.SHADOW_REV === 5 && r.costsScheme === SHADOW_COSTS_SCHEME && r.costsScheme.startsWith("v5-amm-fee"), "rows carry shadowRev 5 (rules) next to the cost scheme (v5-amm-fee since KODING №10: the AMM fee changed, the rules did not)");
 }
 
 // ---- the report counts late / stalled rows and keeps them out of the averages -----------------

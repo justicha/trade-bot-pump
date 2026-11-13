@@ -31,12 +31,16 @@ process.env.SLIPPAGE_ASSUMED_BPS = "50";
 
 const G = await import("../lib/gshadow.mjs");
 const { pessimisticRoundTrip, SHADOW_COSTS_SCHEME } = await import("../lib/pessimistic.mjs");
-const { roundTripCosts, txCostSol } = await import("../lib/fees.mjs");
+const { roundTripCosts, txCostSol, ammSellTxCostSol } = await import("../lib/fees.mjs");
 const { readGradStrategy } = await import("../lib/grad-config.mjs");
 const { calcBuyTokens } = await import("../lib/pumpfun.mjs");
 
 const BUY = 0.02;
 const TX = txCostSol(); // 0.000455
+// v5-amm-fee: the sell leg of an AMM exit is the PumpSwap sell tx, which requests AMM_SELL_CU_LIMIT
+// (160k by default) instead of CU_LIMIT: 5000 + 1.5 x 160000 lamports.
+const TX_AMM = ammSellTxCostSol();
+asrt(near(TX_AMM, 0.000245), `AMM sell tx cost is 0.000245 SOL at the default AMM_SELL_CU_LIMIT, got ${TX_AMM}`);
 const SLIP_BPS = 54; // 50 assumed + 4 for a 0.02 SOL order
 
 // ---------------------------------------------------------------------------------------------
@@ -48,13 +52,13 @@ const SLIP_BPS = 54; // 50 assumed + 4 for a 0.02 SOL order
   const buyFee = BUY * 0.01;
   const slip = (BUY * SLIP_BPS) / 10000 + (BUY * SLIP_BPS) / 10000;
   asrt(near(amm.feeSol, buyFee), `AMM exit: only the pump BUY fee (0.0002), got ${amm.feeSol}`);
-  asrt(near(amm.netPnl, -(buyFee + slip + 2 * TX)), `AMM exit at solOut = buySol: net = -(pump buy fee + slip + tx x2), got ${amm.netPnl}`);
-  asrt(amm.slipBps === SLIP_BPS && near(amm.txSol, 2 * TX), "buy side, slippage and the two network fees are as before");
+  asrt(near(amm.netPnl, -(buyFee + slip + TX + TX_AMM)), `AMM exit at solOut = buySol: net = -(pump buy fee + slip + buy tx + AMM sell tx), got ${amm.netPnl}`);
+  asrt(amm.slipBps === SLIP_BPS && near(amm.txSol, TX + TX_AMM), "buy side and slippage as before; network fees = a CU_LIMIT buy + an AMM_SELL_CU_LIMIT sell");
 
   const curve = pessimisticRoundTrip({ buySol: BUY, ratio: 1, delayMs: 500 });
   asrt(near(curve.feeSol, 2 * buyFee), "curve exit: pump 1% in + 1% out, as before");
   asrt(near(curve.netPnl, -(2 * buyFee + slip + 2 * TX)), "curve exit: unchanged arithmetic");
-  asrt(near(curve.netPnl - amm.netPnl, -buyFee), "the only difference is the pump sell fee");
+  asrt(near(curve.netPnl - amm.netPnl, -buyFee - (TX - TX_AMM)), "the difference is the pump sell fee and the sell tx's own CU limit, nothing else");
   asrt(Math.round((curve.netPnl / BUY) * 10000) / 100 === -7.63, "curve flat round trip is still -7.63% (v3 number)");
   asrt(near(pessimisticRoundTrip({ buySol: BUY, ratio: 1, delayMs: 1, exitVenue: "curve" }).netPnl, curve.netPnl), 'exitVenue "curve" == the default');
 
@@ -63,7 +67,7 @@ const SLIP_BPS = 54; // 50 assumed + 4 for a 0.02 SOL order
   const b = roundTripCosts({ buySol: BUY, ratio: 1.3, sellFeeBps: 100 });
   asrt(JSON.stringify(a) === JSON.stringify(b), "roundTripCosts without sellFeeBps is unchanged");
   asrt(near(roundTripCosts({ buySol: BUY, ratio: 1.3, sellFeeBps: 0 }).feeSol, BUY * 0.01), "sellFeeBps: 0 drops only the sell-side fee");
-  asrt(SHADOW_COSTS_SCHEME.startsWith("v4-amm-exit"), `shadow scheme bumped, got ${SHADOW_COSTS_SCHEME}`);
+  asrt(SHADOW_COSTS_SCHEME.startsWith("v5-amm-fee"), `shadow scheme bumped (v4-amm-exit priced AMM exits with a 30 bps pool fee), got ${SHADOW_COSTS_SCHEME}`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -156,12 +160,12 @@ const pos = { variant: "J", mint: "MintJ", entryPrice: 1e-7, at: 1_000, tokens }
   asrt(curve.ratio === 1 && curve.netPct === -7.63 && curve.exitPrice === 1e-7 && curve.holdSec === 300, `curve row numbers as in v3 (${curve.netPct})`);
   asrt(curve.params === undefined && curve.costsScheme === SHADOW_COSTS_SCHEME, "A–I rows carry no params; the scheme is stamped");
 
-  const amm = G.tradeRow({ pos, v: V.J, reason: "sl", venue: "amm", amm: { solOut: 12_000_000n, feeBps: 30, ageMs: 40 }, buySol: BUY, now: 61_000 });
+  const amm = G.tradeRow({ pos, v: V.J, reason: "sl", venue: "amm", amm: { solOut: 12_000_000n, feeBps: 125, feeSource: "onchain", ageMs: 40 }, buySol: BUY, now: 61_000 });
   asrt(amm.exitVenue === "amm" && amm.migrated === true && amm.exitPrice === null, "amm row: exitVenue amm, migrated true, no curve price");
   asrt(amm.ratio === 0.6, `amm ratio = solOut / buySol (0.6), got ${amm.ratio}`);
   const exp = pessimisticRoundTrip({ buySol: BUY, ratio: 0.6, delayMs: 1, exitVenue: "amm" }).netPnl;
   asrt(near(amm.netSol, Math.round(exp * 1e9) / 1e9) && amm.netPct === Math.round((exp / BUY) * 10000) / 100, `amm net = cost model without the pump sell fee (${amm.netPct}%)`);
-  asrt(amm.ammSolOut === 0.012 && amm.ammFeeBps === 30 && amm.ammQuoteAgeMs === 40 && amm.tokens === tokens.toString(), "amm row keeps the quote it was priced with");
+  asrt(amm.ammSolOut === 0.012 && amm.ammFeeBps === 125 && amm.ammFeeSource === "onchain" && amm.ammQuoteAgeMs === 40 && amm.tokens === tokens.toString(), "amm row keeps the quote it was priced with (fee + where the fee came from)");
   asrt(JSON.stringify(amm.params) === JSON.stringify({ minFill: 75, maxFill: 90, minHolders: 5, tp: 1.5, sl: 0.7, holdSec: 300 }), "J rows carry the parameters they were produced with");
 
   const un = G.tradeRow({ pos, v: V.J, reason: "timeout", venue: "amm-unpriced", buySol: BUY, now: 301_000 });
@@ -186,10 +190,12 @@ const pos = { variant: "J", mint: "MintJ", entryPrice: 1e-7, at: 1_000, tokens }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gshadow-report-"));
   const file = path.join(dir, "j.jsonl");
   const V3 = "v3-single-slip: entry=curve spot, buy slip charged once in roundTripCosts";
+  const V4 = "v4-amm-exit: v3-single-slip for curve exits; migrated positions priced from the PumpSwap quote without a pump sell fee (or journaled unpriced)";
   const row = (scheme, variant, mint, netPct, more = {}) => JSON.stringify({ ts: "2026-11-12T10:00:00.000Z", type: "gshadow_trade", costsScheme: scheme, variant, mint, netPct, reason: "timeout", ...more });
   fs.writeFileSync(file, [
     row(V3, "A", "M1", 10),
     row(V3, "A", "M2", -4),
+    row(V4, "J", "M7", 30, { exitVenue: "amm", migrated: true }),
     row(SHADOW_COSTS_SCHEME, "J", "M3", 6, { exitVenue: "curve", migrated: false }),
     row(SHADOW_COSTS_SCHEME, "J", "M4", -20, { exitVenue: "amm", migrated: true }),
     row(SHADOW_COSTS_SCHEME, "J", "M5", null, { exitVenue: "amm-unpriced", migrated: true, unconfirmed: true }),
@@ -199,9 +205,10 @@ const pos = { variant: "J", mint: "MintJ", entryPrice: 1e-7, at: 1_000, tokens }
   asrt(r.status === 0, `the report runs (stderr: ${String(r.stderr).split("\n")[0]})`);
   const out = r.stdout;
   asrt(/=== costsScheme: v3-single-slip[^\n]*— 2 trade\(s\) ===/.test(out), "v3 rows have their own table");
-  asrt(/=== costsScheme: v4-amm-exit[^\n]*— 4 trade\(s\) ===/.test(out), "v4 rows have their own table (not mixed with v3)");
-  asrt(/смешаны версии учёта \(2\)/.test(out), "the report says two schemes are present");
-  const v4 = out.slice(out.indexOf("=== costsScheme: v4-amm-exit"));
+  asrt(/=== costsScheme: v4-amm-exit[^\n]*— 1 trade\(s\) ===/.test(out), "a v4 row (AMM exit priced with a 30 bps fee) has its own table: it is NOT averaged with v5");
+  asrt(/=== costsScheme: v5-amm-fee[^\n]*— 4 trade\(s\) ===/.test(out), "v5 rows have their own table (not mixed with v3 / v4)");
+  asrt(/смешаны версии учёта \(3\)/.test(out), "the report says three schemes are present");
+  const v4 = out.slice(out.indexOf("=== costsScheme: v5-amm-fee"));
   asrt(/exit venues: curve=1 amm=1 amm-unpriced=2/.test(v4), `the venue mix is printed: ${(v4.match(/exit venues:.*/) || [""])[0]}`);
   asrt(/UNPRICED: 2 of 4/.test(v4), `unpriced trades are counted separately: ${(v4.match(/UNPRICED.*/) || [""])[0]}`);
   const jRow = (v4.match(/^J\s+.*$/m) || [""])[0];

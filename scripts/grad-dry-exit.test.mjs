@@ -52,7 +52,7 @@ const { MINT } = await import("./mocks/grad-ws-mock.mjs");
   asrt(near(win.pnlSol, 0.01) && near(win.receivedSol, 0.03), "ratio 1.5: +50% before slippage / network costs");
   asrt(near(win.costs.netPnl, 0.01 - (BUY * 50) / 10000 - (0.03 * 50) / 10000 - 2 * TX), "slippage on both legs + two network fees, nothing else");
   asrt(near(win.costs.costSol, win.pnlSol - win.costs.netPnl), "costs = gross - net");
-  asrt(COSTS_SCHEME.startsWith("v2.3"), `COSTS_SCHEME bumped to v2.3 (v2 prefix kept), got ${COSTS_SCHEME}`);
+  asrt(COSTS_SCHEME.startsWith("v2.4"), `COSTS_SCHEME bumped to v2.4 (v2 prefix kept; v2.3 priced the AMM exit with a 30 bps pool fee), got ${COSTS_SCHEME}`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -61,7 +61,7 @@ const { MINT } = await import("./mocks/grad-ws-mock.mjs");
 {
   const src = fs.readFileSync(path.join(root, "bots", "graduation-sniper", "graduation.mjs"), "utf8");
   const fn = src.slice(src.indexOf("async function sellPosition"), src.indexOf("// Bounded retries: at most SELL_MAX_ATTEMPTS"));
-  asrt(/if \(DRY_RUN\) \{/.test(fn) && /netRatioExitCosts\(\{ entrySol, ratio: mult \}\)/.test(fn), "the dry branch costs come from netRatioExitCosts");
+  asrt(/if \(DRY_RUN\) \{/.test(fn) && /netRatioExitCosts\(\{ entrySol, ratio: mult, venue \}\)/.test(fn), "the dry branch costs come from netRatioExitCosts (with the exit venue: a PumpSwap sell has its own CU limit)");
   asrt(!/roundTripCosts\(/.test(src), "graduation no longer calls roundTripCosts (pump fees on a fee-net ratio)");
   asrt(!/pos\.lastPrice && pos\.entryPrice \? pos\.lastPrice \/ pos\.entryPrice/.test(src) && !/valuing at last known price/.test(src), "no exit is valued at the dead curve's last price any more");
   asrt(/ammSellQuote\(connection, mintPk, pos\.tokens\)/.test(fn), "a completed curve is priced from the PumpSwap pool quote");
@@ -131,7 +131,9 @@ const [pool, noPool] = await Promise.all([
   const sold = out.match(/\[DRY RUN\] sold on (\w+): ([+-][\d.]+)% \(([+-][\d.]+) SOL before slippage\/network costs ([\d.]+)\)/);
   asrt(sold && sold[1] === "pumpswap", `[pool] sold on pumpswap, got ${sold && sold[1]}`);
   asrt(near(Number(sold[2]), Math.round((ratio - 1) * 1000) / 10, 0.06), `[pool] booked at the pool ratio ${(ratio * 100).toFixed(1)}% of the entry, got ${sold[2]}%`);
-  const exp = netRatioExitCosts({ entrySol: 0.02, ratio });
+  // venue "pumpswap": the sell leg's network cost is the AMM sell tx (AMM_SELL_CU_LIMIT), KODING №10 B.
+  const exp = netRatioExitCosts({ entrySol: 0.02, ratio, venue: "pumpswap" });
+  asrt(Math.abs(exp.costs.costSol - netRatioExitCosts({ entrySol: 0.02, ratio }).costs.costSol) > 1e-5, "[pool] fixture: the AMM sell limit differs from CU_LIMIT, so the venue matters to the costs");
   asrt(near(Number(sold[3]), Math.round(exp.pnlSol * 1e4) / 1e4, 1.01e-4) && near(Number(sold[4]), exp.costs.costSol, 1e-6), "[pool] pnl and costs come from the fee-net model (no pump fee added)");
   asrt(/buys \/ sells\s+: 1 \/ 1/.test(out), "[pool] one buy, one sale in the session summary");
   asrt(!records.some((r) => r.type === "stuck"), "[pool] nothing is stuck");

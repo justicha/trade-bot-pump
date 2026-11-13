@@ -191,6 +191,20 @@ The graduation shadow lab now closes a migrated position in one of three ways, r
 the averages. `SHADOW_COSTS_SCHEME` moved from `v3-single-slip` to `v4-amm-exit`; do not mix `v3`
 and `v4` lines (`v3` overstated migrated mints).
 
+### Graduation shadow rev 5
+
+The lab rules got a revision (not the cost model — `costsScheme` is still `v4-amm-exit`), marked by
+`shadowRev: 5` on every `gshadow_open` / `gshadow_trade` row. New fields: `params` now also on K-N
+(`L` carries `momentumPp`, `momentumSec`; `N` carries `exitOnMigration`), and `gainPp` on the
+`gshadow_open` row of `L`. On `gshadow_trade`: `late: true` + `lateSec`, `stallSec` (the position
+lived through a stall), `exitVenue: "curve-unpriced"` (migrated false, no result) and
+`reason: "migration-exit"` (`N`). Two new row types: `gshadow_stall` `{ stallSec, open, at }` and
+`gshadow_stale_events` `{ events, maxLagSec }`.
+
+The close decision order (`closeDecision`): a timeout noticed too late -> `curve-unpriced` (no result);
+no pool quote by the deadline -> `amm-unpriced`; `N` with a migrated position -> `migration-exit`;
+otherwise TP / SL / timeout.
+
 ### Pre-buy simulation
 
 Before buying, graduation simulates a buy+sell in a single transaction (`lib/prebuy-sim.mjs`). In

@@ -64,7 +64,9 @@ import {
   userAtaIx,
 } from "../../lib/pumpfun.mjs";
 import { connection, getSOLBalance, sendTxWithRetry, rpcStats } from "../../lib/rpc.mjs";
-import { netRatioExitCosts } from "../../lib/fees.mjs";
+import { ammSellTxCostSol, netRatioExitCosts } from "../../lib/fees.mjs";
+import { noteFailedSell, resolveTokensGone } from "../../lib/late-sale.mjs";
+import { createStallGuard } from "../../lib/stall-guard.mjs";
 import { ammSellQuote } from "../../lib/pumpswap.mjs";
 import { SessionLedger } from "../../lib/session.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
@@ -841,7 +843,8 @@ async function sellPosition(mint, mintPk, pos, ratio, { final = false } = {}) {
     // curve (tokens bought after pump's 1%, proceeds after pump's 1%), pool quote / entry on
     // PumpSwap. Only the assumed slippage and the two network fees are costs on top of it —
     // charging pump 1% + 1% again (as before) took about 2% off every dry trade.
-    const { pnlSol, receivedSol, costs } = netRatioExitCosts({ entrySol, ratio: mult });
+    // A PumpSwap exit's network cost is estimated with the AMM sell's own CU limit.
+    const { pnlSol, receivedSol, costs } = netRatioExitCosts({ entrySol, ratio: mult, venue });
     recordResult(pnlSol);
     session.sell(receivedSol, pnlSol, costs);
     totalTrades++;
@@ -872,8 +875,44 @@ async function sellPosition(mint, mintPk, pos, ratio, { final = false } = {}) {
     const info = await connection.getTokenAccountBalance(ata);
     total = BigInt(info.value.amount);
     if (total === 0n) {
-      session.drop(`${mint.slice(0, 12)}: no tokens in wallet`);
-      positions.delete(mint);
+      // An earlier attempt that "failed" may have landed after all. Look for it among the failed
+      // attempts' signatures (read-only) and book it as the sale it is; if none landed, the
+      // position is closed as STUCK with an assumed loss — never dropped without a row.
+      log(`  ${mint.slice(0, 12)}: no tokens in wallet`);
+      await resolveTokensGone({
+        connection,
+        owner: wallet.publicKey,
+        mint,
+        mintPk,
+        pos,
+        positions,
+        buySol: BUY_SOL,
+        readExecution,
+        applyLiveSell,
+        recordResult,
+        session,
+        journal,
+        ataCloser,
+        final: final || stopping,
+        now: Date.now(),
+        log,
+        sellFeeEstSol: (v) => (v === "pumpswap" ? ammSellTxCostSol() : null),
+        stuckFields: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, venue: null, attempts: pos.attempts || 0, maxAttempts: SELL_MAX_ATTEMPTS },
+        onStuck: (_lossSol, { reason }) => stuck.add(`${mint.slice(0, 12)}: ${reason}`),
+        onSale: (sale, { sig, soldRaw, totalRaw, venue: soldVenue, attempt: soldAttempt }) => {
+          const pnlActual = sale.acc.pnlSol;
+          totalTrades++;
+          totalPnl += pnlActual;
+          if (pnlActual > 0) wins++;
+          journal.trade({
+            sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mint, side: "sell", sig, venue: soldVenue,
+            pnlSol: pnlActual, ...sale.fields, amountRaw: soldRaw.toString(), balanceRaw: totalRaw.toString(),
+            quoteOut: null, realSolReserves: null, attempts: soldAttempt ?? null, slippageBps: null,
+            simulationResult: "ok", unitsConsumed: null, priceSource: "chain-meta", reconciled: true, reconciledFromSig: sig,
+          });
+          log(`  sold (an earlier attempt landed late, ${sig.slice(0, 8)}…): ${pnlActual >= 0 ? "+" : ""}${pnlActual.toFixed(4)} SOL`);
+        },
+      });
       return;
     }
 
@@ -986,7 +1025,8 @@ async function sellPosition(mint, mintPk, pos, ratio, { final = false } = {}) {
     // calculation for every bot (lib/live-pnl.mjs): PnL against the SOLD share of the entry (H4),
     // net of both real network fees; the ledger gets the gross figures + the real fees as costs.
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
-    const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, quoteSol: Number(quote) / 1e9, soldRaw: amountRaw, totalRaw: total });
+    // sellFeeEstSol is used only if the meta has no fee: the AMM sell requested AMM_SELL_CU_LIMIT.
+    const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, quoteSol: Number(quote) / 1e9, soldRaw: amountRaw, totalRaw: total, sellFeeEstSol: venue === "pumpswap" ? ammSellTxCostSol() : null });
     const pnlActual = sale.acc.pnlSol;
     recordResult(pnlActual, { guardPnlSol: sale.guardPnlSol });
     session.sell(sale.acc.ledger.receivedSol, sale.acc.ledger.pnlSol, sale.acc.costs);
@@ -1063,6 +1103,9 @@ async function sellPosition(mint, mintPk, pos, ratio, { final = false } = {}) {
       }
     }
     pos.attempts = attempt;
+    // The attempt may still land after this: its signature stays on the position, so a later
+    // "0 tokens in the wallet" can be traced to it (lib/late-sale.mjs).
+    noteFailedSell(pos, err, { venue, attempt });
     const why = describeTxError(err);
     journal.write({
       type: "sell_failed",
@@ -1100,6 +1143,21 @@ async function monitorPositions() {
 }
 const pollTimer = setInterval(monitorPositions, POLL_MS);
 
+// Stall guard (lib/stall-guard.mjs): a paused console window freezes the whole process. When it is
+// back, the stall is journaled, the open positions are re-checked at once — checkExit prices them
+// from the bonding-curve ACCOUNT and sells by the usual rules at the current on-chain quote — and
+// the stream backlog (events older than STALL_GUARD_SEC) cannot open a position.
+const stallGuard = createStallGuard({
+  journal,
+  log,
+  positions,
+  fields: () => ({ sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA }),
+  onStall: () => {
+    void monitorPositions();
+  },
+});
+stallGuard.start();
+
 // Final shutdown: stop listening, close open positions (simulated in DRY RUN), print the session report
 // (spent / received / net) and exit. Idempotent — a second call is a no-op.
 async function finish(reason = stopReason || "stopped") {
@@ -1111,6 +1169,7 @@ async function finish(reason = stopReason || "stopped") {
   await ws.close().catch(() => {}); // wait for the socket: exiting mid-close trips a libuv assertion
   clearInterval(pollTimer);
   clearInterval(cleanupTimer);
+  stallGuard.stop();
   // Close every open position at stop. In LIVE that is a real bonding-curve sell; in DRY RUN
   // there is nothing on-chain, but we still simulate the close (sellPosition has a DRY_RUN
   // branch) so the session report shows a complete PnL instead of "still open at stop".
@@ -1227,6 +1286,7 @@ log(`Config: buy=${BUY_SOL} SOL, fill>=${MIN_FILL_PCT}%, TP=${TAKE_PROFIT}x, SL=
 log(`Reliability: exit>${EXIT_MIN_RATIO}, sell attempts<=${SELL_MAX_ATTEMPTS}, max slippage ${SELL_MAX_SLIPPAGE} bps, buy slippage ${BUY_SLIPPAGE_BPS} bps`);
 log(`Filters: fill ${MIN_FILL_PCT}-${MAX_FILL_PCT}% (of 85 SOL REAL reserves), holders>=${MIN_HOLDERS}, top10=${MAX_TOP10_SHARE > 0 ? MAX_TOP10_SHARE : "off"}`);
 log(`Max positions: ${MAX_POSITIONS}, cooldown: ${COOLDOWN_SEC}s`);
+log(`Console: ${stallGuard.banner()}`);
 if (LIVE) log("MODE: LIVE — real transactions will be sent");
 else log("MODE: DRY RUN (no real transactions) — pass --live to trade");
 if (DRY_SELL) {
@@ -1255,6 +1315,10 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), async (result) => {
 
   let events;
   try { events = parseLogEvents(value.logs); } catch { return; }
+  // Backlog after a stall (the events' own on-chain time is older than STALL_GUARD_SEC): this
+  // handler only ever opens positions, so nothing of it is acted on. Exits never depend on the
+  // stream here — monitorPositions reads the curve account.
+  if (stallGuard.isStale(events)) return;
   for (const ev of events) {
     if (ev.type !== "trade") continue;
     // C4: per-event direction from the payload byte; a sell in a mixed tx must not drive the entry.

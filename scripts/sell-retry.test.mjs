@@ -34,6 +34,7 @@ const { TradeGuard } = await import("../lib/guards.mjs");
 const { TradeJournal, readJournal } = await import("../lib/journal.mjs");
 const { netSolForDay, dailyLossBlocked } = await import("../lib/daily-loss.mjs");
 const { recordStuck } = await import("../lib/stuck.mjs");
+const { resolveTokensGone, TOKENS_GONE_REASON } = await import("../lib/late-sale.mjs");
 const { applyLiveSell, balanceBeforeSell } = await import("../lib/live-pnl.mjs");
 const { roundTripCosts } = await import("../lib/fees.mjs");
 const { SessionLedger } = await import("../lib/session.mjs");
@@ -131,13 +132,19 @@ const exFailed = () => ({
 
 // One isolated bot "world": fake clock, real guard / journal / ledger, mocked chain.
 //   plan(n) -> outcome of send number n (0-based): "ok" | "fail" (landed, failed on-chain) |
-//              "landed" (confirm error but the sale is on-chain) | "sim" (simulation refused)
+//              "landed" (confirm error but the sale is on-chain) | "sim" (simulation refused) |
+//              "late" (confirm error, NOT on the chain yet; lands when the test adds SIG_LATE to
+//              w.landedLate — KODING №10 D)
 function mkWorld({ maxAttempts = 3, maxConsecLosses = 3, plan = () => "ok", bot = "t" } = {}) {
   const w = {
     clock: { t: T0 },
     logs: [],
     results: [],
     stops: [],
+    landedLate: new Set(), // signatures of "late" attempts that have landed by now
+    statusCalls: [], // every getSignatureStatuses request (read-only lookups of failed attempts)
+    statusDown: false, // true: the status / transaction lookups fail (RPC outage)
+    lateAmount: 0n,
     sends: [], // clock time of every simulateThenSend call
     amounts: [], // token amount of every sell instruction built
     closes: [],
@@ -201,7 +208,19 @@ function mkWorld({ maxAttempts = 3, maxConsecLosses = 3, plan = () => "ok", bot 
     getAssociatedTokenAddressSync,
     wallet: w.wallet,
     TOKEN_2022_PROGRAM,
-    connection: { getTokenAccountBalance: async () => ({ value: { amount: w.balance.toString() } }) },
+    connection: {
+      getTokenAccountBalance: async () => ({ value: { amount: w.balance.toString() } }),
+      getSignatureStatuses: async (sigs) => {
+        w.statusCalls.push([...sigs]);
+        if (w.statusDown) throw new Error("rpc down");
+        return {
+          value: sigs.map((s) =>
+            s === "SIG_FAIL" ? { err: { InstructionError: [2, { Custom: 6003 }] }, confirmationStatus: "confirmed" } : w.landedLate.has(s) ? { err: null, confirmationStatus: "confirmed" } : null,
+          ),
+        };
+      },
+    },
+    resolveTokensGone,
     computeBudgetIxs: () => [],
     sellIx: (_owner, _mint, amount) => {
       w.amounts.push(amount);
@@ -221,12 +240,17 @@ function mkWorld({ maxAttempts = 3, maxConsecLosses = 3, plan = () => "ok", bot 
         w.balance -= amount;
         throw Object.assign(new Error("network error: connection reset"), { sig: "SIG_LANDED" });
       }
+      if (outcome === "late") {
+        w.lateAmount = amount;
+        throw Object.assign(new Error("network error: connection reset"), { sig: "SIG_LATE" });
+      }
       if (outcome === "sim") throw new Error("simulation failed: instruction 2: custom program error 6003");
       throw Object.assign(new Error('tx SIG_FAIL failed on-chain: {"InstructionError":[2,{"Custom":6003}]}'), { sig: "SIG_FAIL" });
     },
     readExecution: async (sig) => {
       if (sig === "SIG_OK" || sig === "SIG_LANDED") return exSold(w.amounts[w.amounts.length - 1]);
       if (sig === "SIG_FAIL") return exFailed();
+      if (sig === "SIG_LATE" && w.landedLate.has(sig) && !w.statusDown) return exSold(w.lateAmount);
       return { found: false };
     },
     applyLiveSell,
@@ -688,6 +712,169 @@ const dryPnl = (mult) => {
   asrt(/if \(stopping \|\| exitChecking\) return;/.test(copyCode), "copy-trader: the timer does nothing while the bot is stopping");
   asrt(!/TAKE_PROFIT|STOP_LOSS|take-profit|stop-loss/.test(copySrc), "copy-trader: no TP/SL was added");
   asrt(!/ammSell|pumpswap-sell|amm-sell/.test(copySrc), "copy-trader: no AMM sell was added");
+}
+
+// ---------------------------------------------------------------------------------------------
+// 5. A sale that landed LATE (KODING №10, D) — the real executeSell / copySell again
+// ---------------------------------------------------------------------------------------------
+// Before: attempt 1 "fails" (confirm error, nothing on the chain yet), the tx lands a moment later,
+// attempt 2 reads 0 tokens -> "no tokens in wallet" -> the position vanished without a sale: no
+// PnL, nothing for the limits. Now the failed attempt's signature stays on the position and the
+// zero balance is resolved against it (lib/late-sale.mjs).
+const landLate = (w) => {
+  w.landedLate.add("SIG_LATE");
+  w.balance = 0n;
+};
+
+// 5a. sniper: attempt 1 "failed", its tx landed -> exactly ONE sale, the usual PnL, nothing re-sent
+{
+  const w = mkSniper({ plan: () => "late" });
+  await w.checkPositions(); // attempt 1: confirm error, the chain shows nothing yet
+  asrt(w.sends.length === 1 && w.exits.length === 0 && w.positions.get(w.mint) === w.pos && w.pos.attempts === 1, "[sniper late] attempt 1 is a failed attempt, position kept");
+  asrt(JSON.stringify(w.pos.failedSells) === JSON.stringify([{ sig: "SIG_LATE", venue: "curve", attempt: 1 }]), "[sniper late] the failed attempt's signature stays on the position, got " + JSON.stringify(w.pos.failedSells));
+  asrt(w.rows("sell_failed").length === 1 && w.rows("sell_failed")[0].sig === "SIG_LATE", "[sniper late] sell_failed row carries the signature");
+  landLate(w); // the tx lands during the backoff
+  await tick(w, w.checkPositions, { stepMs: 500, ticks: 4 }); // t0+2000: attempt 2 sees 0 tokens
+  asrt(w.sends.length === 1, "[sniper late] nothing is sent again (sends " + w.sends.length + ")");
+  asrt(w.exits.length === 1 && !w.positions.has(w.mint), "[sniper late] exactly one sale is booked and the position is closed");
+  asrt(w.exits[0].pnlSol === sniperRef.acc.pnlSol && JSON.stringify(w.exits[0].costs) === JSON.stringify(sniperRef.acc.costs), "[sniper late] PnL and costs equal a normal first-try sale (" + sniperRef.acc.pnlSol + "), got " + w.exits[0].pnlSol);
+  asrt(w.exits[0].live.reconciledFromSig === "SIG_LATE" && w.exits[0].reason === "take-profit 2.5x (reconciled)" && w.exits[0].priceSource === "chain-meta", "[sniper late] the row says which attempt carried the sale");
+  asrt(JSON.stringify({ ...w.exits[0].live, reconciledFromSig: undefined }) === JSON.stringify(sniperRef.fields), "[sniper late] the live fields are those of a normal sale");
+  asrt(w.results.length === 1 && w.results[0].pnlSol === sniperRef.acc.pnlSol && w.results[0].opts.guardPnlSol === sniperRef.guardPnlSol && w.guard.consecLosses === 0, "[sniper late] the guard sees one (winning) result");
+  asrt(w.session.sells === 1 && w.session.unresolved.length === 0 && w.stats().totalTrades === 1 && w.stats().wins === 1, "[sniper late] ledger: one sell, nothing dropped");
+  asrt(w.closes.length === 1 && w.rows("stuck").length === 0, "[sniper late] ATA close scheduled once, no stuck row");
+  asrt(w.statusCalls.length === 1 && JSON.stringify(w.statusCalls[0]) === '["SIG_LATE"]', "[sniper late] one read-only status lookup of the failed attempt");
+  await tick(w, w.checkPositions, { stepMs: 2000, ticks: 5 });
+  asrt(w.sends.length === 1 && w.exits.length === 1 && w.results.length === 1, "[sniper late] nothing happens afterwards");
+  w.assertClean("[sniper late]");
+}
+
+// 5b. sniper: 0 tokens, the failed attempt did NOT sell them -> stuck, assumed loss, the guard sees it
+{
+  const w = mkSniper({ plan: () => "fail", maxConsecLosses: 1 });
+  await w.checkPositions(); // attempt 1 landed and failed on-chain
+  w.balance = 0n; // the tokens left some other way
+  await tick(w, w.checkPositions, { stepMs: 500, ticks: 4 });
+  const stuck = w.rows("stuck");
+  asrt(stuck.length === 1 && stuck[0].reason === TOKENS_GONE_REASON && stuck[0].reason === "tokens gone, no landed sale found" && stuck[0].lossAssumed === true, "[sniper gone] stuck row with the reason and lossAssumed, got " + JSON.stringify(stuck[0]));
+  asrt(stuck[0].pnlSol === -0.05 && stuck[0].entrySolSol === 0.05 && stuck[0].tokens === "0" && JSON.stringify(stuck[0].failedSigs) === '["SIG_FAIL"]' && stuck[0].lookupFailed === undefined, "[sniper gone] the remaining entry is the assumed loss; the checked signatures are journaled");
+  asrt(stuck[0].venue === "curve" && stuck[0].mode === "LIVE" && stuck[0].exitReason === "take-profit 2.5x" && stuck[0].sessionId === "S1", "[sniper gone] bot fields on the row");
+  asrt(!w.positions.has(w.mint) && w.exits.length === 0 && w.sends.length === 1 && w.closes.length === 0, "[sniper gone] position closed without a sale row, nothing sent, no ATA close");
+  asrt(w.results.length === 1 && w.results[0].pnlSol === -0.05 && w.guard.consecLosses === 1 && w.guard.halted === true && w.stops.length === 1, "[sniper gone] MAX_CONSEC_LOSSES sees the loss");
+  const net = netSolForDay(readJournal(w.journal.dir), TODAY);
+  asrt(net === -0.05, "[sniper gone] the daily loss limit sees it (net " + net + ")");
+  asrt(w.session.unresolved.length === 1 && /STUCK tokens gone, no landed sale found/.test(w.session.unresolved[0]) && w.session.sells === 0, "[sniper gone] the session report lists it as unresolved");
+  asrt(w.logs.some((l) => /ALERT: .*0 tokens in the wallet and none of 1 earlier sell attempt\(s\) landed as a sale/.test(l)), "[sniper gone] ALERT line");
+  w.assertClean("[sniper gone]");
+}
+
+// 5c. sniper: 0 tokens and NO failed attempt at all -> the same stuck row, no lookup needed
+{
+  const w = mkSniper();
+  w.balance = 0n;
+  await w.checkPositions();
+  const stuck = w.rows("stuck");
+  asrt(stuck.length === 1 && stuck[0].reason === TOKENS_GONE_REASON && stuck[0].lossAssumed === true && stuck[0].pnlSol === -0.05 && JSON.stringify(stuck[0].failedSigs) === "[]", "[sniper gone, no attempts] stuck with the assumed loss");
+  asrt(w.sends.length === 0 && w.statusCalls.length === 0 && w.exits.length === 0 && !w.positions.has(w.mint) && w.guard.consecLosses === 1, "[sniper gone, no attempts] nothing sent, nothing asked, the guard sees the loss");
+  asrt(w.logs.includes("  no tokens in wallet"), "[sniper gone, no attempts] the old log line is still there");
+  w.assertClean("[sniper gone, no attempts]");
+}
+
+// 5d. sniper: the chain cannot be asked -> the position is KEPT and asked again; it is booked when
+// the RPC answers, and only after 3 unanswered lookups it is closed as stuck (lookupFailed)
+{
+  const w = mkSniper({ plan: () => "late" });
+  await w.checkPositions();
+  landLate(w);
+  w.statusDown = true; // getSignatureStatuses throws, getTransaction finds nothing
+  await tick(w, w.checkPositions, { stepMs: 500, ticks: 4 }); // t0+2000: lookup 1 fails
+  asrt(w.positions.get(w.mint) === w.pos && w.pos.goneLookups === 1 && w.pos.nextSellAt === T0 + 2000 + 2000 && w.rows("stuck").length === 0 && w.exits.length === 0, "[sniper rpc down] lookup failed: position kept, asked again in 2 s");
+  w.statusDown = false; // the RPC is back
+  await tick(w, w.checkPositions, { stepMs: 500, ticks: 4 });
+  asrt(w.exits.length === 1 && w.exits[0].pnlSol === sniperRef.acc.pnlSol && w.exits[0].live.reconciledFromSig === "SIG_LATE" && !w.positions.has(w.mint) && w.sends.length === 1, "[sniper rpc down] booked once the chain answers");
+
+  const d = mkSniper({ plan: () => "late" });
+  await d.checkPositions();
+  landLate(d);
+  d.statusDown = true;
+  await tick(d, d.checkPositions, { stepMs: 500, ticks: 40 });
+  const stuck = d.rows("stuck");
+  asrt(stuck.length === 1 && stuck[0].lookupFailed === true && stuck[0].lossAssumed === true && stuck[0].reason === TOKENS_GONE_REASON && d.pos.goneLookups === 3, "[sniper rpc down] 3 unanswered lookups -> stuck with lookupFailed, got " + JSON.stringify(stuck[0]));
+  asrt(d.statusCalls.length === 3 && d.sends.length === 1 && d.exits.length === 0 && !d.positions.has(d.mint), "[sniper rpc down] exactly 3 lookups, nothing sent");
+  d.assertClean("[sniper rpc down]");
+}
+
+// 5e. copy-trader: attempt 1 "failed", its tx landed -> one sale, booked like a first-try sale
+{
+  const w = mkCopy({ plan: () => "late" });
+  await w.copySell(w.mint, TARGET);
+  asrt(w.sends.length === 1 && w.pos.pendingExit === true && w.pos.attempts === 1 && w.pos.failedSells.length === 1 && w.pos.failedSells[0].sig === "SIG_LATE", "[copy late] failed attempt, signature kept on the position");
+  landLate(w);
+  w.clock.t = T0 + 2000;
+  await w.checkExits(); // the exit timer retries: 0 tokens
+  asrt(w.sends.length === 1 && !w.positions.has(w.mint), "[copy late] nothing re-sent, position closed");
+  asrt(w.results.length === 1 && w.results[0].pnlSol === copyRef.acc.pnlSol && w.results[0].opts.guardPnlSol === copyRef.guardPnlSol, "[copy late] booked exactly like a first-try sale (" + copyRef.acc.pnlSol + "), got " + w.results[0]?.pnlSol);
+  asrt(w.session.sells === 1 && w.closes.length === 1 && w.stats().totalTrades === 1 && w.rows("stuck").length === 0, "[copy late] ledger: one sell; ATA close scheduled once; no stuck");
+  const rec = w.rows("sell_reconciled");
+  asrt(rec.length === 1 && rec[0].reconciledFromSig === "SIG_LATE" && rec[0].pnlSol === copyRef.acc.pnlSol && rec[0].copiedFrom === TARGET && rec[0].amountRaw === BAL.toString() && rec[0].entrySolSol === 0.05, "[copy late] sell_reconciled row with reconciledFromSig, got " + JSON.stringify(rec[0]));
+  await tick(w, w.checkExits, { stepMs: 2000, ticks: 5 });
+  asrt(w.sends.length === 1 && w.results.length === 1, "[copy late] nothing happens afterwards");
+  w.assertClean("[copy late]");
+}
+
+// 5f. copy-trader: 0 tokens, nothing landed (with and without a failed attempt) -> stuck lossAssumed
+{
+  const w = mkCopy({ plan: () => "fail", maxConsecLosses: 1 });
+  await w.copySell(w.mint, TARGET);
+  w.balance = 0n;
+  w.clock.t = T0 + 2000;
+  await w.checkExits();
+  const stuck = w.rows("stuck");
+  asrt(stuck.length === 1 && stuck[0].reason === TOKENS_GONE_REASON && stuck[0].lossAssumed === true && stuck[0].pnlSol === -0.05 && stuck[0].copiedFrom === TARGET && JSON.stringify(stuck[0].failedSigs) === '["SIG_FAIL"]', "[copy gone] stuck row, got " + JSON.stringify(stuck[0]));
+  asrt(!w.positions.has(w.mint) && w.sends.length === 1 && w.closes.length === 0 && w.guard.halted === true && w.rows("sell_reconciled").length === 0, "[copy gone] closed, nothing sent, the guard sees the loss");
+
+  const n = mkCopy();
+  n.balance = 0n;
+  await n.copySell(n.mint, TARGET);
+  const s2 = n.rows("stuck");
+  asrt(s2.length === 1 && s2[0].reason === TOKENS_GONE_REASON && s2[0].lossAssumed === true && s2[0].pnlSol === -0.05 && n.sends.length === 0 && n.statusCalls.length === 0 && !n.positions.has(n.mint) && n.guard.consecLosses === 1, "[copy gone, no attempts] the same stuck row without any lookup");
+  n.assertClean("[copy gone, no attempts]");
+
+  // RPC down: the position is put (back) on its way out so the exit timer asks again. Here it
+  // was NOT pending any more — e.g. a partial sale went through after the failed attempt and
+  // released it — and the target sells once more.
+  const d = mkCopy({ plan: () => "late" });
+  await d.copySell(d.mint, TARGET);
+  landLate(d);
+  d.statusDown = true;
+  d.clock.t = T0 + 2000;
+  d.pos.pendingExit = false;
+  d.pos.exitReason = null;
+  await d.copySell(d.mint, TARGET);
+  asrt(d.positions.get(d.mint) === d.pos && d.pos.pendingExit === true && d.pos.exitReason === "target sold" && d.pos.goneLookups === 1 && d.pos.nextSellAt === T0 + 4000 && d.rows("stuck").length === 0, "[copy rpc down] kept, pendingExit set again, will be asked again in 2 s");
+  d.statusDown = false;
+  d.clock.t = T0 + 3999;
+  await d.checkExits();
+  asrt(d.positions.has(d.mint) && d.statusCalls.length === 1, "[copy rpc down] not asked before the backoff is over");
+  d.clock.t = T0 + 4000;
+  await d.checkExits();
+  asrt(!d.positions.has(d.mint) && d.results.length === 1 && d.results[0].pnlSol === copyRef.acc.pnlSol && d.sends.length === 1, "[copy rpc down] booked once the chain answers");
+  d.assertClean("[copy rpc down]");
+}
+
+// 5g. wiring: the bots hand the zero balance to lib/late-sale.mjs and no longer drop the position
+{
+  for (const [name, src, sell] of [
+    ["sniper", sniperSrc, cut(sniperSrc, "async function executeSell(", "function costsCosts(", "sniper executeSell")],
+    ["copy-trader", copySrc, copyCode],
+  ]) {
+    asrt(/import \{ resolveTokensGone \} from "\.\.\/\.\.\/lib\/late-sale\.mjs";/.test(src), name + ": imports resolveTokensGone");
+    asrt(count(sell, /resolveTokensGone\(\{/g) === 1 && !/session\.drop\([^)]*no tokens in wallet/.test(src), name + ": the zero-balance branch resolves the position instead of dropping it");
+    asrt(/reconciledFromSig: sig/.test(sell), name + ": the booked sale's row carries reconciledFromSig");
+  }
+  const lib = read("lib/late-sale.mjs").split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  asrt(!/sendRawTransaction|simulateThenSend|sendTxWithRetry|buildVersionedTx|\.sign\(/.test(lib), "lib/late-sale.mjs builds, signs and sends nothing");
+  asrt(/getSignatureStatuses/.test(lib) && !/liveSellAccounting|pnlSol\s*=/.test(lib), "lib/late-sale.mjs only reads statuses and delegates the PnL to applyLiveSell / recordStuck");
 }
 
 console.log(JSON.stringify({ maxAttempts: DEFAULT_SELL_MAX_ATTEMPTS, backoffMs: [1, 2, 3].map(sellBackoffMs), sniperSendsUntilStuck: 3, copyMaxHoldSec: 1800 }));

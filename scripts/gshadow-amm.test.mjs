@@ -106,7 +106,8 @@ const [withPool, noPool, noPoolStop, band] = await Promise.all([
   const q = await ammSellQuote(mock.connection, new PublicKey(FIRST_MINT), tokens);
   const expRatio = Number(q.solOut) / (BUY * 1e9);
   const frozenCurveRatio = (30 + 85) / (30 + 0.93 * 85); // what the old lab would have used: 1.0546
-  asrt(expRatio > 0.75 && expRatio < 0.85 && q.feeBps === 30, `fixture pool: ratio ~0.80 after 30 bps fees (got ${expRatio.toFixed(4)})`);
+  // The fixture serves no FeeConfig and no mint supply -> the quote's fallback tier (125 bps).
+  asrt(expRatio > 0.75 && expRatio < 0.85 && q.feeBps === 125 && q.feeSource === "fallback", `fixture pool: ratio ~0.80 after the 125 bps fallback fee (got ${expRatio.toFixed(4)}, ${q.feeBps} bps, ${q.feeSource})`);
 
   const { opens, trades, out } = withPool;
   asrt(opens.length === 9 && trades.length === 9, `[pool] 9 positions opened and closed (got ${opens.length}/${trades.length})`);
@@ -120,8 +121,8 @@ const [withPool, noPool, noPoolStop, band] = await Promise.all([
   asrt(near(t.netSol, Math.round(exp * 1e9) / 1e9, 2e-9), `[pool] netSol = AMM cost model (${exp.toFixed(9)}), got ${t.netSol}`);
   const withSellFee = pessimisticRoundTrip({ buySol: BUY, ratio: expRatio, delayMs: 1 }).netPnl;
   asrt(t.netSol > withSellFee + 1e-5, "[pool] no pump sell fee on the AMM exit (better than the curve model by ~1% of the proceeds)");
-  asrt(near(t.ammSolOut, Number(q.solOut) / 1e9) && t.ammFeeBps === 30 && t.exitPrice === null && t.tokens === tokens.toString(), "[pool] the row keeps the quote it was priced with");
-  asrt(typeof t.costsScheme === "string" && t.costsScheme.startsWith("v4-amm-exit"), "[pool] costsScheme v4-amm-exit");
+  asrt(near(t.ammSolOut, Number(q.solOut) / 1e9) && t.ammFeeBps === 125 && t.ammFeeSource === "fallback" && t.exitPrice === null && t.tokens === tokens.toString(), "[pool] the row keeps the quote it was priced with");
+  asrt(typeof t.costsScheme === "string" && t.costsScheme.startsWith("v5-amm-fee"), "[pool] costsScheme v5-amm-fee");
   asrt(trades.every((x) => x.unconfirmed === undefined && Number.isFinite(x.netPct)), "[pool] a priced exit is not unconfirmed");
   asrt(/curve complete — open positions are priced from the PumpSwap pool/.test(out), "[pool] the switch is logged");
   const j = trades.find((x) => x.variant === "J");

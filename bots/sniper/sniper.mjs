@@ -48,6 +48,8 @@ import { roundTripCosts } from "../../lib/fees.mjs";
 import { applyLiveSell, liveEntry } from "../../lib/live-pnl.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
 import { createSellRetry, DEFAULT_SELL_MAX_ATTEMPTS } from "../../lib/sell-retry.mjs";
+import { resolveTokensGone } from "../../lib/late-sale.mjs";
+import { createStallGuard } from "../../lib/stall-guard.mjs";
 import { createAtaCloser } from "../../lib/close-ata.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
 import { loadKeypair } from "../../lib/wallet.mjs";
@@ -241,6 +243,22 @@ const sellRetry = createSellRetry({
   log,
   buySol: BUY_SOL,
   fields: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mode: "LIVE" },
+});
+// Stall guard (lib/stall-guard.mjs): a paused console window freezes the whole process. When it is
+// back, the stall is journaled and every stream price is thrown away — it is as old as the pause —
+// so the open positions are re-priced from the curve ACCOUNT (resolvePrice falls back to it) and
+// exit by the usual rules after the usual on-chain confirmation. The stream backlog (events older
+// than STALL_GUARD_SEC) is not acted on at all: no buy, no stream price, no holder count.
+const stallGuard = createStallGuard({
+  journal,
+  log,
+  positions,
+  fields: () => ({ sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA }),
+  onStall: () => {
+    curveStream.clear();
+    accountPriceCache.clear();
+    void checkPositions();
+  },
 });
 // Launch price of a standard pump.fun curve in RAW units (30 SOL virtual / 1.073e9 tokens).
 // Recorded as the price basis used for the premium metric; source is marked "assumed" because the
@@ -543,8 +561,50 @@ async function executeSell(mint, reason, exitInfo = null) {
 
     if (tokenAmount === 0n) {
       log(`  no tokens in wallet`);
-      session.drop(`${mint.slice(0, 8)}: no tokens in wallet`);
-      positions.delete(mint);
+      // An earlier attempt that "failed" may have landed after all. Look for it among the failed
+      // attempts' signatures (read-only) and book it as the sale it is; if none landed, the
+      // position is closed as STUCK with an assumed loss — never dropped without a row.
+      await resolveTokensGone({
+        connection,
+        owner: wallet.publicKey,
+        mint,
+        mintPk,
+        pos,
+        positions,
+        buySol: BUY_SOL,
+        readExecution,
+        applyLiveSell,
+        recordResult,
+        session,
+        journal,
+        ataCloser,
+        final: stopping,
+        now: Date.now(),
+        log,
+        stuckFields: { sessionId: SESSION_ID, paramsHash: PARAMS_HASH, gitSha: GIT_SHA, mode: "LIVE", venue: "curve", exitReason: reason },
+        onSale: async (sale, { sig }) => {
+          const st = await getBondingCurveState(mintPk, 0, 0).catch(() => null);
+          const sellPrice = st ? getPrice(st) : pos.entryPrice;
+          const { pnlSol, costs } = sale.acc;
+          recordExit(mint, pos, {
+            exitPrice: sellPrice,
+            ratio: sellPrice / pos.entryPrice,
+            pnlSol,
+            holdSec: Number(((Date.now() - pos.entryTime) / 1000).toFixed(0)),
+            reason: `${reason} (reconciled)`,
+            costs,
+            exitVSol: st ? st.virtualSolReserves : null,
+            exitRSol: st ? st.realSolReserves : null,
+            priceSource: "chain-meta",
+            priceAgeMs: streamAgeMs(mint),
+            live: { ...sale.fields, reconciledFromSig: sig },
+          });
+          totalPnl += pnlSol;
+          totalTrades++;
+          if (pnlSol > 0) wins++;
+          log(`  sold (an earlier attempt landed late, ${sig.slice(0, 8)}…): ${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL`);
+        },
+      });
       return;
     }
 
@@ -1043,6 +1103,7 @@ async function finish(reason = stopReason || "stopped") {
   log(`\n=== STOPPING: ${reason} ===`);
   await ws.close().catch(() => {}); // wait for the socket: exiting mid-close trips a libuv assertion
   clearInterval(pollTimer);
+  stallGuard.stop();
   clearInterval(auditTimer);
   clearInterval(holderTrajTimer);
   if (holderTimer) clearInterval(holderTimer);
@@ -1123,6 +1184,7 @@ log("=== SNIPER BOT (V3) ===");
 log(`Wallet: ${wallet.publicKey.toBase58()}`);
 log(`Config: buy=${BUY_SOL} SOL, TP=${TAKE_PROFIT}x, SL=${STOP_LOSS}x, timeout=${TIMEOUT_SEC}s`);
 log(`Max positions: ${MAX_POSITIONS}, cooldown: ${COOLDOWN_SEC}s`);
+log(`Console: ${stallGuard.banner()}`);
 if (LIVE) log(`MODE: LIVE — real transactions will be sent`);
 else log(`MODE: DRY RUN (no real transactions) — pass --live to trade`);
 if (LIVE) log(`Sell retries: at most ${SELL_MAX_ATTEMPTS} attempts per position (backoff 2s, 4s, …), then STUCK`);
@@ -1157,6 +1219,10 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), async (result) => {
     log(`  parse error (ignored): ${err.message}`);
     return;
   }
+  // Backlog after a stall (the events' own on-chain time is older than STALL_GUARD_SEC): not the
+  // present. Nothing of it is used — no launch to buy, no stream price, no holder. Open positions
+  // are priced by the 2 s poll from the curve account and sold after the on-chain confirmation.
+  if (stallGuard.isStale(events, now)) return;
   const creates = events.filter((e) => e.type === "create");
 
   // Instrumentation: per-mint trade counters for the tick log. Counted for every mint, not only for
@@ -1310,6 +1376,7 @@ async function runAudit() {
 
 // Price monitor interval
 const pollTimer = setInterval(checkPositions, POLL_MS);
+stallGuard.start();
 const auditTimer = setInterval(() => void runAudit(), AUDIT_INTERVAL_MS);
 // Holder price trajectory (step 3): 1/s stream-price samples for 150s after a token reaches 4
 // holders. Zero RPC — the stream price is already captured.

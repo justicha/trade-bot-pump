@@ -41,6 +41,8 @@ import { SessionLedger } from "../../lib/session.mjs";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
 import { createSellRetry, DEFAULT_SELL_MAX_ATTEMPTS } from "../../lib/sell-retry.mjs";
+import { resolveTokensGone } from "../../lib/late-sale.mjs";
+import { createStallGuard } from "../../lib/stall-guard.mjs";
 import { applyLiveSell, balanceBeforeSell, liveEntry } from "../../lib/live-pnl.mjs";
 import { createAtaCloser } from "../../lib/close-ata.mjs";
 import { buildVersionedTx, computeBudgetIxs } from "../../lib/tx.mjs";
@@ -128,6 +130,19 @@ const sellRetry = createSellRetry({
   log,
   buySol: BUY_SOL,
   fields: { mode: "LIVE" },
+});
+// Stall guard (lib/stall-guard.mjs): a paused console window freezes the whole process. When it is
+// back, the stall is journaled and the exit timer runs at once (a max-hold deadline or a sell retry
+// that came due during the pause; the sale is quoted from the curve account). A target BUY that is
+// older than STALL_GUARD_SEC is backlog and is not copied; a target SELL still closes our position
+// — through copySell, which reads the wallet and the curve from the chain.
+const stallGuard = createStallGuard({
+  journal,
+  log,
+  positions,
+  onStall: () => {
+    void checkExits();
+  },
 });
 let exitTimer = null; // set in Main, cleared in finish()
 
@@ -284,8 +299,55 @@ async function copySellOnce(mint, copiedFrom, { reason = null, retry = false, fi
     const info = await connection.getTokenAccountBalance(ata);
     total = BigInt(info.value.amount);
     if (total === 0n) {
-      session.drop(`${mint.slice(0, 8)}: no tokens in wallet`);
-      positions.delete(mint);
+      // An earlier attempt that "failed" may have landed after all. Look for it among the failed
+      // attempts' signatures (read-only) and book it as the sale it is; if none landed, the
+      // position is closed as STUCK with an assumed loss — never dropped without a row.
+      log("  no tokens in wallet");
+      const gone = await resolveTokensGone({
+        connection,
+        owner: wallet.publicKey,
+        mint,
+        mintPk,
+        pos,
+        positions,
+        buySol: BUY_SOL,
+        readExecution,
+        applyLiveSell,
+        recordResult,
+        session,
+        journal,
+        ataCloser,
+        final: stopping || final,
+        now: Date.now(),
+        log,
+        stuckFields: { mode: "LIVE", copiedFrom, venue: "curve" },
+        onSale: (sale, { sig, soldRaw, totalRaw }) => {
+          const pnlSol = sale.acc.pnlSol;
+          totalPnl += pnlSol;
+          totalTrades++;
+          // This bot journals no row for an ordinary sale; a sale that is known only from the
+          // chain gets one, so it can be traced to the attempt that carried it.
+          journal.write({
+            type: "sell_reconciled",
+            mode: "LIVE",
+            mint,
+            copiedFrom,
+            venue: "curve",
+            reconciledFromSig: sig,
+            pnlSol,
+            ...sale.fields,
+            amountRaw: soldRaw.toString(),
+            balanceRaw: totalRaw.toString(),
+            priceSource: "chain-meta",
+          });
+          log(`  sold (an earlier attempt landed late, ${sig.slice(0, 8)}…): ${pnlSol >= 0 ? "+" : ""}${pnlSol.toFixed(4)} SOL`);
+        },
+      });
+      // The chain could not be asked: keep the position on its way out so the exit timer asks again.
+      if (gone.status === "retry") {
+        pos.pendingExit = true;
+        pos.exitReason = pos.exitReason || reason || "target sold";
+      }
       return;
     }
 
@@ -431,6 +493,7 @@ async function finish(reason = stopReason || "stopped") {
   log(`\n=== STOPPING: ${reason} ===`);
   await ws.close().catch(() => {}); // wait for the socket: exiting mid-close trips a libuv assertion
   if (exitTimer) clearInterval(exitTimer);
+  stallGuard.stop();
   if (LIVE && positions.size > 0) {
     log(`  closing ${positions.size} open position(s) before exit...`);
     for (const [mint, pos] of [...positions]) {
@@ -457,6 +520,7 @@ log(`Config: buy=${BUY_SOL} SOL, sell=${SELL_PCT}%, max=${MAX_POSITIONS} positio
 if (LIVE) log(`MODE: LIVE — real transactions will be sent`);
 else log(`MODE: DRY RUN (no real transactions) — pass --live to trade`);
 log(`Exit safety: max hold ${MAX_HOLD_SEC > 0 ? `${MAX_HOLD_SEC}s` : "off"} (COPY_MAX_HOLD_SEC), sell attempts <= ${SELL_MAX_ATTEMPTS} (SELL_MAX_ATTEMPTS)`);
+log(`Console: ${stallGuard.banner()}`);
 
 const ws = new SolanaWs();
 await ws.connect();
@@ -482,12 +546,15 @@ for (const target of TARGETS) {
     }
 
     const events = parseLogEvents(value.logs);
+    // Backlog after a stall: the target's trade is older than STALL_GUARD_SEC.
+    const backlog = stallGuard.isStale(events);
     for (const ev of events) {
       if (ev.type !== "trade") continue;
       // H1: only the subscribed target's OWN trades. A tx that merely mentions the target (e.g. as a
       // fee recipient) carries trades of other wallets — copying those was the bug.
       if (ev.user !== target) continue;
       if (ev.isBuy) {
+        if (backlog) continue; // an old buy is not copied (the price it was made at is gone)
         await copyBuy(ev.mint, target);
       } else {
         await copySell(ev.mint, target);
@@ -499,6 +566,7 @@ for (const target of TARGETS) {
 
 // Exit timer: sell retries (M6) + max-hold safety (P5). Skips itself while the bot is stopping.
 exitTimer = setInterval(() => void checkExits(), EXIT_POLL_MS);
+stallGuard.start();
 
 log("\nListening for target wallet trades...\n");
 

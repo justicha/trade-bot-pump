@@ -168,10 +168,12 @@ const count = (src, re) => (src.match(re) || []).length;
   asrt(/balanceBeforeSell\(\{ balanceRaw: total, posTokens: pos\.tokens, soldRaw \}\)/.test(sell), "graduation: reconciled sale measures against the balance read before the sale");
   asrt(count(live, /applyLiveSell\(pos, /g) === 2, "graduation: normal + reconciled sale use applyLiveSell");
   asrt(count(live, /session\.sell\(sale\.acc\.ledger\.receivedSol, sale\.acc\.ledger\.pnlSol, sale\.acc\.costs\)/g) === 2, "graduation: ledger gets gross figures + real fees (both paths)");
-  asrt(count(live, /\.\.\.sale\.fields/g) === 2, "graduation: both sell rows carry the shared live fields");
+  // 2 -> 3 in KODING №10 D: the sale found on the chain after "0 tokens in the wallet" (lib/late-sale.mjs
+  // onSale) writes a third sell row; applyLiveSell for it runs inside the lib, so the counts above stay 2.
+  asrt(count(live, /\.\.\.sale\.fields/g) === 3, "graduation: all three sell rows (normal, reconciled, landed late) carry the shared live fields");
   // Task 5 / P4: the dry branch moved to netRatioExitCosts (no double pump fee); the live paths
   // still carry no estimated costs at all.
-  asrt(count(src, /roundTripCosts\(/g) === 0 && count(sell, /netRatioExitCosts\(\{ entrySol, ratio: mult \}\)/g) === 1, "graduation: no roundTripCosts; the DRY branch uses netRatioExitCosts once");
+  asrt(count(src, /roundTripCosts\(/g) === 0 && count(sell, /netRatioExitCosts\(\{ entrySol, ratio: mult, venue \}\)/g) === 1, "graduation: no roundTripCosts; the DRY branch uses netRatioExitCosts once");
   asrt(!/pumpFeeBps: 0/.test(src) && !/splitEntryForSell/.test(src), "graduation: no estimated live costs, no hand-rolled entry split");
   asrt(count(src, /\.\.\.entry, \/\/ entrySolSol, entrySource, buyFeeSol/g) === 2, "graduation: both buy paths store every entry fact (incl. buyFeeSol)");
   asrt(count(sell, /Object\.assign\(pos, sale\.remainder, \{ attempts: 0, nextSellAt: 0 \}\)/g) === 2, "graduation: a partial sale keeps tokens, entry share and buy-fee share");

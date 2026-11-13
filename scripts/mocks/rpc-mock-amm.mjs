@@ -10,8 +10,9 @@
 //   RPC_AMM_POOL              "1" — the canonical pool exists; anything else — no pool
 //   RPC_AMM_BASE / RPC_AMM_QUOTE  pool reserves (raw tokens / lamports)
 //
-// Every other address gets the plain live curve of rpc-mock.mjs. The global config is NOT served,
-// so lib/pumpswap.mjs ammSellQuote uses its fallback fee split (20 + 5 + 5 = 30 bps).
+// Every other address gets the plain live curve of rpc-mock.mjs. Neither the fee program's
+// FeeConfig nor the mint supply is served, so lib/pumpswap.mjs ammSellQuote uses its fallback fee
+// (2 + 93 + 30 = 125 bps, feeSource "fallback").
 import { PublicKey } from "@solana/web3.js";
 import { connection as base } from "./rpc-mock.mjs";
 import { AMM_GLOBAL_CONFIG, canonicalPool } from "../../lib/pumpswap-sell.mjs";

@@ -174,7 +174,7 @@ function tryEnter(variantId, v, mint, s, gainPp = null) {
 // a process stall says so in its row (`stallSec`): its prices were not watched for that long.
 function closePos(key, pos, reason, { venue = "curve", price = null, extra } = {}) {
   const now = Date.now();
-  const amm = venue === "amm" ? { solOut: pos.amm.solOut, feeBps: pos.amm.feeBps, ageMs: now - pos.amm.at } : null;
+  const amm = venue === "amm" ? { solOut: pos.amm.solOut, feeBps: pos.amm.feeBps, feeSource: pos.amm.feeSource, ageMs: now - pos.amm.at } : null;
   const flags = { ...(pos.stallMs ? { stallSec: Math.round(pos.stallMs / 1000) } : {}), ...extra };
   journal.write(tradeRow({ pos, v: VARIANTS[pos.variant], reason, venue, price, amm, buySol: BUY_SOL, now, extra: flags }));
   open.delete(key);
@@ -191,10 +191,12 @@ function closeBy(key, pos, d, { price = null, heldMs, holdMs }) {
 
 // ---- migration: curve finished -> the position is priced from the PumpSwap pool ---------------
 
-// Read-only, rate-limited view of the RPC for ammSellQuote (getAccountInfo / getTokenAccountBalance).
+// Read-only, rate-limited view of the RPC for ammSellQuote (getAccountInfo / getTokenAccountBalance
+// / getTokenSupply — the supply picks the pool's fee tier).
 const quoteRpc = {
   getAccountInfo: (a) => rpcCall(() => connection.getAccountInfo(a), { priority: 3 }),
   getTokenAccountBalance: (a) => rpcCall(() => connection.getTokenAccountBalance(a), { priority: 3 }),
+  getTokenSupply: (m) => rpcCall(() => connection.getTokenSupply(m), { priority: 3 }),
 };
 let ammGlobalConfig = null; // decoded once; the pool fee split does not change during a session
 const quoteCache = new Map(); // `${mint}:${tokens}` -> { at, promise } — variants share one request
@@ -210,7 +212,7 @@ function quoteAmm(pos) {
       if (!q || !(q.solOut > 0n)) return null;
       // Cache the fee config only when it really came from the chain (the fallback has no recipients).
       if (!ammGlobalConfig && q.g?.protocolFeeRecipients?.length) ammGlobalConfig = q.g;
-      return { solOut: q.solOut, feeBps: q.feeBps, at: Date.now(), ratio: ammRatio(q.solOut, BUY_SOL) };
+      return { solOut: q.solOut, feeBps: q.feeBps, feeSource: q.feeSource, at: Date.now(), ratio: ammRatio(q.solOut, BUY_SOL) };
     })
     .catch(() => null);
   quoteCache.set(k, { at: now, promise });
