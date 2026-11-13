@@ -44,6 +44,7 @@ async function runShadow(name, overrides) {
     WS_MOCK: path.join(here, "mocks", "ws-mock-shadow.mjs"),
     JOURNAL_DIR: dir,
     SHADOW_BUY_SOL: String(BUY),
+    SHADOW_VARIANTS: "ABCDEFGHIJ", // the set these assertions were written for; K–N: scripts/gshadow-rev5.test.mjs
     ...COSTS,
     ...overrides,
   });

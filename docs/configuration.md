@@ -56,6 +56,7 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `COPY_BUY_SOL` | `0.05` | `0.05` | Buy size per copied trade |
 | `COPY_SELL_PCT` | `100` | `100` | Percentage sold when the target sells |
 | `COPY_MAX_POSITIONS` | `5` | `5` | Concurrent positions |
+| `COPY_MAX_HOLD_SEC` | `1800` | — | If the target has not sold within N seconds of our buy, the bot sells the whole remainder itself; `0` = off; a safety net, not a strategy exit (no TP/SL); works in DRY RUN too |
 
 ## Graduation sniper (`bots/graduation-sniper/graduation.mjs`)
 
@@ -74,7 +75,7 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `MIN_HOLDERS` / `GRAD_MIN_HOLDERS` | `7` | commented | Distinct buyers since first sighting (lower bound) |
 | `MAX_TOP10_SHARE` | `0` (off) | commented | Not verifiable from the stream; enabling it skips every candidate |
 | `EXIT_MIN_RATIO` | `0.9` | — | Skip an entry whose immediate round trip returns less |
-| `SELL_MAX_ATTEMPTS` | `3` | — | Attempts before a position is marked STUCK |
+| `SELL_MAX_ATTEMPTS` | `3` | — | Sell attempts before a position is marked STUCK (an assumed loss for the limits). Applies to graduation-sniper, sniper and copy-trader; backoff 2 s, 4 s, ... between attempts |
 | `SELL_MAX_SLIPPAGE` | `2000` | — | Slippage cap (bps) for the growing sell slippage |
 | `BUY_SLIPPAGE_BPS` | `SLIPPAGE_BPS` | — | Headroom on `max_sol_cost` |
 | `LIVE_CONFIRM_AMM` | unset | — | `yes` allows the **UNVERIFIED** PumpSwap sell in live mode |

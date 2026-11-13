@@ -32,6 +32,7 @@ async function runShadow(overrides = {}) {
     WS_MOCK: path.join(here, "mocks", "ws-mock-shadow.mjs"),
     JOURNAL_DIR: dir,
     WS_MOCK_SCENARIO: "single",
+    SHADOW_VARIANTS: "ABCDEFGHIJ", // the set these assertions were written for; K–N: scripts/gshadow-rev5.test.mjs
     MIN_FILL: "92",
     SHADOW_BUY_SOL: "0.02",
     SHADOW_SL: "0", // no stop-loss: every position must survive until the stop

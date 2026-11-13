@@ -33,6 +33,7 @@ const env = cleanEnv({
   WS_MOCK: path.join(here, "mocks", "ws-mock-shadow.mjs"),
   JOURNAL_DIR: dir,
   WS_MOCK_SCENARIO: "reappear",
+  SHADOW_VARIANTS: "ABCDEFGHIJ", // the set these assertions were written for; K–N: scripts/gshadow-rev5.test.mjs
   MIN_FILL: "92",
   SHADOW_BUY_SOL: "0.02",
   SHADOW_MAX_MINTS: "2", // the cap is hit on purpose: 1 traded mint + 3 filler mints

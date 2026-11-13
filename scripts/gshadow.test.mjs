@@ -71,6 +71,7 @@ const SLIP_BPS = 54; // 50 assumed + 4 for a 0.02 SOL order
 // ---------------------------------------------------------------------------------------------
 const live = readGradStrategy({ GRAD_MIN_FILL_PCT: "75", GRAD_MAX_FILL_PCT: "90", GRAD_MIN_HOLDERS: "5", GRAD_TAKE_PROFIT: "1.5", GRAD_STOP_LOSS: "0.7", GRAD_TIMEOUT_SEC: "300" });
 const V = G.buildVariants({ minFill: 92, sl: 0.7, holdSec: 300, live });
+const AJ = "ABCDEFGHIJ"; // the variants that existed before revision 5 (K–N: scripts/gshadow-rev5.test.mjs)
 {
   // The table the lab had before this change (minFill / sl / hold were lab-wide: 92 / SHADOW_SL / SHADOW_HOLD_SEC).
   const before = {
@@ -96,12 +97,16 @@ const V = G.buildVariants({ minFill: 92, sl: 0.7, holdSec: 300, live });
 
   asrt(JSON.stringify(G.variantParams(V.J)) === JSON.stringify({ minFill: 75, maxFill: 90, minHolders: 5, tp: 1.5, sl: 0.7, holdSec: 300 }), `J = the live config, got ${JSON.stringify(G.variantParams(V.J))}`);
   asrt(V.J.label === "live config" && V.J.exitCheck === false && V.J.journalParams === true, "J: label, no extra RPC gate, rows carry params");
-  asrt(G.activeVariantIds(V).join("") === "ABCDEFGHJ", `active variants: A–H and J (I has no price source), got ${G.activeVariantIds(V).join("")}`);
+  // Revision 5 added K–N. The set these assertions were written for is A–J; SHADOW_VARIANTS pins it.
+  asrt(G.activeVariantIds(V).join("") === "ABCDEFGHJKLMN", `active variants: A–H, J and K–N (I has no price source), got ${G.activeVariantIds(V).join("")}`);
+  asrt(G.activeVariantIds(V, AJ).join("") === "ABCDEFGHJ", `SHADOW_VARIANTS=A–J: A–H and J (I has no price source), got ${G.activeVariantIds(V, AJ).join("")}`);
   asrt(G.candidateThreshold(V) === 75, "candidate threshold = the lowest minFill among active variants (75)");
-  asrt(G.candidateThreshold(G.buildVariants({ minFill: 92, sl: 0.7, holdSec: 300, live: readGradStrategy({}) })) === 92, "with the default live config the threshold stays 92");
+  const Vd = G.buildVariants({ minFill: 92, sl: 0.7, holdSec: 300, live: readGradStrategy({}) });
+  asrt(G.candidateThreshold(Vd, G.activeVariantIds(Vd, AJ)) === 92, "A–J with the default live config: the threshold stays 92");
+  asrt(G.candidateThreshold(Vd) === 75, "with L (fill 75–90) active the threshold is L's 75 — still the lowest minFill of the active variants");
 
   // fill 80, 6 holders: only J. fill 93, 17 holders: A–H, not J (above its MAX_FILL 90).
-  const accepts = (c) => G.activeVariantIds(V).filter((id) => G.variantAccepts(V[id], c)).join("");
+  const accepts = (c) => G.activeVariantIds(V, AJ).filter((id) => G.variantAccepts(V[id], c)).join("");
   asrt(accepts({ fill: 80, holders: 6 }) === "J", `fill 80 / 6 holders opens only J, got "${accepts({ fill: 80, holders: 6 })}"`);
   asrt(accepts({ fill: 93, holders: 17 }) === "ABCDEFGH", `fill 93 / 17 holders opens A–H and not J, got "${accepts({ fill: 93, holders: 17 })}"`);
   asrt(accepts({ fill: 80, holders: 4 }) === "", "J respects its holder gate (5)");
@@ -120,7 +125,7 @@ const V = G.buildVariants({ minFill: 92, sl: 0.7, holdSec: 300, live });
   asrt(/const GRAD_STRATEGY = readGradStrategy\(\);/.test(src) && /const MIN_FILL_PCT = GRAD_STRATEGY\.minFillPct;/.test(src) && /const TIMEOUT_SEC = GRAD_STRATEGY\.timeoutSec;/.test(src), "graduation.mjs reads its band and exits through readGradStrategy");
   asrt(!/numOr\(process\.env\.MIN_FILL \|\| process\.env\.GRAD_MIN_FILL_PCT/.test(src), "graduation.mjs keeps no second copy of the env chain");
   const sh = fs.readFileSync(path.join(root, "bots", "graduation-sniper", "shadow.mjs"), "utf8");
-  asrt(/buildVariants\(\{ minFill: MIN_FILL, sl: SL, holdSec: HOLD_SEC, live: readGradStrategy\(\) \}\)/.test(sh), "shadow.mjs builds J from the same reader");
+  asrt(/buildVariants\(\{ minFill: MIN_FILL, sl: SL, holdSec: HOLD_SEC, live: readGradStrategy\(\), momentum: MOMENTUM \}\)/.test(sh), "shadow.mjs builds J from the same reader");
 }
 
 // exit rule order: tp, sl, timeout

@@ -18,6 +18,19 @@
 //                MULTI_MINT ONE transaction with a sell event (60%) and then a buy event (93%):
 //                           both events must be processed, and only the buy counts as a holder.
 //
+//   "stale"    — the 93% entry event carries a timestamp WS_MOCK_STALE_LAG_SEC (default 600) in the
+//                past: the backlog a socket delivers after the process stood still. Nothing may open.
+//   "stall"    — the 93% entry, the trade that fills the curve to 100%, and then THIS PROCESS IS
+//                BLOCKED for WS_MOCK_STALL_MS (default 5000): Atomics.wait on the bot's own event
+//                loop (the mock runs inside the bot), which is exactly what a paused console does
+//                to console.log. No timer fires and no RPC answer is read meanwhile.
+//   "momentum" — MOM_MINT climbs 10% -> 78% within a second (variant L enters); SLOW_MINT goes
+//                73% -> 75.5%, waits, and reaches 76% (+3 pp over the window: L must not enter,
+//                J does); LATE_MINT 24 buyers then 90% (variant K: fill 88–95, holders >= 20).
+//
+// Event timestamps (offset 89, unix seconds) are the wall clock at the moment the notification is
+// built: the lab compares them with its own clock and drops stale events.
+//
 // Fill percentages are of the 85 SOL real graduation reserve (lib/curve.mjs gradFillPct).
 import { EventEmitter } from "node:events";
 
@@ -82,7 +95,8 @@ function fakeKey(seed, salt = 0) {
 
 // 405-byte trade-v3 payload. shadow.mjs reads: mint 8..40, user 57..89, virtualSol 97,
 // virtualToken 105, realSol 113.
-function tradePayload({ mint, user, realSol, isBuy = true, ts = 1_760_000_000 }) {
+const nowSec = () => Math.floor(Date.now() / 1000);
+function tradePayload({ mint, user, realSol, isBuy = true, ts = nowSec() }) {
   const buf = Buffer.alloc(405);
   Buffer.from("bddb7fd34ee661ee", "hex").copy(buf, 0);
   decodeB58(mint).copy(buf, 8);
@@ -104,22 +118,39 @@ export const FIRST_MINT = fakeKey(101, 7);
 export const BAND_MINT = fakeKey(202, 7);
 export const HIGH_MINT = fakeKey(303, 7);
 export const MULTI_MINT = fakeKey(404, 7);
+export const MOM_MINT = fakeKey(505, 7);
+export const SLOW_MINT = fakeKey(606, 7);
+export const LATE_MINT = fakeKey(707, 7);
 
 export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || "single" } = {}) {
   const out = [];
   let seq = 0;
-  const push = (mint, fillPct, { delayMs = 60 } = {}) => {
+  // The payload is built when the notification is SENT (a function), so its timestamp is the
+  // wall clock of that moment, minus `lagSec` for the stale-backlog scenario.
+  const push = (mint, fillPct, { delayMs = 60, lagSec = 0, blockMs = 0 } = {}) => {
     seq += 1;
+    const n = seq;
     out.push({
       delayMs,
-      payload: OK(`sig-shadow-${seq}`, [
+      blockMs,
+      payload: () => OK(`sig-shadow-${n}`, [
         `Program ${PUMP} invoke [1]`,
         "Program log: Instruction: Buy",
-        DATA(tradePayload({ mint, user: fakeKey(9_000 + seq, 5), realSol: (fillPct / 100) * REAL_SOL_100, ts: 1_760_000_000 + seq * 400 })),
+        DATA(tradePayload({ mint, user: fakeKey(9_000 + n, 5), realSol: (fillPct / 100) * REAL_SOL_100, ts: nowSec() - lagSec })),
         `Program ${PUMP} success`,
       ]),
     });
   };
+
+  if (scenario === "momentum") {
+    for (let i = 1; i <= 6; i++) push(MOM_MINT, i * 10); // 6 buyers, 10..60% within half a second
+    push(MOM_MINT, 78, { delayMs: 120 }); // +68 pp inside the window: L enters
+    for (let i = 0; i < 6; i++) push(SLOW_MINT, 73 + i * 0.5); // 6 buyers, 73..75.5%: +2.5 pp at most
+    push(SLOW_MINT, 76, { delayMs: 2600 }); // 2.6 s later (window 2 s): +3 pp over the window
+    for (let i = 1; i <= 24; i++) push(LATE_MINT, i * 3); // 24 buyers, 3..72%
+    push(LATE_MINT, 90, { delayMs: 120 }); // 25 holders at 90%: K's band
+    return out;
+  }
 
   if (scenario === "live-band") {
     for (let i = 1; i <= 5; i++) push(BAND_MINT, i * 10); // 5 buyers, 10..50%
@@ -147,9 +178,17 @@ export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || 
   // lets the holder-gated variants (B 7, C 15, G 7) open on the crossing event.
   for (let i = 1; i <= 16; i++) push(FIRST_MINT, i * 5);
 
+  if (scenario === "stale") {
+    push(FIRST_MINT, 93, { delayMs: 120, lagSec: Number(process.env.WS_MOCK_STALE_LAG_SEC || 600) });
+    return out;
+  }
   push(FIRST_MINT, 93, { delayMs: 120 }); // >= MIN_FILL (92): every variant decides here
   // "flat" stops right here on purpose: no later price event, so the exit price IS the entry price
   // and the gross ratio must be exactly 1 — that is how the buy-slippage accounting is measured.
+  if (scenario === "stall") {
+    push(FIRST_MINT, 100, { delayMs: 120, blockMs: Number(process.env.WS_MOCK_STALL_MS || 5000) });
+    return out;
+  }
   if (scenario === "migrate") {
     push(FIRST_MINT, 100, { delayMs: 120 }); // the trade that completes the curve; nothing follows
     return out;
@@ -198,7 +237,10 @@ export class MockSocket extends EventEmitter {
       acc += n.delayMs;
       this.timers.push(
         setTimeout(() => {
-          this.emit("message", JSON.stringify({ jsonrpc: "2.0", method: "logsNotification", params: { subscription: this.subId, result: n.payload } }));
+          const result = typeof n.payload === "function" ? n.payload() : n.payload;
+          this.emit("message", JSON.stringify({ jsonrpc: "2.0", method: "logsNotification", params: { subscription: this.subId, result } }));
+          // "stall": freeze the whole process, the way a blocked console write does.
+          if (n.blockMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, n.blockMs);
         }, acc),
       );
     }

@@ -231,6 +231,34 @@ The `ata_close` journal row (one per attempt):
 The close costs about 20 000 lamports at `CU_PRICE` 1.5M (5 000 signature + 10 000 x 1.5) against
 2 074 080 lamports of rent (about 1%). **Not verified on a real transaction yet.**
 
+### Bounded sell retries (sniper, copy-trader)
+
+sniper and copy-trader now bound their sell retries with the shared helper `lib/sell-retry.mjs`:
+the same policy graduation already has (graduation keeps its own copy) — at most `SELL_MAX_ATTEMPTS`
+attempts (default 3), backoff 2000 ms × 2^(attempt-1) (2 s, 4 s, 8 s, ...), then the position is
+STUCK. A reconciled sale (confirm failed but the tx is on-chain) is not a failure. On STUCK,
+`lib/stuck.mjs` books the remaining entry as an assumed loss (`lossAssumed: true`) for
+`MAX_CONSEC_LOSSES` and the daily total; the tokens stay in the wallet (`scripts/rescue-sell.mjs`).
+
+The `sell_failed` journal row (sniper and copy-trader, one per failed attempt):
+
+| Field | Value |
+|---|---|
+| `mint`, `venue: "curve"`, `mode: "LIVE"`, `exitReason` | the sale that failed |
+| `attempt`, `maxAttempts`, `nextRetryMs` | attempt number; `nextRetryMs` is null on the last |
+| `error`, `sig`, `tokens` | error text; `sig` null if nothing reached the network; wallet token balance |
+| `sessionId`, `paramsHash`, `gitSha` | sniper only |
+| `copiedFrom` | copy-trader only |
+
+A `stuck` row (existing type, new reason) carries `reason: "sell failed N/M: <error>"`, `attempts`,
+`maxAttempts`, `exitReason`, `venue`, and — as before — `pnlSol < 0`, `lossAssumed: true`,
+`entrySolSol`, `ataRentSol`, `tokens`. The copy-trader `exitReason` is `target sold` |
+`max-hold timeout` | `stop`.
+
+Known limitation: if a failed attempt actually landed in the chain later, the retry reads a zero
+balance and removes the position without recording the sale (the revenue is not booked). **Verified
+on mocks only, not on a real transaction.**
+
 Rotation: ticks rotate by size and are drained at stop (`SNIPER_DRAIN_MAX_SEC`); raw captures rotate
 hourly by local hour (`data/raw/YYYY-MM-DD-HH.jsonl.gz`).
 

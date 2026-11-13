@@ -4,7 +4,7 @@ Short answer: **the code is tested, the strategy is not proven.** Those are diff
 
 ## What is tested
 
-- `npm test` runs **73 test files** (the list lives in `package.json`). All of them run offline and
+- `npm test` runs **74 test files** (the list lives in `package.json`). All of them run offline and
   without a wallet: the ones that touch the network point at local RPC/WebSocket fixtures, and the
   rest are pure unit tests that boot a temporary data directory. No network, no SOL.
 - The suite covers the parts that are easy to get silently wrong: the log parser, the curve and fee
@@ -22,6 +22,7 @@ makes money.
   reviewed by reading the code, not executed by an automated test.
 - Anything about market behaviour: no backtest, no forward test, no track record, no profit figure.
 - The token-ATA close after a full live sale (and the `close-empty-atas.mjs` sweep) is verified on mocks only, never on a real transaction.
+- The bounded sell retries (sniper/copy-trader) and `COPY_MAX_HOLD_SEC` are verified on mocks only, never on a real transaction.
 
 ## The audit log
 

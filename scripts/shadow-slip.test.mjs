@@ -34,6 +34,7 @@ const env = cleanEnv({
   WS_MOCK: path.join(here, "mocks", "ws-mock-shadow.mjs"),
   JOURNAL_DIR: dir,
   WS_MOCK_SCENARIO: "flat", // the price never moves after the entry -> gross ratio must be 1
+  SHADOW_VARIANTS: "ABCDEFGHIJ", // the set these assertions were written for; K–N: scripts/gshadow-rev5.test.mjs
   MIN_FILL: "92",
   SHADOW_BUY_SOL: "0.02",
   SHADOW_SL: "0",

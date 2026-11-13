@@ -89,7 +89,17 @@ function reportGroup(scheme, list) {
   const venues = new Map();
   for (const t of list) if (t.exitVenue) venues.set(t.exitVenue, (venues.get(t.exitVenue) || 0) + 1);
   if (venues.size) {
-    console.log(`exit venues: ${["curve", "amm", "amm-unpriced"].filter((k) => venues.has(k)).map((k) => `${k}=${venues.get(k)}`).join(" ")}`);
+    console.log(`exit venues: ${["curve", "amm", "amm-unpriced", "curve-unpriced"].filter((k) => venues.has(k)).map((k) => `${k}=${venues.get(k)}`).join(" ")}`);
+  }
+  // Revision 5 flags: `late` = the timeout was noticed too late to have a price (always unpriced);
+  // `stallSec` = the position was open across a process stall (its prices went unwatched that long).
+  const late = list.filter((t) => t.late === true).length;
+  const stalled = list.filter((t) => Number(t.stallSec) > 0);
+  if (late || stalled.length) {
+    console.log(
+      `STALL: ${late} trade(s) closed late without a result; ${stalled.length} trade(s) lived through a process stall` +
+        (stalled.length ? ` (up to ${Math.max(...stalled.map((t) => Number(t.stallSec)))} s unwatched; ${stalled.filter((t) => t.netPct !== null && t.netPct !== undefined).length} of them are priced — treat with care)` : ""),
+    );
   }
   const priced = (t) => t.netPct !== null && t.netPct !== undefined && Number.isFinite(Number(t.netPct));
   const unpriced = list.filter((t) => !priced(t));
@@ -97,7 +107,7 @@ function reportGroup(scheme, list) {
     const perV = new Map();
     for (const t of unpriced) perV.set(t.variant, (perV.get(t.variant) || 0) + 1);
     console.log(
-      `UNPRICED: ${unpriced.length} of ${list.length} trade(s) have no result (curve completed, no pool quote) — excluded from the statistics below: ${[...perV].sort().map(([v, n]) => `${v}=${n}`).join(" ")}`,
+      `UNPRICED: ${unpriced.length} of ${list.length} trade(s) have no result (no pool quote, or a timeout noticed too late) — excluded from the statistics below: ${[...perV].sort().map(([v, n]) => `${v}=${n}`).join(" ")}`,
     );
     console.log("          these positions could NOT be sold at a known price; the table is optimistic by exactly that much");
   }

@@ -3,7 +3,8 @@
 //
 // Environment:
 //   RPC_AMM_MINTS             comma-separated mints this fixture knows (required)
-//   RPC_AMM_CURVE             "complete" (default) | "gone" — what the curve account looks like
+//   RPC_AMM_CURVE             "complete" (default) | "gone" — what the curve account looks like;
+//                             "error" — every read of the curve account fails (an RPC outage)
 //   RPC_AMM_COMPLETE_AFTER_MS the curve is live for this long after its first read (default 0), so
 //                             a bot can still BUY on it before it "migrates"
 //   RPC_AMM_POOL              "1" — the canonical pool exists; anything else — no pool
@@ -52,6 +53,7 @@ export const connection = {
       if (!firstRead.has(a)) firstRead.set(a, Date.now());
       const info = await base.getAccountInfo(address);
       if (Date.now() - firstRead.get(a) < completeAfterMs) return info; // still trading
+      if (process.env.RPC_AMM_CURVE === "error") throw new Error("mock: curve account read failed");
       if (process.env.RPC_AMM_CURVE === "gone") return null;
       info.data[48] = 1; // complete
       return info;
