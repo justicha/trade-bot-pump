@@ -33,6 +33,13 @@
 // later than SHADOW_LATE_SEC after its deadline is journaled WITHOUT a result (late: true); a
 // stream event older than SHADOW_LATE_SEC (the backlog the socket delivers after a stall) is
 // dropped instead of being traded on as if it were the present.
+//
+// Entry freshness (SHADOW_ENTRY_MAX_LAG_SEC, default 5; 0 = off; revision 6): an event younger than
+// SHADOW_LATE_SEC but older than this still updates the fill / price state (and so the exits), but
+// opens no position in any variant and does not feed variant L's momentum history. The live bot
+// re-reads the curve before it buys; a 20 s old event can carry the price from before a crash.
+// Such skips are counted in the periodic gshadow_stale_events row (`entrySkipped`), and every
+// gshadow_open row carries the lag of the event that opened it (`lagSec`).
 import { PublicKey } from "@solana/web3.js";
 import { LIVE } from "../../lib/config.mjs";
 import { PUMP_PROGRAM, TRADE_EVENT_PREFIX } from "../../lib/constants.mjs";
@@ -49,6 +56,8 @@ import {
   buildVariants,
   candidateThreshold,
   closeDecision,
+  entryMaxLagMs,
+  entryTooLate,
   eventLagMs,
   fillGainPp,
   isLate,
@@ -82,6 +91,8 @@ const AMM_POLL_MS = Number(process.env.SHADOW_AMM_POLL_MS || 5000);
 // "The lab was not watching" threshold for the three clock guards (see the header). 0 = off.
 const LATE_SEC = Number(process.env.SHADOW_LATE_SEC === undefined || process.env.SHADOW_LATE_SEC === "" ? 30 : process.env.SHADOW_LATE_SEC);
 const LATE_MS = Number.isFinite(LATE_SEC) && LATE_SEC > 0 ? LATE_SEC * 1000 : 0;
+// An event older than this opens nothing (see the header). Independent of SHADOW_LATE_SEC. 0 = off.
+const ENTRY_MAX_LAG_MS = entryMaxLagMs(process.env.SHADOW_ENTRY_MAX_LAG_SEC);
 // Variant L: the fill must have grown by this many percentage points over this many seconds.
 const MOMENTUM = { pp: Number(process.env.SHADOW_MOMENTUM_PP || 5), sec: Number(process.env.SHADOW_MOMENTUM_SEC || 60) };
 const journal = new TradeJournal({ bot: "graduation-shadow" });
@@ -103,8 +114,9 @@ const open = new Map(); // `${variant}:${mint}` -> position
 // be evicted and then reappear; `entered`, which lives ON that state, dies with it, so without this
 // session-wide set the mint would be opened a second time and counted twice in the report.
 const openedKeys = new Set();
-// Stream events dropped as stale since the last report (see flushStale).
-const stale = { events: 0, maxLagMs: 0, flushedAt: 0 };
+// Stream events dropped as stale since the last report (see flushStale), and events that were too
+// old to open a position although at least one variant would have tried (entrySkipped).
+const stale = { events: 0, maxLagMs: 0, entrySkipped: 0, flushedAt: 0 };
 
 // trade-v3 event: mint 8..40, is_buy 56, user 57..89, timestamp 89 (unix seconds = block time),
 // virtualSol 97, virtualToken 105, realSol 113.
@@ -128,7 +140,8 @@ function parseEvent(data) {
 const priceOf = (s) => (Number(s.virtualSolReserves) / Number(s.virtualTokenReserves)) * 1e-3;
 const log0 = (m) => console.log(`[shadow] ${m}`);
 
-function enter(variantId, v, mint, s, gainPp = null) {
+// `lagMs`: age of the stream event the entry decision was made on (journaled as lagSec).
+function enter(variantId, v, mint, s, gainPp = null, lagMs = null) {
   const key = `${variantId}:${mint}`;
   if (openedKeys.has(key) || open.has(key) || s.entered.has(variantId)) return;
   const spot = priceOf(s);
@@ -141,19 +154,24 @@ function enter(variantId, v, mint, s, gainPp = null) {
   const tokens = ammEntryTokens(s, BUY_SOL);
   const pos = { variant: variantId, mint, entryPrice: spot, at: Date.now(), spot, tokens, mode: "curve", amm: null };
   open.set(key, pos);
-  journal.write(openRow({ variantId, v, mint, fill: s.fill, holders: s.buyers.size, spot, buySol: BUY_SOL, tokens, gainPp }));
+  journal.write(openRow({ variantId, v, mint, fill: s.fill, holders: s.buyers.size, spot, buySol: BUY_SOL, tokens, gainPp, lagMs }));
+}
+
+// Would this variant try to open this mint on the current state? (Not opened yet, filter passes.)
+// `openedKeys` first: an already-opened (variant, mint) must not even start the exit-check RPC
+// when a long-evicted mint reappears in the stream.
+function wouldTry(variantId, v, mint, s, gainPp) {
+  const key = `${variantId}:${mint}`;
+  if (openedKeys.has(key) || open.has(key) || s.entered.has(variantId)) return false;
+  return variantAccepts(v, { fill: s.fill, holders: s.buyers.size, gainPp });
 }
 
 // `gainPp`: growth of the mint's fill over the momentum window (null without history) — only a
 // momentum variant (L) reads it.
-function tryEnter(variantId, v, mint, s, gainPp = null) {
-  const key = `${variantId}:${mint}`;
-  // `openedKeys` first: an already-opened (variant, mint) must not even start the exit-check RPC
-  // when a long-evicted mint reappears in the stream.
-  if (openedKeys.has(key) || open.has(key) || s.entered.has(variantId)) return;
-  if (!variantAccepts(v, { fill: s.fill, holders: s.buyers.size, gainPp })) return;
+function tryEnter(variantId, v, mint, s, gainPp = null, lagMs = null) {
+  if (!wouldTry(variantId, v, mint, s, gainPp)) return;
   if (!v.exitCheck) {
-    enter(variantId, v, mint, s, gainPp);
+    enter(variantId, v, mint, s, gainPp, lagMs);
     return;
   }
   getBondingCurveState(new PublicKey(mint), 0, 3)
@@ -162,7 +180,7 @@ function tryEnter(variantId, v, mint, s, gainPp = null) {
         const prev = previewExit(state, BUY_SOL);
         if (!prev.ok || prev.ratio < 0.9) return;
       }
-      enter(variantId, v, mint, s);
+      enter(variantId, v, mint, s, null, lagMs);
     })
     .catch(() => {});
 }
@@ -308,14 +326,15 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
     if (!ev) continue;
     // An event older than SHADOW_LATE_SEC is not the present: it is the backlog the socket hands
     // over after the process stood still. Its price and fill must not open or close anything.
-    if (LATE_MS > 0) {
-      const lagMs = eventLagMs(ev.timestampSec, Date.now());
-      if (lagMs > LATE_MS) {
-        stale.events += 1;
-        stale.maxLagMs = Math.max(stale.maxLagMs, lagMs);
-        continue;
-      }
+    const lagMs = eventLagMs(ev.timestampSec, Date.now());
+    if (LATE_MS > 0 && lagMs > LATE_MS) {
+      stale.events += 1;
+      stale.maxLagMs = Math.max(stale.maxLagMs, lagMs);
+      continue;
     }
+    // Younger than that, but older than SHADOW_ENTRY_MAX_LAG_SEC: the state follows it (fill,
+    // price, holders -> exits), but it opens nothing and stays out of L's momentum history.
+    const entryLate = entryTooLate(lagMs, ENTRY_MAX_LAG_MS);
     let s = mintState.get(ev.mint);
     if (!s) {
       s = { buyers: new Set(), entered: new Set(), fill: 0, rSol: 0n, price: 0 };
@@ -337,11 +356,17 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
     if (MOMENTUM_WINDOW_MS > 0) {
       s.hist ??= [];
       gainPp = fillGainPp(s.hist, s.lastEventAt, s.fill, MOMENTUM_WINDOW_MS);
-      pushFillSample(s.hist, s.lastEventAt, s.fill, MOMENTUM_WINDOW_MS);
+      // A late event is stamped with its RECEIVE time: a backlog burst would look like a jump of
+      // the fill within a second. Only entry-fresh events are momentum samples.
+      if (!entryLate) pushFillSample(s.hist, s.lastEventAt, s.fill, MOMENTUM_WINDOW_MS);
     }
     if (s.fill >= CANDIDATE_MIN_FILL) {
       journal.write({ type: "gshadow_candidate", mint: ev.mint, fill: s.fill, holders: s.buyers.size, price: s.price });
-      for (const id of ACTIVE_VARIANTS) tryEnter(id, VARIANTS[id], ev.mint, s, gainPp);
+      if (entryLate) {
+        if (ACTIVE_VARIANTS.some((id) => wouldTry(id, VARIANTS[id], ev.mint, s, gainPp))) stale.entrySkipped += 1;
+      } else {
+        for (const id of ACTIVE_VARIANTS) tryEnter(id, VARIANTS[id], ev.mint, s, gainPp, lagMs);
+      }
     }
   }
 });
@@ -352,6 +377,7 @@ log0(
 );
 log0(
   `clock guards ${LATE_MS > 0 ? `${LATE_MS / 1000}s (stall / late timeout / stale events)` : "OFF"}` +
+    ` | entry max lag ${ENTRY_MAX_LAG_MS > 0 ? `${ENTRY_MAX_LAG_MS / 1000}s` : "OFF"}` +
     (MOMENTUM_WINDOW_MS > 0 ? ` | L momentum +${MOMENTUM.pp}pp / ${MOMENTUM.sec}s` : "") +
     " | do not select text in this window: a paused console freezes the lab",
 );
@@ -382,16 +408,23 @@ function noteStall(gapMs, now) {
   return `STALL: the process did not run for ${Math.round(gapMs / 1000)}s (paused console? sleep?) with ${open.size} open position(s) — overdue ones are journaled without a result`;
 }
 
-// Dropped stale events are reported in bulk, at most every 10 s (a backlog arrives as a burst).
-function flushStale(now) {
-  if (stale.events === 0 || now - stale.flushedAt < 10_000) return null;
+// Dropped stale events and entry skips are reported in bulk, at most every 10 s (a backlog arrives
+// as a burst). `force` (the stop path) writes whatever is still counted, so no skip is lost.
+function flushStale(now, { force = false } = {}) {
+  if (stale.events === 0 && stale.entrySkipped === 0) return null;
+  if (!force && now - stale.flushedAt < 10_000) return null;
   const maxLagSec = Math.round(stale.maxLagMs / 1000);
-  journal.write({ type: "gshadow_stale_events", events: stale.events, maxLagSec });
-  const line = `dropped ${stale.events} stream event(s) older than ${LATE_MS / 1000}s (max lag ${maxLagSec}s) — a backlog after a stall; if this never stops, check the system clock`;
+  journal.write({ type: "gshadow_stale_events", events: stale.events, maxLagSec, entrySkipped: stale.entrySkipped });
+  const parts = [];
+  if (stale.events > 0) {
+    parts.push(`dropped ${stale.events} stream event(s) older than ${LATE_MS / 1000}s (max lag ${maxLagSec}s) — a backlog after a stall; if this never stops, check the system clock`);
+  }
+  if (stale.entrySkipped > 0) parts.push(`${stale.entrySkipped} entry(ies) skipped: event older than ${ENTRY_MAX_LAG_MS / 1000}s`);
   stale.events = 0;
   stale.maxLagMs = 0;
+  stale.entrySkipped = 0;
   stale.flushedAt = now;
-  return line;
+  return parts.join("; ");
 }
 
 const timer = setInterval(() => {
@@ -506,7 +539,9 @@ async function finishShadow(reason) {
   const stopReason = reason === "sigterm" ? "shutdown" : "manual stop";
   await finalAmmQuotes().catch(() => {});
   const { closed, unconfirmed } = closeAllAtStop(stopReason);
+  const staleNote = flushStale(Date.now(), { force: true });
   log0(`=== SHADOW STOP (${reason}) ===`);
+  if (staleNote) log0(staleNote);
   log0(`open at stop: ${closed} position(s) closed as "${stopReason}"${unconfirmed ? `, ${unconfirmed} unconfirmed (no price)` : ""}`);
   log0(`journal: ${journal.file()}`);
   await ws.close().catch(() => {});

@@ -103,6 +103,7 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `SHADOW_STALE_SEC` | `15` | Seconds of silence on a mint with an open position before re-checking whether its curve finished |
 | `SHADOW_AMM_POLL_MS` | `5000` | Minimum interval between pool quotes for a migrated position |
 | `SHADOW_LATE_SEC` | `30` | Threshold of the three clock guards (process stall, late timeout, stale stream events); `0` = off |
+| `SHADOW_ENTRY_MAX_LAG_SEC` | `5` | A stream event older than this still updates fill / price (exits) but opens no position and is not a momentum sample for L; counted as `entrySkipped` in `gshadow_stale_events`; `0` = off |
 | `SHADOW_MOMENTUM_PP` | `5` | Variant L: minimum fill growth, percentage points |
 | `SHADOW_MOMENTUM_SEC` | `60` | Variant L: window, seconds |
 | `SHADOW_VARIANTS` | all | Which variants trade, letters, e.g. `ABCDEFGHJ` |

@@ -14,6 +14,11 @@ import "./lib/test-env.mjs";
 //   P2  Variants K / L / M / N; A–J are byte-for-byte what they were; N leaves a migrated position
 //       at the first pool quote; a migrated position WITH a quote still times out at the quote.
 //
+//   rev 6 (KODING #14) An event 1–30 s old (kept by SHADOW_LATE_SEC) opened positions at a stale
+//       price (HZfcyx…: 20 s late, at the price from before a crash). Now an event older than
+//       SHADOW_ENTRY_MAX_LAG_SEC (default 5) opens nothing, is counted (entrySkipped) and is not a
+//       momentum sample for L; every gshadow_open carries lagSec.
+//
 // Every assertion marked [off] runs the same scenario with the guard switched off and asserts the
 // old, wrong outcome — that is the "fails without the fix" proof, kept in the test.
 import assert from "node:assert/strict";
@@ -201,7 +206,21 @@ const V = G.buildVariants({ minFill: 92, sl: 0.65, holdSec: 240, live, momentum:
   asrt(o.gainPp === 68 && o.params.momentumPp === 5 && o.label === "momentum", "L open row: the gain it entered on + its parameters");
   const oj = G.openRow({ variantId: "J", v: V.J, mint: "M", fill: 80, holders: 6, spot: 1e-7, buySol: BUY, tokens: 1n, gainPp: 68 });
   asrt(oj.gainPp === undefined, "only a momentum variant journals gainPp");
-  for (const r of [late, un, row, o, oj]) asrt(r.shadowRev === 5 && G.SHADOW_REV === 5 && r.costsScheme === SHADOW_COSTS_SCHEME && r.costsScheme.startsWith("v5-amm-fee"), "rows carry shadowRev 5 (rules) next to the cost scheme (v5-amm-fee since KODING №10: the AMM fee changed, the rules did not)");
+  for (const r of [late, un, row, o, oj]) asrt(r.shadowRev === 6 && G.SHADOW_REV === 6 && r.costsScheme === SHADOW_COSTS_SCHEME && r.costsScheme.startsWith("v5-amm-fee"), "rows carry shadowRev 6 (rules; revision 6 = entry max lag) next to the UNCHANGED cost scheme v5-amm-fee");
+}
+
+// ---- revision 6: entry freshness (pure) ----------------------------------------------------------
+{
+  asrt(G.entryMaxLagMs(undefined) === 5000 && G.entryMaxLagMs("") === 5000, "SHADOW_ENTRY_MAX_LAG_SEC unset / empty = 5 s");
+  asrt(G.entryMaxLagMs("0") === 0 && G.entryMaxLagMs("-3") === 0 && G.entryMaxLagMs("x") === 0, "0 (or nonsense) = off");
+  asrt(G.entryMaxLagMs("2.5") === 2500 && G.entryMaxLagMs("12") === 12_000, "seconds -> ms");
+  asrt(G.entryTooLate(20_000, 5000) === true && G.entryTooLate(5001, 5000) === true, "an event older than the limit is too late to open (HZfcyx…: ~20 s)");
+  asrt(G.entryTooLate(5000, 5000) === false && G.entryTooLate(2000, 5000) === false && G.entryTooLate(-4000, 5000) === false, "exactly the limit, younger, or a clock that runs behind: may open");
+  asrt(G.entryTooLate(600_000, 0) === false, "limit 0 = off: the old behaviour");
+  const o6 = G.openRow({ variantId: "J", v: V.J, mint: "M", fill: 93, holders: 17, spot: 1e-7, buySol: BUY, tokens: 1n, lagMs: 20_349 });
+  asrt(o6.lagSec === 20.3, `gshadow_open carries lagSec with one decimal (got ${o6.lagSec})`);
+  asrt(G.openRow({ variantId: "A", v: V.A, mint: "M", fill: 93, holders: 17, spot: 1e-7, buySol: BUY, tokens: 1n, lagMs: 0 }).lagSec === 0, "lag 0 is journaled as 0");
+  asrt(G.openRow({ variantId: "A", v: V.A, mint: "M", fill: 93, holders: 17, spot: 1e-7, buySol: BUY, tokens: 1n }).lagSec === null, "unknown lag is null, never a made-up 0");
 }
 
 // ---- the report counts late / stalled rows and keeps them out of the averages -----------------
@@ -277,6 +296,8 @@ const CURVE_ERR = {
   WS_MOCK_SCENARIO: "migrate", SHADOW_SL: "0", SHADOW_HOLD_SEC: "2", GRAD_TIMEOUT_SEC: "2", SHADOW_MAX_SEC: "10",
 };
 const STALE = { RPC_MOCK: RPC_CURVE, MIN_FILL: "92", SHADOW_VARIANTS: AJ, WS_MOCK_SCENARIO: "stale", WS_MOCK_STALE_LAG_SEC: "600", SHADOW_SL: "0", SHADOW_HOLD_SEC: "3600", SHADOW_MAX_SEC: "4" };
+// Revision 6: A–H + J (live band 92–97, holders >= 7) and L (75–90, momentum). Default lag 20 s.
+const ENTRY_LAG = { RPC_MOCK: RPC_CURVE, MIN_FILL: "92", SHADOW_VARIANTS: "ABCDEFGHJL", WS_MOCK_SCENARIO: "entry-lag", SHADOW_SL: "0", SHADOW_HOLD_SEC: "3600", SHADOW_MAX_SEC: "7" };
 const LIVE_BAND = { GRAD_MIN_FILL_PCT: "75", GRAD_MAX_FILL_PCT: "90", GRAD_MIN_HOLDERS: "5", GRAD_TAKE_PROFIT: "1.5", GRAD_STOP_LOSS: "0.7", GRAD_TIMEOUT_SEC: "300" };
 
 const [stallOn, stallOff, errOn, errOff, staleOn, staleOff, momentum, migExit] = await Promise.all([
@@ -285,11 +306,19 @@ const [stallOn, stallOff, errOn, errOff, staleOn, staleOff, momentum, migExit] =
   runShadow("curve-err-on", { ...CURVE_ERR, SHADOW_LATE_SEC: "2" }),
   runShadow("curve-err-off", { ...CURVE_ERR, SHADOW_LATE_SEC: "0" }),
   runShadow("stale-on", { ...STALE }), // default SHADOW_LATE_SEC (30 s)
-  runShadow("stale-off", { ...STALE, SHADOW_LATE_SEC: "0" }),
+  // Both guards off: the old behaviour (revision 6's entry gate would also stop a 600 s old event).
+  runShadow("stale-off", { ...STALE, SHADOW_LATE_SEC: "0", SHADOW_ENTRY_MAX_LAG_SEC: "0" }),
   // All variants (SHADOW_VARIANTS unset), live band 75–90, a 2 s momentum window.
   runShadow("momentum", { RPC_MOCK: RPC_CURVE, ...LIVE_BAND, WS_MOCK_SCENARIO: "momentum", SHADOW_MOMENTUM_SEC: "2", SHADOW_MOMENTUM_PP: "5", SHADOW_SL: "0", SHADOW_HOLD_SEC: "3600", SHADOW_MAX_SEC: "9" }),
   // J and N on a mint that migrates with a pool: default live config (fill 92–97, SL 0.7, pool ~0.80).
   runShadow("migration-exit", { RPC_MOCK: RPC_AMM, RPC_AMM_MINTS: FIRST_MINT, RPC_AMM_POOL: "1", MIN_FILL: "92", SHADOW_VARIANTS: "JN", WS_MOCK_SCENARIO: "migrate", SHADOW_SL: "0", SHADOW_HOLD_SEC: "4", GRAD_TIMEOUT_SEC: "4", SHADOW_AMM_POLL_MS: "500", SHADOW_MAX_SEC: "12" }),
+]);
+// Revision 6: 20 s old entry events with the default gate (5 s), with the gate off, and 2 s old.
+// A second batch: eleven labs at once starved the timing-sensitive runs above (holdSec +1 s).
+const [lagOn, lagOff, lag2] = await Promise.all([
+  runShadow("entry-lag-on", { ...ENTRY_LAG }),
+  runShadow("entry-lag-off", { ...ENTRY_LAG, SHADOW_ENTRY_MAX_LAG_SEC: "0" }),
+  runShadow("entry-lag-2s", { ...ENTRY_LAG, WS_MOCK_ENTRY_LAG_SEC: "2" }),
 ]);
 
 // ---- P0: the process stalls right after the curve completes ----------------------------------------
@@ -311,7 +340,7 @@ const [stallOn, stallOff, errOn, errOff, staleOn, staleOff, momentum, migExit] =
   asrt(trades.every((t) => t.late === true && t.lateSec >= 3 && t.stallSec >= 5 && t.holdSec >= 6), `[stall on] each row says it is late and stalled, got ${JSON.stringify(trades[0])}`);
   asrt(new Set(trades.map((t) => `${t.variant}:${t.mint}`)).size === 9, "[stall on] each position is closed once");
   asrt(/STALL: the process did not run for \d+s/.test(out), "[stall on] the stall is printed");
-  asrt(opens.every((o) => o.shadowRev === 5) && trades.every((t) => t.shadowRev === 5), "[stall on] rows carry shadowRev 5");
+  asrt(opens.every((o) => o.shadowRev === 6) && trades.every((t) => t.shadowRev === 6), "[stall on] rows carry shadowRev 6");
 }
 
 // ---- P0: a migration check that keeps failing --------------------------------------------------------
@@ -369,5 +398,51 @@ const [stallOn, stallOff, errOn, errOff, staleOn, staleOff, momentum, migExit] =
   asrt(n.params.exitOnMigration === true && j.params.exitOnMigration === undefined, "[migration-exit] only N's rows carry exitOnMigration");
 }
 
+// ---- revision 6: a 1–30 s late event updates the state but opens nothing ------------------------------
+{
+  const A_J = "ABCDEFGHJ";
+  const vs = (list) => list.map((o) => o.variant).sort().join("");
+  const skipped = (r) => r.stale.reduce((a, x) => a + (x.entrySkipped || 0), 0);
+
+  // [off] SHADOW_ENTRY_MAX_LAG_SEC=0: the old behaviour — the 20 s old 93% event opens A–H + J at its
+  // (stale) price, and L enters on a momentum history made of lagged events.
+  {
+    const { opens, stale } = lagOff;
+    const first = opens.filter((o) => o.mint === FIRST_MINT && o.variant !== "L"); // L opens FIRST_MINT on its fresh 75% climb
+    asrt(vs(first) === A_J && first.every((o) => o.fill === 93), `[entry-lag off] the old behaviour: the lagged 93% event opens A–H + J (got "${vs(first)}" at ${uniq(first, (o) => o.fill)})`);
+    asrt(first.every((o) => o.lagSec >= 19.5 && o.lagSec <= 22), `[entry-lag off] …and lagSec says how late it was (got ${uniq(first, (o) => o.lagSec)})`);
+    asrt(vs(opens.filter((o) => o.mint === MOM_MINT)) === "L", "[entry-lag off] L enters on a lagged-only momentum history");
+    asrt(skipped(lagOff) === 0 && stale.length === 0, `[entry-lag off] nothing is counted as skipped (got ${JSON.stringify(stale)})`);
+    asrt(/entry max lag OFF/.test(lagOff.out), "[entry-lag off] the startup line says the gate is off");
+  }
+  // [on] default 5 s: the lagged 93% / 94% events open nothing; the fresh 95% one does.
+  {
+    const { opens, stale, candidates, out } = lagOn;
+    const first = opens.filter((o) => o.mint === FIRST_MINT && o.variant !== "L"); // L opens FIRST_MINT on its fresh 75% climb
+    asrt(!first.some((o) => o.fill === 93 || o.fill === 94), `[entry-lag on] a 20 s old event in the buy band opens nothing (got opens at ${uniq(first, (o) => o.fill)})`);
+    asrt(candidates.some((c) => c.mint === FIRST_MINT && c.fill === 93), "[entry-lag on] …but it still updates the state (it is journaled as a candidate)");
+    asrt(vs(first) === A_J && first.every((o) => o.fill === 95 && o.lagSec >= -1 && o.lagSec < 2.5), `[entry-lag on] the later FRESH 95% event opens A–H + J with a small lagSec (got "${vs(first)}" ${uniq(first, (o) => `${o.fill}@${o.lagSec}`)})`);
+    asrt(opens.filter((o) => o.mint === MOM_MINT).length === 0, "[entry-lag on] L: lagged events are not momentum samples — no fresh history, no entry");
+    asrt(skipped(lagOn) === 2, `[entry-lag on] both lagged entries are counted as entrySkipped (got ${JSON.stringify(stale)})`);
+    asrt(stale.length === 2 && stale.every((x) => x.events === 0 && x.maxLagSec === 0 && x.entrySkipped === 1), `[entry-lag on] one periodic row + one written at the stop; events / maxLagSec keep their meaning (dropped > SHADOW_LATE_SEC) (got ${JSON.stringify(stale)})`);
+    asrt(/entry max lag 5s/.test(out) && /entry\(ies\) skipped: event older than 5s/.test(out), "[entry-lag on] the gate is shown at startup and the skips are printed");
+    asrt(opens.every((o) => o.shadowRev === 6), "[entry-lag on] rows carry shadowRev 6");
+  }
+  // 2 s old: inside the default 5 s — opens exactly as before, lagSec ~2.
+  {
+    const { opens, stale } = lag2;
+    const first = opens.filter((o) => o.mint === FIRST_MINT && o.variant !== "L"); // L opens FIRST_MINT on its fresh 75% climb
+    asrt(vs(first) === A_J && first.every((o) => o.fill === 93), `[entry-lag 2s] a 2 s old event opens A–H + J as before (got "${vs(first)}" at ${uniq(first, (o) => o.fill)})`);
+    asrt(first.every((o) => o.lagSec >= 1.9 && o.lagSec <= 4), `[entry-lag 2s] lagSec ~2 on gshadow_open (got ${uniq(first, (o) => o.lagSec)})`);
+    asrt(vs(opens.filter((o) => o.mint === MOM_MINT)) === "L", "[entry-lag 2s] L still enters on fresh-enough momentum");
+    asrt(skipped(lag2) === 0 && stale.length === 0, "[entry-lag 2s] nothing skipped");
+  }
+  // Every open row of every run carries lagSec.
+  for (const r of [stallOn, stallOff, errOn, errOff, staleOff, momentum, migExit, lagOn, lagOff, lag2]) {
+    asrt(r.opens.every((o) => typeof o.lagSec === "number" && Number.isFinite(o.lagSec)), "every gshadow_open row carries a numeric lagSec");
+  }
+}
+
 console.log(JSON.stringify({ stallOff: stallOff.trades[0].reason, stallOn: stallOn.trades[0].exitVenue, stallSec: stallOn.stalls.map((s) => s.stallSec), L: momentum.opens.filter((o) => o.variant === "L").length, N: migExit.trades.find((t) => t.variant === "N").reason }));
 console.log("PASS: shadow rev 5 — a stalled process books no result (stall / late / stale guards); variants K, L, M, N; A–J unchanged");
+console.log("PASS: shadow rev 6 — an event older than SHADOW_ENTRY_MAX_LAG_SEC opens nothing (counted as entrySkipped); gshadow_open carries lagSec");

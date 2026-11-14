@@ -27,6 +27,10 @@
 //   "momentum" — MOM_MINT climbs 10% -> 78% within a second (variant L enters); SLOW_MINT goes
 //                73% -> 75.5%, waits, and reaches 76% (+3 pp over the window: L must not enter,
 //                J does); LATE_MINT 24 buyers then 90% (variant K: fill 88–95, holders >= 20).
+//   "entry-lag" — events younger than SHADOW_LATE_SEC but WS_MOCK_ENTRY_LAG_SEC (default 20) old
+//                (revision 6, SHADOW_ENTRY_MAX_LAG_SEC): FIRST_MINT 16 fresh buyers, then 93% and,
+//                1.5 s later, 94% — both lagged; MOM_MINT 6 lagged buyers 10..60%, then a FRESH 78%
+//                (L's momentum history is lagged only); then FIRST_MINT 95% fresh.
 //
 // Event timestamps (offset 89, unix seconds) are the wall clock at the moment the notification is
 // built: the lab compares them with its own clock and drops stale events.
@@ -178,6 +182,15 @@ export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || 
   // lets the holder-gated variants (B 7, C 15, G 7) open on the crossing event.
   for (let i = 1; i <= 16; i++) push(FIRST_MINT, i * 5);
 
+  if (scenario === "entry-lag") {
+    const lagSec = Number(process.env.WS_MOCK_ENTRY_LAG_SEC || 20);
+    push(FIRST_MINT, 93, { delayMs: 120, lagSec }); // in the buy band, but lagged
+    push(FIRST_MINT, 94, { delayMs: 1500, lagSec }); // lagged again, after the first report
+    for (let i = 1; i <= 6; i++) push(MOM_MINT, i * 10, { lagSec }); // lagged momentum history
+    push(MOM_MINT, 78, { delayMs: 120 }); // fresh, in L's band
+    push(FIRST_MINT, 95, { delayMs: 1500 }); // fresh: whoever has not entered may enter now
+    return out;
+  }
   if (scenario === "stale") {
     push(FIRST_MINT, 93, { delayMs: 120, lagSec: Number(process.env.WS_MOCK_STALE_LAG_SEC || 600) });
     return out;
