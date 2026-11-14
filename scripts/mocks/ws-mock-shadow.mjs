@@ -31,6 +31,9 @@
 //                (revision 6, SHADOW_ENTRY_MAX_LAG_SEC): FIRST_MINT 16 fresh buyers, then 93% and,
 //                1.5 s later, 94% — both lagged; MOM_MINT 6 lagged buyers 10..60%, then a FRESH 78%
 //                (L's momentum history is lagged only); then FIRST_MINT 95% fresh.
+//   "features" — revision 7 (scripts/gshadow-rev7.test.mjs): create events (a serial creator, a
+//                copycat name), FEAT_MINT traded by its creator, a wash wallet and a whale before
+//                the 93% entry, and NOCREATE_MINT whose creator is only in its trade events.
 //
 // Event timestamps (offset 89, unix seconds) are the wall clock at the moment the notification is
 // built: the lab compares them with its own clock and drops stale events.
@@ -97,22 +100,61 @@ function fakeKey(seed, salt = 0) {
   return encodeB58(bytes);
 }
 
-// 405-byte trade-v3 payload. shadow.mjs reads: mint 8..40, user 57..89, virtualSol 97,
-// virtualToken 105, realSol 113.
+// 405-byte trade-v3 payload. shadow.mjs reads: mint 8..40, sol amount 40..48, user 57..89,
+// virtualSol 97, virtualToken 105, realSol 113, and (revision 7, features only) the creator at
+// 177..209 (pump.fun IDL TradeEvent: fee_recipient 129, fee_basis_points 161, fee 169, creator 177,
+// creator_fee_basis_points 209). Without `creator` the tail stays zero, exactly as before.
 const nowSec = () => Math.floor(Date.now() / 1000);
-function tradePayload({ mint, user, realSol, isBuy = true, ts = nowSec() }) {
+export function tradePayload({ mint, user, realSol, isBuy = true, ts = nowSec(), solLamports = 20_000_000, creator = null }) {
   const buf = Buffer.alloc(405);
   Buffer.from("bddb7fd34ee661ee", "hex").copy(buf, 0);
   decodeB58(mint).copy(buf, 8);
   decodeB58(user).copy(buf, 57);
-  buf.writeBigUInt64LE(BigInt(20_000_000), 40); // sol amount (informational)
+  buf.writeBigUInt64LE(BigInt(Math.round(solLamports)), 40); // sol amount
   buf.writeBigUInt64LE(BigInt(40_000_000_000), 48); // token amount (informational)
   buf[56] = isBuy ? 1 : 0;
   buf.writeBigUInt64LE(BigInt(Math.round(ts)), 89);
   buf.writeBigUInt64LE(BigInt(Math.round(LAUNCH_VSOL + realSol)), 97);
   buf.writeBigUInt64LE(BigInt(V_TOK), 105);
   buf.writeBigUInt64LE(BigInt(Math.round(realSol)), 113);
+  if (creator) {
+    buf.writeBigUInt64LE(95n, 161); // fee_basis_points
+    decodeB58(creator).copy(buf, 177);
+    buf.writeBigUInt64LE(30n, 209); // creator_fee_basis_points
+  }
   return buf;
+}
+
+// create-v2 payload, serialised like the program does (lib/events.mjs parseCreate): three anchor
+// strings (u32 length + utf8), mint, bonding_curve, user, creator, timestamp (s), four u64 reserves.
+export function createPayload({ mint, creator, name, symbol, ts = nowSec() }) {
+  const str = (s) => {
+    const b = Buffer.from(s, "utf8");
+    const len = Buffer.alloc(4);
+    len.writeUInt32LE(b.length, 0);
+    return Buffer.concat([len, b]);
+  };
+  const u64 = (v) => {
+    const b = Buffer.alloc(8);
+    b.writeBigUInt64LE(BigInt(v), 0);
+    return b;
+  };
+  return Buffer.concat([
+    Buffer.from("1b72a94ddeeb6376", "hex"),
+    str(name),
+    str(symbol),
+    str("https://example.invalid/meta.json"),
+    decodeB58(mint),
+    decodeB58(fakeKey(1, 99)), // bonding curve (not read)
+    decodeB58(creator), // user
+    decodeB58(creator),
+    u64(Math.round(ts)),
+    u64(1_073_000_000_000_000n),
+    u64(30_000_000_000n),
+    u64(793_100_000_000_000n),
+    u64(1_000_000_000_000_000n),
+    Buffer.from([0, 0]),
+  ]);
 }
 
 const OK = (signature, logs) => ({ context: { slot: 0 }, value: { signature, err: null, logs } });
@@ -125,10 +167,49 @@ export const MULTI_MINT = fakeKey(404, 7);
 export const MOM_MINT = fakeKey(505, 7);
 export const SLOW_MINT = fakeKey(606, 7);
 export const LATE_MINT = fakeKey(707, 7);
+// "features" (revision 7): who is behind the token.
+export const FEAT_MINT = fakeKey(808, 7);
+export const COPY_MINT = fakeKey(909, 7);
+export const SERIAL_MINT = fakeKey(1010, 7);
+export const NOCREATE_MINT = fakeKey(1111, 7);
+export const CREATOR = fakeKey(8_888, 1);
+export const OTHER_CREATOR = fakeKey(8_889, 1);
+export const TRADE_CREATOR = fakeKey(8_890, 1);
+export const WASH = fakeKey(8_891, 1);
+export const WHALE = fakeKey(8_892, 1);
+export const FEAT_ENTRY_BUYER = fakeKey(8_893, 1);
 
 export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || "single" } = {}) {
   const out = [];
   let seq = 0;
+  // A notification with one create-v2 event (revision 7 features). `ageSec`: its on-chain time.
+  const pushCreate = (mint, creator, name, symbol, { delayMs = 60, ageSec = 0 } = {}) => {
+    seq += 1;
+    const n = seq;
+    out.push({
+      delayMs,
+      payload: () => OK(`sig-shadow-${n}`, [
+        `Program ${PUMP} invoke [1]`,
+        "Program log: Instruction: Create",
+        DATA(createPayload({ mint, creator, name, symbol, ts: nowSec() - ageSec })),
+        `Program ${PUMP} success`,
+      ]),
+    });
+  };
+  // A trade with a chosen wallet, side, size and creator field.
+  const pushTrade = (mint, fillPct, { user, isBuy = true, sol = 0.02, creator = null, delayMs = 60 } = {}) => {
+    seq += 1;
+    const n = seq;
+    out.push({
+      delayMs,
+      payload: () => OK(`sig-shadow-${n}`, [
+        `Program ${PUMP} invoke [1]`,
+        `Program log: Instruction: ${isBuy ? "Buy" : "Sell"}`,
+        DATA(tradePayload({ mint, user, isBuy, realSol: (fillPct / 100) * REAL_SOL_100, solLamports: sol * 1e9, creator })),
+        `Program ${PUMP} success`,
+      ]),
+    });
+  };
   // The payload is built when the notification is SENT (a function), so its timestamp is the
   // wall clock of that moment, minus `lagSec` for the stale-backlog scenario.
   const push = (mint, fillPct, { delayMs = 60, lagSec = 0, blockMs = 0 } = {}) => {
@@ -145,6 +226,32 @@ export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || 
       ]),
     });
   };
+
+  if (scenario === "features") {
+    // Creates (on-chain ages in the past): FEAT_MINT "Solana AI" by CREATOR 100 s ago; a copycat
+    // "SOLANA  ai!" by another wallet 50 s ago (same normalized name); the copycat's twin 2 h ago
+    // (outside the 30 min window); two more launches by CREATOR, 1 h and 25 h ago (only the first
+    // is inside 24 h).
+    pushCreate(fakeKey(1313, 7), CREATOR, "Old", "OLD", { ageSec: 90_000 });
+    pushCreate(fakeKey(1212, 7), OTHER_CREATOR, "Solana AI", "SAI", { ageSec: 7200 });
+    pushCreate(SERIAL_MINT, CREATOR, "Other", "OTH", { ageSec: 3600 });
+    pushCreate(FEAT_MINT, CREATOR, "Solana AI", "SAI", { ageSec: 100 });
+    pushCreate(COPY_MINT, OTHER_CREATOR, "SOLANA  ai!", "SAI2", { ageSec: 50 });
+    // FEAT_MINT: the creator buys 1 SOL, 15 wallets buy 0.5 SOL, a wash wallet trades 10 times
+    // (2 SOL each, buy/sell), the creator sells 0.4 SOL, a whale sells 3 SOL, then the 93% entry.
+    const c = { creator: CREATOR };
+    pushTrade(FEAT_MINT, 5, { user: CREATOR, sol: 1, ...c });
+    for (let i = 1; i <= 15; i++) pushTrade(FEAT_MINT, 5 + i * 5, { user: fakeKey(8_000 + i, 2), sol: 0.5, ...c });
+    for (let i = 0; i < 10; i++) pushTrade(FEAT_MINT, 81 + i * 0.25, { user: WASH, isBuy: i % 2 === 0, sol: 2, ...c, delayMs: 20 });
+    pushTrade(FEAT_MINT, 85, { user: CREATOR, isBuy: false, sol: 0.4, ...c });
+    pushTrade(FEAT_MINT, 84, { user: WHALE, isBuy: false, sol: 3, ...c });
+    pushTrade(FEAT_MINT, 93, { user: FEAT_ENTRY_BUYER, sol: 0.3, ...c, delayMs: 120 }); // A–H + J open here
+    // NOCREATE_MINT: no create seen; the trade events carry the creator (fallback source "trade").
+    for (let i = 1; i <= 8; i++) pushTrade(NOCREATE_MINT, i * 10, { user: fakeKey(8_100 + i, 2), sol: 0.1, creator: TRADE_CREATOR });
+    pushTrade(NOCREATE_MINT, 93, { user: fakeKey(8_200, 2), sol: 0.1, creator: TRADE_CREATOR, delayMs: 120 });
+    pushTrade(FEAT_MINT, 96, { user: fakeKey(8_201, 2), sol: 0.2, ...c, delayMs: 120 }); // a later price
+    return out;
+  }
 
   if (scenario === "momentum") {
     for (let i = 1; i <= 6; i++) push(MOM_MINT, i * 10); // 6 buyers, 10..60% within half a second

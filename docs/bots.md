@@ -341,7 +341,7 @@ instead of inventing a result.
 
 | Tool | Command | What it does |
 |---|---|---|
-| A graduation shadow run | `node bots/graduation-sniper/shadow.mjs` | paper trading of graduation strategy variants; writes `gshadow_*` to the journal; since shadowRev 6 an event older than `SHADOW_ENTRY_MAX_LAG_SEC` (default 5 s) opens nothing (`entrySkipped`), and `gshadow_open` carries `lagSec` |
+| A graduation shadow run | `node bots/graduation-sniper/shadow.mjs` | paper trading of graduation strategy variants; writes `gshadow_*` to the journal; since shadowRev 6 an event older than `SHADOW_ENTRY_MAX_LAG_SEC` (default 5 s) opens nothing (`entrySkipped`), and `gshadow_open` carries `lagSec`; since shadowRev 7 (journal only, same decisions) `gshadow_open` carries `feat` (creator and its trades / launches in 24 h, copycat names in 30 min, wallet concentration, 60 s flow, `priceRel` vs the standard curve — lib/gshadow-features.mjs), migrated `gshadow_trade` rows carry `curveCompleteSec` / `migNoticedLagSec`, and a `gshadow_mem` row is written every 10 min (`SHADOW_FEATURES=0` turns the collection off) |
 | A rescue sell | `npm run rescue` | shows what can be sold from the leftovers, and (with `--live --mint`) sells; plan only by default |
 | A bulk sell | `node scripts/sell-all.mjs` | lists all tokens in the wallet and (with `--live`) sells them one by one |
 | Wallet/token analysis | `npm run analyze -- wallet <address>` | reconstructs the trade history from chain data |

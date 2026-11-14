@@ -206,7 +206,7 @@ const V = G.buildVariants({ minFill: 92, sl: 0.65, holdSec: 240, live, momentum:
   asrt(o.gainPp === 68 && o.params.momentumPp === 5 && o.label === "momentum", "L open row: the gain it entered on + its parameters");
   const oj = G.openRow({ variantId: "J", v: V.J, mint: "M", fill: 80, holders: 6, spot: 1e-7, buySol: BUY, tokens: 1n, gainPp: 68 });
   asrt(oj.gainPp === undefined, "only a momentum variant journals gainPp");
-  for (const r of [late, un, row, o, oj]) asrt(r.shadowRev === 6 && G.SHADOW_REV === 6 && r.costsScheme === SHADOW_COSTS_SCHEME && r.costsScheme.startsWith("v5-amm-fee"), "rows carry shadowRev 6 (rules; revision 6 = entry max lag) next to the UNCHANGED cost scheme v5-amm-fee");
+  for (const r of [late, un, row, o, oj]) asrt(r.shadowRev === 7 && G.SHADOW_REV === 7 && r.costsScheme === SHADOW_COSTS_SCHEME && r.costsScheme.startsWith("v5-amm-fee"), "rows carry shadowRev 7 (rules; revision 7 = journal-only features) next to the UNCHANGED cost scheme v5-amm-fee");
 }
 
 // ---- revision 6: entry freshness (pure) ----------------------------------------------------------
@@ -340,7 +340,7 @@ const [lagOn, lagOff, lag2] = await Promise.all([
   asrt(trades.every((t) => t.late === true && t.lateSec >= 3 && t.stallSec >= 5 && t.holdSec >= 6), `[stall on] each row says it is late and stalled, got ${JSON.stringify(trades[0])}`);
   asrt(new Set(trades.map((t) => `${t.variant}:${t.mint}`)).size === 9, "[stall on] each position is closed once");
   asrt(/STALL: the process did not run for \d+s/.test(out), "[stall on] the stall is printed");
-  asrt(opens.every((o) => o.shadowRev === 6) && trades.every((t) => t.shadowRev === 6), "[stall on] rows carry shadowRev 6");
+  asrt(opens.every((o) => o.shadowRev === 7) && trades.every((t) => t.shadowRev === 7), "[stall on] rows carry shadowRev 7");
 }
 
 // ---- P0: a migration check that keeps failing --------------------------------------------------------
@@ -426,7 +426,7 @@ const [lagOn, lagOff, lag2] = await Promise.all([
     asrt(skipped(lagOn) === 2, `[entry-lag on] both lagged entries are counted as entrySkipped (got ${JSON.stringify(stale)})`);
     asrt(stale.length === 2 && stale.every((x) => x.events === 0 && x.maxLagSec === 0 && x.entrySkipped === 1), `[entry-lag on] one periodic row + one written at the stop; events / maxLagSec keep their meaning (dropped > SHADOW_LATE_SEC) (got ${JSON.stringify(stale)})`);
     asrt(/entry max lag 5s/.test(out) && /entry\(ies\) skipped: event older than 5s/.test(out), "[entry-lag on] the gate is shown at startup and the skips are printed");
-    asrt(opens.every((o) => o.shadowRev === 6), "[entry-lag on] rows carry shadowRev 6");
+    asrt(opens.every((o) => o.shadowRev === 7), "[entry-lag on] rows carry shadowRev 7");
   }
   // 2 s old: inside the default 5 s — opens exactly as before, lagSec ~2.
   {

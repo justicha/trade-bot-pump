@@ -40,11 +40,23 @@
 // re-reads the curve before it buys; a 20 s old event can carry the price from before a crash.
 // Such skips are counted in the periodic gshadow_stale_events row (`entrySkipped`), and every
 // gshadow_open row carries the lag of the event that opened it (`lagSec`).
+//
+// Who is behind the token (revision 7, journal only — no entry or exit reads it): create events
+// (creator, name, symbol, on-chain time) and every state-updating trade event (wallet, side, size)
+// feed lib/gshadow-features.mjs, and every gshadow_open carries `feat` — the creator's own trades,
+// the creator's launches in 24 h, copycat names in 30 min, wallet concentration, the last 60 s of
+// flow, the price against the standard curve. Migrated trade rows carry curveCompleteSec (on-chain
+// time of the event that filled the curve) and migNoticedLagSec (when the lab switched the position
+// to the pool, minus that). Per-mint state is dropped after 30 min without an event unless a
+// position is open; the creator / name indexes are trimmed by age; a gshadow_mem row every 10 min.
+// SHADOW_FEATURES=0 switches the collection off (gshadow_open then carries feat: null).
 import { PublicKey } from "@solana/web3.js";
 import { LIVE } from "../../lib/config.mjs";
 import { PUMP_PROGRAM, TRADE_EVENT_PREFIX } from "../../lib/constants.mjs";
 import { gradFillPct } from "../../lib/curve.mjs";
+import { parseCreate, tradeCreator } from "../../lib/events.mjs";
 import { previewExit } from "../../lib/exec.mjs";
+import { buildFeatures, createFeatureStore, evictIdle, noteCreate, noteTrade, storeStats, trimIndexes } from "../../lib/gshadow-features.mjs";
 import { getBondingCurveState } from "../../lib/pumpfun.mjs";
 import { ammSellQuote } from "../../lib/pumpswap.mjs";
 import { connection, rpcCall } from "../../lib/rpc.mjs";
@@ -118,13 +130,31 @@ const openedKeys = new Set();
 // old to open a position although at least one variant would have tried (entrySkipped).
 const stale = { events: 0, maxLagMs: 0, entrySkipped: 0, flushedAt: 0 };
 
-// trade-v3 event: mint 8..40, is_buy 56, user 57..89, timestamp 89 (unix seconds = block time),
-// virtualSol 97, virtualToken 105, realSol 113.
+// Revision 7 features (journal only). A failure in this code must never touch a decision: every
+// call goes through featSafe, which logs the first error and otherwise yields null.
+const FEATURES = process.env.SHADOW_FEATURES !== "0";
+const feats = createFeatureStore();
+const startedAt = Date.now();
+let featErrors = 0;
+function featSafe(fn) {
+  if (!FEATURES) return null;
+  try {
+    return fn();
+  } catch (e) {
+    featErrors += 1;
+    if (featErrors === 1) log0(`features: ${e?.message || e} (journal-only; decisions are unaffected)`);
+    return null;
+  }
+}
+
+// trade-v3 event: mint 8..40, sol amount 40..48 (lamports), is_buy 56, user 57..89, timestamp 89
+// (unix seconds = block time), virtualSol 97, virtualToken 105, realSol 113.
 function parseEvent(data) {
   if (data.length < 129) return null;
   try {
     return {
       mint: new PublicKey(data.subarray(8, 40)).toBase58(),
+      solLamports: data.readBigUInt64LE(40),
       isBuy: data[56] === 1,
       user: new PublicKey(data.subarray(57, 89)).toBase58(),
       timestampSec: Number(data.readBigInt64LE(89)),
@@ -141,7 +171,8 @@ const priceOf = (s) => (Number(s.virtualSolReserves) / Number(s.virtualTokenRese
 const log0 = (m) => console.log(`[shadow] ${m}`);
 
 // `lagMs`: age of the stream event the entry decision was made on (journaled as lagSec).
-function enter(variantId, v, mint, s, gainPp = null, lagMs = null) {
+// `feat`: the revision-7 features of that moment, or a memoized getter of them (journal only).
+function enter(variantId, v, mint, s, gainPp = null, lagMs = null, feat = null) {
   const key = `${variantId}:${mint}`;
   if (openedKeys.has(key) || open.has(key) || s.entered.has(variantId)) return;
   const spot = priceOf(s);
@@ -154,7 +185,8 @@ function enter(variantId, v, mint, s, gainPp = null, lagMs = null) {
   const tokens = ammEntryTokens(s, BUY_SOL);
   const pos = { variant: variantId, mint, entryPrice: spot, at: Date.now(), spot, tokens, mode: "curve", amm: null };
   open.set(key, pos);
-  journal.write(openRow({ variantId, v, mint, fill: s.fill, holders: s.buyers.size, spot, buySol: BUY_SOL, tokens, gainPp, lagMs }));
+  const f = typeof feat === "function" ? feat() : feat;
+  journal.write(openRow({ variantId, v, mint, fill: s.fill, holders: s.buyers.size, spot, buySol: BUY_SOL, tokens, gainPp, lagMs, feat: f }));
 }
 
 // Would this variant try to open this mint on the current state? (Not opened yet, filter passes.)
@@ -168,21 +200,34 @@ function wouldTry(variantId, v, mint, s, gainPp) {
 
 // `gainPp`: growth of the mint's fill over the momentum window (null without history) — only a
 // momentum variant (L) reads it.
-function tryEnter(variantId, v, mint, s, gainPp = null, lagMs = null) {
+function tryEnter(variantId, v, mint, s, gainPp = null, lagMs = null, featAt = null) {
   if (!wouldTry(variantId, v, mint, s, gainPp)) return;
   if (!v.exitCheck) {
-    enter(variantId, v, mint, s, gainPp, lagMs);
+    enter(variantId, v, mint, s, gainPp, lagMs, featAt);
     return;
   }
+  // The features of the decision moment, taken now: the RPC answer comes after later events.
+  const feat = featAt ? featAt() : null;
   getBondingCurveState(new PublicKey(mint), 0, 3)
     .then((state) => {
       if (state && !state.complete) {
         const prev = previewExit(state, BUY_SOL);
         if (!prev.ok || prev.ratio < 0.9) return;
       }
-      enter(variantId, v, mint, s, null, lagMs);
+      enter(variantId, v, mint, s, null, lagMs, feat);
     })
     .catch(() => {});
+}
+
+// Revision 7, migrated rows only (venue amm / amm-unpriced): when the curve filled on chain
+// (curveCompleteSec, the on-chain time of the first stream event at fill >= 100%) and how long
+// after that the lab switched the position to the pool (migNoticedLagSec, one decimal; null when
+// either moment is unknown — e.g. a position closed unpriced before the switch).
+function migrationTiming(pos, venue) {
+  if (venue !== "amm" && venue !== "amm-unpriced") return {};
+  const cc = mintState.get(pos.mint)?.curveCompleteSec ?? null;
+  const lag = cc !== null && pos.ammAt ? Math.round((pos.ammAt / 1000 - cc) * 10) / 10 : null;
+  return { curveCompleteSec: cc, migNoticedLagSec: lag };
 }
 
 // One place that journals a closed position.
@@ -193,7 +238,7 @@ function tryEnter(variantId, v, mint, s, gainPp = null, lagMs = null) {
 function closePos(key, pos, reason, { venue = "curve", price = null, extra } = {}) {
   const now = Date.now();
   const amm = venue === "amm" ? { solOut: pos.amm.solOut, feeBps: pos.amm.feeBps, feeSource: pos.amm.feeSource, ageMs: now - pos.amm.at } : null;
-  const flags = { ...(pos.stallMs ? { stallSec: Math.round(pos.stallMs / 1000) } : {}), ...extra };
+  const flags = { ...(pos.stallMs ? { stallSec: Math.round(pos.stallMs / 1000) } : {}), ...migrationTiming(pos, venue), ...extra };
   journal.write(tradeRow({ pos, v: VARIANTS[pos.variant], reason, venue, price, amm, buySol: BUY_SOL, now, extra: flags }));
   open.delete(key);
 }
@@ -321,7 +366,15 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
   for (const l of value.logs) {
     if (!l.startsWith("Program data: ")) continue;
     const data = Buffer.from(l.slice(14), "base64");
-    if (data.length < 129 || !data.subarray(0, 8).equals(TRADE_EVENT_PREFIX)) continue;
+    if (data.length < 129 || !data.subarray(0, 8).equals(TRADE_EVENT_PREFIX)) {
+      // Revision 7: a create event feeds the features only (creator, name, symbol, launch time).
+      // Not stale-filtered: its windows run on its own on-chain time.
+      featSafe(() => {
+        const c = parseCreate(data);
+        if (c) noteCreate(feats, c, Date.now());
+      });
+      continue;
+    }
     const ev = parseEvent(data);
     if (!ev) continue;
     // An event older than SHADOW_LATE_SEC is not the present: it is the backlog the socket hands
@@ -349,6 +402,24 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
     s.price = priceOf(s);
     s.lastEventAt = Date.now();
     if (s.fill < 100) s.curveAlive = false; // only a fresh check can vouch for a 100% curve
+    // Revision 7 (journal only): the on-chain moment the curve filled, and this trade's wallet /
+    // side / size for the features. `featAt` computes the open's `feat` at most once per event, so
+    // every variant opening on this event journals the same object.
+    if (s.fill >= 100 && s.curveCompleteSec == null) s.curveCompleteSec = ev.timestampSec;
+    featSafe(() => noteTrade(feats, ev, { nowMs: s.lastEventAt, fill: s.fill, creatorOf: () => tradeCreator(data) }));
+    let featNow;
+    const featAt = () => {
+      if (featNow === undefined) {
+        featNow = featSafe(() =>
+          buildFeatures(feats, ev.mint, {
+            nowSec: ev.timestampSec,
+            curve: { virtualSolReserves: ev.virtualSolReserves, virtualTokenReserves: ev.virtualTokenReserves, realSolReserves: ev.realSolReserves },
+            watchSec: (Date.now() - startedAt) / 1000,
+          }),
+        );
+      }
+      return featNow;
+    };
     // Momentum (variant L): how much the fill grew over the window, measured BEFORE this event is
     // added to the history. Tracked for every mint — the reference point is usually below the
     // candidate threshold.
@@ -365,7 +436,7 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
       if (entryLate) {
         if (ACTIVE_VARIANTS.some((id) => wouldTry(id, VARIANTS[id], ev.mint, s, gainPp))) stale.entrySkipped += 1;
       } else {
-        for (const id of ACTIVE_VARIANTS) tryEnter(id, VARIANTS[id], ev.mint, s, gainPp, lagMs);
+        for (const id of ACTIVE_VARIANTS) tryEnter(id, VARIANTS[id], ev.mint, s, gainPp, lagMs, featAt);
       }
     }
   }
@@ -427,6 +498,35 @@ function flushStale(now, { force = false } = {}) {
   return parts.join("; ");
 }
 
+// Revision 7 features: bounded memory. Once a minute: per-mint state idle for 30 min without an
+// open position is dropped, the creator (24 h) / name (30 min) indexes are trimmed. Every 10 min
+// (and at the stop) a gshadow_mem row: store sizes and process memory, so a 10-hour phone run can
+// be checked for growth.
+const FEAT_SWEEP_MS = 60_000;
+const MEM_ROW_MS = Number(process.env.SHADOW_MEM_ROW_SEC || 600) * 1000;
+let featSweptAt = Date.now();
+let memRowAt = Date.now();
+function memRow(now) {
+  const m = process.memoryUsage();
+  const row = { type: "gshadow_mem", upSec: Math.round((now - startedAt) / 1000), mintState: mintState.size, open: open.size, features: FEATURES, ...storeStats(feats), featErrors, rssMB: Math.round(m.rss / 1048576), heapMB: Math.round(m.heapUsed / 1048576) };
+  journal.write(row);
+  return row;
+}
+function featHousekeeping(now) {
+  if (FEATURES && now - featSweptAt >= FEAT_SWEEP_MS) {
+    featSweptAt = now;
+    featSafe(() => {
+      evictIdle(feats, now, new Set([...open.values()].map((p) => p.mint)));
+      trimIndexes(feats, Math.floor(now / 1000));
+    });
+  }
+  if (MEM_ROW_MS > 0 && now - memRowAt >= MEM_ROW_MS) {
+    memRowAt = now;
+    const r = memRow(now);
+    log0(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | mintState ${r.mintState} | features: ${r.mints} mints, ${r.wallets} wallets, ${r.creators} creators, ${r.names} names`);
+  }
+}
+
 const timer = setInterval(() => {
   const now = Date.now();
   // Journal first, console last: the console is the thing that can block.
@@ -442,7 +542,10 @@ const timer = setInterval(() => {
     if (pos.mode !== "amm" && s) {
       // 100% in the stream, or silence: ask the chain whether the curve is finished.
       if (s.fill >= 100 || now - (s.lastEventAt || pos.at) >= STALE_MS) checkMigration(pos.mint, s, now);
-      if (s.migrated) pos.mode = "amm";
+      if (s.migrated) {
+        pos.mode = "amm";
+        pos.ammAt = now; // revision 7: migNoticedLagSec (journal only)
+      }
     }
     if (pos.mode === "amm") {
       tickAmm(key, pos, v, now);
@@ -480,6 +583,7 @@ const timer = setInterval(() => {
     }
     if (pruned > 0 || mintState.size > MAX_MINTS) capLog(pruned);
   }
+  featHousekeeping(now);
   for (const n of notes) log0(n);
 }, 1000);
 
@@ -540,6 +644,7 @@ async function finishShadow(reason) {
   await finalAmmQuotes().catch(() => {});
   const { closed, unconfirmed } = closeAllAtStop(stopReason);
   const staleNote = flushStale(Date.now(), { force: true });
+  memRow(Date.now());
   log0(`=== SHADOW STOP (${reason}) ===`);
   if (staleNote) log0(staleNote);
   log0(`open at stop: ${closed} position(s) closed as "${stopReason}"${unconfirmed ? `, ${unconfirmed} unconfirmed (no price)` : ""}`);

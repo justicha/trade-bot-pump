@@ -135,6 +135,13 @@ Reading old exports: rows without `shadowRev` are pre-rev-5 and can contain free
 positions that lived through a stall; rows without a result (`netSol null`) stay outside the averages.
 `costsScheme` is still `v4-amm-exit`.
 
+shadowRev 7 changed no decision (rev 6 and rev 7 rows of the same costsScheme are comparable); it only
+adds `feat` to `gshadow_open` (lib/gshadow-features.mjs). Read it with care: a null means "not seen"
+(e.g. `ageSec` / `name` null = the create happened before the lab was watching; `firstSeenFill` says
+how much of the mint's life the lab saw), and `creatorLaunches24h` / `sameNameRecent` are lower
+bounds until `watchSec` exceeds 24 h / 30 min. The trade-event creator fallback (`creatorSource:
+"trade"`) is decoded from the IDL layout; check it against `creatorSource: "create"` rows first.
+
 ## How to run a real study
 
 ```powershell
