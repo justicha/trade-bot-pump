@@ -34,6 +34,13 @@
 //   "features" — revision 7 (scripts/gshadow-rev7.test.mjs): create events (a serial creator, a
 //                copycat name), FEAT_MINT traded by its creator, a wash wallet and a whale before
 //                the 93% entry, and NOCREATE_MINT whose creator is only in its trade events.
+//   "launcher" — revision 8 (scripts/gshadow-rev8.test.mjs): who LAUNCHED the token (create `user`).
+//                SOLO_MINT    a one-off launcher (user = creator), 8 buyers then 93% (9 holders);
+//                SERIAL2_MINT the 3rd launch of one launcher within 24 h (the others 1 h and 2 h ago);
+//                MODE_MINT    created by a launcher for another creator (user != creator);
+//                UNSEEN_MINT  no create in the stream (launcher unknown);
+//                OLDL_MINT    its launcher's two other launches are 25 h and 26 h old (not counted).
+//                Every mint but SOLO_MINT enters at 93% with ONE holder.
 //
 // Event timestamps (offset 89, unix seconds) are the wall clock at the moment the notification is
 // built: the lab compares them with its own clock and drops stale events.
@@ -127,7 +134,8 @@ export function tradePayload({ mint, user, realSol, isBuy = true, ts = nowSec(),
 
 // create-v2 payload, serialised like the program does (lib/events.mjs parseCreate): three anchor
 // strings (u32 length + utf8), mint, bonding_curve, user, creator, timestamp (s), four u64 reserves.
-export function createPayload({ mint, creator, name, symbol, ts = nowSec() }) {
+// `user` (the signer / deployer) defaults to `creator`, which keeps the older scenarios byte-identical.
+export function createPayload({ mint, creator, name, symbol, ts = nowSec(), user = creator }) {
   const str = (s) => {
     const b = Buffer.from(s, "utf8");
     const len = Buffer.alloc(4);
@@ -146,7 +154,7 @@ export function createPayload({ mint, creator, name, symbol, ts = nowSec() }) {
     str("https://example.invalid/meta.json"),
     decodeB58(mint),
     decodeB58(fakeKey(1, 99)), // bonding curve (not read)
-    decodeB58(creator), // user
+    decodeB58(user), // user (signer = deployer)
     decodeB58(creator),
     u64(Math.round(ts)),
     u64(1_073_000_000_000_000n),
@@ -178,12 +186,23 @@ export const TRADE_CREATOR = fakeKey(8_890, 1);
 export const WASH = fakeKey(8_891, 1);
 export const WHALE = fakeKey(8_892, 1);
 export const FEAT_ENTRY_BUYER = fakeKey(8_893, 1);
+// "launcher" (revision 8).
+export const SOLO_MINT = fakeKey(1414, 7);
+export const SERIAL2_MINT = fakeKey(1515, 7);
+export const MODE_MINT = fakeKey(1616, 7);
+export const UNSEEN_MINT = fakeKey(1717, 7);
+export const OLDL_MINT = fakeKey(1818, 7);
+export const L_SOLO = fakeKey(9_100, 1);
+export const L_SERIAL = fakeKey(9_101, 1);
+export const L_MODE = fakeKey(9_102, 1);
+export const L_MODE_CREATOR = fakeKey(9_103, 1); // the fee address a launcher service sets as creator
+export const L_OLD = fakeKey(9_104, 1);
 
 export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || "single" } = {}) {
   const out = [];
   let seq = 0;
   // A notification with one create-v2 event (revision 7 features). `ageSec`: its on-chain time.
-  const pushCreate = (mint, creator, name, symbol, { delayMs = 60, ageSec = 0 } = {}) => {
+  const pushCreate = (mint, creator, name, symbol, { delayMs = 60, ageSec = 0, user = creator } = {}) => {
     seq += 1;
     const n = seq;
     out.push({
@@ -191,7 +210,7 @@ export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || 
       payload: () => OK(`sig-shadow-${n}`, [
         `Program ${PUMP} invoke [1]`,
         "Program log: Instruction: Create",
-        DATA(createPayload({ mint, creator, name, symbol, ts: nowSec() - ageSec })),
+        DATA(createPayload({ mint, creator, name, symbol, ts: nowSec() - ageSec, user })),
         `Program ${PUMP} success`,
       ]),
     });
@@ -250,6 +269,24 @@ export function buildNotifications({ scenario = process.env.WS_MOCK_SCENARIO || 
     for (let i = 1; i <= 8; i++) pushTrade(NOCREATE_MINT, i * 10, { user: fakeKey(8_100 + i, 2), sol: 0.1, creator: TRADE_CREATOR });
     pushTrade(NOCREATE_MINT, 93, { user: fakeKey(8_200, 2), sol: 0.1, creator: TRADE_CREATOR, delayMs: 120 });
     pushTrade(FEAT_MINT, 96, { user: fakeKey(8_201, 2), sol: 0.2, ...c, delayMs: 120 }); // a later price
+    return out;
+  }
+
+  if (scenario === "launcher") {
+    pushCreate(SOLO_MINT, L_SOLO, "Solo", "SOLO", { ageSec: 120 });
+    pushCreate(fakeKey(1919, 7), L_SERIAL, "S1", "S1", { ageSec: 7200 });
+    pushCreate(fakeKey(2020, 7), L_SERIAL, "S2", "S2", { ageSec: 3600 });
+    pushCreate(SERIAL2_MINT, L_SERIAL, "S3", "S3", { ageSec: 60 });
+    pushCreate(MODE_MINT, L_MODE_CREATOR, "Mode", "MODE", { ageSec: 60, user: L_MODE });
+    pushCreate(fakeKey(2121, 7), L_OLD, "O1", "O1", { ageSec: 93_600 }); // 26 h ago
+    pushCreate(fakeKey(2222, 7), L_OLD, "O2", "O2", { ageSec: 90_000 }); // 25 h ago
+    pushCreate(OLDL_MINT, L_OLD, "O3", "O3", { ageSec: 30 });
+    for (let i = 1; i <= 8; i++) pushTrade(SOLO_MINT, i * 10, { user: fakeKey(9_200 + i, 2), sol: 0.1 });
+    pushTrade(SOLO_MINT, 93, { user: fakeKey(9_300, 2), sol: 0.1, delayMs: 120 });
+    pushTrade(SERIAL2_MINT, 93, { user: fakeKey(9_301, 2), sol: 0.1, delayMs: 120 });
+    pushTrade(MODE_MINT, 93, { user: fakeKey(9_302, 2), sol: 0.1, delayMs: 120 });
+    pushTrade(UNSEEN_MINT, 93, { user: fakeKey(9_303, 2), sol: 0.1, delayMs: 120 });
+    pushTrade(OLDL_MINT, 93, { user: fakeKey(9_304, 2), sol: 0.1, delayMs: 120 });
     return out;
   }
 

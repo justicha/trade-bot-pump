@@ -106,7 +106,9 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `SHADOW_ENTRY_MAX_LAG_SEC` | `5` | A stream event older than this still updates fill / price (exits) but opens no position and is not a momentum sample for L; counted as `entrySkipped` in `gshadow_stale_events`; `0` = off |
 | `SHADOW_MOMENTUM_PP` | `5` | Variant L: minimum fill growth, percentage points |
 | `SHADOW_MOMENTUM_SEC` | `60` | Variant L: window, seconds |
-| `SHADOW_VARIANTS` | all | Which variants trade, letters, e.g. `ABCDEFGHJ` |
+| `SHADOW_VARIANTS` | `AFJKLMNOPQR` | Which variants trade, letters, e.g. `ABCDEFGHJ`. Since shadowRev 8 B C D E G H are off unless named here |
+| `SHADOW_HOURS_UTC` | `19-23` | Variants O / P: UTC hour window of the entry event's on-chain time, `S <= hour < E`; `S > E` wraps (`22-02`). Invalid = the lab does not start |
+| `SHADOW_SERIAL_LAUNCHES` | `3` | Variants P / Q: a launcher (create-event signer) with this many creates in 24 h (incl. this one) is serial and skipped; integer >= 2, invalid = the lab does not start |
 | `REPLAY_MIN_TRADES` / `REPLAY_TEST_FRACTION` / `REPLAY_RESAMPLES` | `300` / `0.7` / `2000` | Replay strictness |
 | `SLIPPAGE_ASSUMED_BPS` | `50` | Extra slippage assumed by the cost model (`lib/fees.mjs`, `lib/pessimistic.mjs`) |
 

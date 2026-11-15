@@ -102,7 +102,9 @@ const AJ = "ABCDEFGHIJ"; // the variants that existed before revision 5 (K–N: 
   asrt(JSON.stringify(G.variantParams(V.J)) === JSON.stringify({ minFill: 75, maxFill: 90, minHolders: 5, tp: 1.5, sl: 0.7, holdSec: 300 }), `J = the live config, got ${JSON.stringify(G.variantParams(V.J))}`);
   asrt(V.J.label === "live config" && V.J.exitCheck === false && V.J.journalParams === true, "J: label, no extra RPC gate, rows carry params");
   // Revision 5 added K–N. The set these assertions were written for is A–J; SHADOW_VARIANTS pins it.
-  asrt(G.activeVariantIds(V).join("") === "ABCDEFGHJKLMN", `active variants: A–H, J and K–N (I has no price source), got ${G.activeVariantIds(V).join("")}`);
+  // Revision 8: B C D E G H I left the default set; SHADOW_VARIANTS still selects them.
+  asrt(G.activeVariantIds(V).join("") === "AFJKLMNOPQR", `default active variants (revision 8): A F J K L M N O P Q R, got ${G.activeVariantIds(V).join("")}`);
+  asrt(G.activeVariantIds(V, "ABCDEFGHIJKLMN").join("") === "ABCDEFGHJKLMN", "SHADOW_VARIANTS re-enables the off-by-default ones (I has no price source)");
   asrt(G.activeVariantIds(V, AJ).join("") === "ABCDEFGHJ", `SHADOW_VARIANTS=A–J: A–H and J (I has no price source), got ${G.activeVariantIds(V, AJ).join("")}`);
   asrt(G.candidateThreshold(V) === 75, "candidate threshold = the lowest minFill among active variants (75)");
   const Vd = G.buildVariants({ minFill: 92, sl: 0.7, holdSec: 300, live: readGradStrategy({}) });
@@ -129,7 +131,7 @@ const AJ = "ABCDEFGHIJ"; // the variants that existed before revision 5 (K–N: 
   asrt(/const GRAD_STRATEGY = readGradStrategy\(\);/.test(src) && /const MIN_FILL_PCT = GRAD_STRATEGY\.minFillPct;/.test(src) && /const TIMEOUT_SEC = GRAD_STRATEGY\.timeoutSec;/.test(src), "graduation.mjs reads its band and exits through readGradStrategy");
   asrt(!/numOr\(process\.env\.MIN_FILL \|\| process\.env\.GRAD_MIN_FILL_PCT/.test(src), "graduation.mjs keeps no second copy of the env chain");
   const sh = fs.readFileSync(path.join(root, "bots", "graduation-sniper", "shadow.mjs"), "utf8");
-  asrt(/buildVariants\(\{ minFill: MIN_FILL, sl: SL, holdSec: HOLD_SEC, live: readGradStrategy\(\), momentum: MOMENTUM \}\)/.test(sh), "shadow.mjs builds J from the same reader");
+  asrt(/buildVariants\(\{ minFill: MIN_FILL, sl: SL, holdSec: HOLD_SEC, live: readGradStrategy\(\), momentum: MOMENTUM[, ]/.test(sh), "shadow.mjs builds J from the same reader");
 }
 
 // exit rule order: tp, sl, timeout

@@ -48,7 +48,9 @@ const M = await import("./mocks/ws-mock-shadow.mjs");
 // =============================================================================================
 const RPC_CURVE = path.join(here, "mocks", "rpc-mock.mjs");
 const RPC_AMM = path.join(here, "mocks", "rpc-mock-amm.mjs");
-const COMMON = { CU_PRICE: "1500000", CU_LIMIT: "300000", SLIPPAGE_ASSUMED_BPS: "50", SHADOW_BUY_SOL: "0.02", MIN_FILL: "92" };
+// SHADOW_VARIANTS: the full set of revisions 5–7 (revision 8 took B C D E G H off the default set);
+// the migrate scenario overrides it with "JN" as before.
+const COMMON = { CU_PRICE: "1500000", CU_LIMIT: "300000", SLIPPAGE_ASSUMED_BPS: "50", SHADOW_BUY_SOL: "0.02", MIN_FILL: "92", SHADOW_VARIANTS: "ABCDEFGHJKLMN" };
 const LIVE_BAND = { GRAD_MIN_FILL_PCT: "75", GRAD_MAX_FILL_PCT: "90", GRAD_MIN_HOLDERS: "5", GRAD_TAKE_PROFIT: "1.5", GRAD_STOP_LOSS: "0.7", GRAD_TIMEOUT_SEC: "300" };
 const SCENARIOS = {
   // A–N, the 93% entry and a later 96% price; everything closes at the stop.
@@ -265,7 +267,7 @@ for (const n of Object.keys(SCENARIOS)) {
   }
   asrt(golden[n].opens.length > 0, `[${n}] the golden run opened something`);
   const r = runs[n];
-  asrt(r.opens.every((o) => o.shadowRev === 7) && r.trades.every((t) => t.shadowRev === 7), `[${n}] rows carry shadowRev 7`);
+  asrt(r.opens.every((o) => o.shadowRev === 8) && r.trades.every((t) => t.shadowRev === 8), `[${n}] rows carry shadowRev 8 (revision 8 kept these decisions)`);
   asrt(r.opens.every((o) => o.feat && typeof o.feat === "object" && "creator" in o.feat && "priceRel" in o.feat), `[${n}] every gshadow_open carries feat`);
   // One moment (mint + fill of the event) -> one feat object for every variant that opened on it.
   const groups = new Map();
@@ -281,7 +283,7 @@ for (const n of Object.keys(SCENARIOS)) {
 {
   const fo = decisions(featOff);
   asrt(same(fo.opens, golden.features.opens) && same(fo.trades, golden.features.trades), "[features off] SHADOW_FEATURES=0: the same decisions");
-  asrt(featOff.opens.every((o) => o.feat === null && o.shadowRev === 7), "[features off] feat: null");
+  asrt(featOff.opens.every((o) => o.feat === null && o.shadowRev === 8), "[features off] feat: null");
 }
 {
   // The features scenario, checked field by field.

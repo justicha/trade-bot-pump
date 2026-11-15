@@ -132,8 +132,11 @@ const V = G.buildVariants({ minFill: 92, sl: 0.65, holdSec: 240, live, momentum:
     I: { label: "enter after migration", postMigration: true, tp: 1.5, ...lab },
     J: { label: "live config", minHolders: 5, maxFill: 90, exitCheck: false, tp: 1.5, minFill: 80, sl: 0.7, holdSec: 300, journalParams: true },
   };
-  for (const [id, want] of Object.entries(frozen)) asrt(same(V[id], want), `variant ${id} is exactly what it was before revision 5, got ${JSON.stringify(V[id])}`);
-  asrt(Object.keys(V).join("") === "ABCDEFGHIJKLMN", `the table: A–J then K, L, M, N (got ${Object.keys(V).join("")})`);
+  // Revision 8 only marks B C D E G H I `offByDefault` (out of the default set); nothing else moved.
+  const noOff = (v) => Object.fromEntries(Object.entries(v).filter(([k]) => k !== "offByDefault"));
+  for (const [id, want] of Object.entries(frozen)) asrt(same(noOff(V[id]), want), `variant ${id} is exactly what it was before revision 5, got ${JSON.stringify(V[id])}`);
+  asrt(Object.keys(V).filter((id) => V[id].offByDefault).join("") === "BCDEGHI", "revision 8: B C D E G H I are off by default");
+  asrt(Object.keys(V).join("") === "ABCDEFGHIJKLMNOPQR", `the table: A–J then K, L, M, N, then revision 8's O, P, Q, R (got ${Object.keys(V).join("")})`);
   asrt(same(G.variantParams(V.J), { minFill: 80, maxFill: 90, minHolders: 5, tp: 1.5, sl: 0.7, holdSec: 300 }), "J rows carry the same six parameters as before (no new keys)");
 
   asrt(same(V.K, { label: "late entry 88-95, holders>=20", minHolders: 20, minFill: 88, maxFill: 95, exitCheck: false, tp: 1.5, sl: 0.7, holdSec: 300, journalParams: true }), `K: fill 88–95, holders >= 20, TP 1.5, SL 0.7, hold 300 (got ${JSON.stringify(V.K)})`);
@@ -157,7 +160,8 @@ const V = G.buildVariants({ minFill: 92, sl: 0.65, holdSec: 240, live, momentum:
   asrt(G.activeVariantIds(V, "I").length === 0 && G.activeVariantIds(V, " j, n ").join("") === "JN", "SHADOW_VARIANTS: letters only, case-insensitive; I never trades");
 
   // Entry filters.
-  const acc = (c) => G.activeVariantIds(V).filter((id) => G.variantAccepts(V[id], c)).join("");
+  // The set these assertions were written for (revision 5's default; revision 8: scripts/gshadow-rev8.test.mjs).
+  const acc = (c) => G.activeVariantIds(V, "ABCDEFGHJKLMN").filter((id) => G.variantAccepts(V[id], c)).join("");
   asrt(acc({ fill: 90, holders: 25, gainPp: 12 }) === "JKLMN", `fill 90 / 25 holders / +12 pp: J, K, L, M, N (got "${acc({ fill: 90, holders: 25, gainPp: 12 })}")`);
   asrt(acc({ fill: 90, holders: 19, gainPp: 12 }) === "JLMN", "K needs 20 holders");
   asrt(acc({ fill: 87.9, holders: 25, gainPp: 0 }) === "JMN" && acc({ fill: 88, holders: 25, gainPp: 0 }) === "JKMN", "K band starts at 88; L needs momentum");
@@ -206,7 +210,7 @@ const V = G.buildVariants({ minFill: 92, sl: 0.65, holdSec: 240, live, momentum:
   asrt(o.gainPp === 68 && o.params.momentumPp === 5 && o.label === "momentum", "L open row: the gain it entered on + its parameters");
   const oj = G.openRow({ variantId: "J", v: V.J, mint: "M", fill: 80, holders: 6, spot: 1e-7, buySol: BUY, tokens: 1n, gainPp: 68 });
   asrt(oj.gainPp === undefined, "only a momentum variant journals gainPp");
-  for (const r of [late, un, row, o, oj]) asrt(r.shadowRev === 7 && G.SHADOW_REV === 7 && r.costsScheme === SHADOW_COSTS_SCHEME && r.costsScheme.startsWith("v5-amm-fee"), "rows carry shadowRev 7 (rules; revision 7 = journal-only features) next to the UNCHANGED cost scheme v5-amm-fee");
+  for (const r of [late, un, row, o, oj]) asrt(r.shadowRev === 8 && G.SHADOW_REV === 8 && r.costsScheme === SHADOW_COSTS_SCHEME && r.costsScheme.startsWith("v5-amm-fee"), "rows carry shadowRev 8 (rules; revision 8 = O/P/Q/R) next to the UNCHANGED cost scheme v5-amm-fee");
 }
 
 // ---- revision 6: entry freshness (pure) ----------------------------------------------------------
@@ -308,8 +312,8 @@ const [stallOn, stallOff, errOn, errOff, staleOn, staleOff, momentum, migExit] =
   runShadow("stale-on", { ...STALE }), // default SHADOW_LATE_SEC (30 s)
   // Both guards off: the old behaviour (revision 6's entry gate would also stop a 600 s old event).
   runShadow("stale-off", { ...STALE, SHADOW_LATE_SEC: "0", SHADOW_ENTRY_MAX_LAG_SEC: "0" }),
-  // All variants (SHADOW_VARIANTS unset), live band 75–90, a 2 s momentum window.
-  runShadow("momentum", { RPC_MOCK: RPC_CURVE, ...LIVE_BAND, WS_MOCK_SCENARIO: "momentum", SHADOW_MOMENTUM_SEC: "2", SHADOW_MOMENTUM_PP: "5", SHADOW_SL: "0", SHADOW_HOLD_SEC: "3600", SHADOW_MAX_SEC: "9" }),
+  // Revision 5's full set (the default until revision 8), live band 75–90, a 2 s momentum window.
+  runShadow("momentum", { RPC_MOCK: RPC_CURVE, ...LIVE_BAND, SHADOW_VARIANTS: "ABCDEFGHJKLMN", WS_MOCK_SCENARIO: "momentum", SHADOW_MOMENTUM_SEC: "2", SHADOW_MOMENTUM_PP: "5", SHADOW_SL: "0", SHADOW_HOLD_SEC: "3600", SHADOW_MAX_SEC: "9" }),
   // J and N on a mint that migrates with a pool: default live config (fill 92–97, SL 0.7, pool ~0.80).
   runShadow("migration-exit", { RPC_MOCK: RPC_AMM, RPC_AMM_MINTS: FIRST_MINT, RPC_AMM_POOL: "1", MIN_FILL: "92", SHADOW_VARIANTS: "JN", WS_MOCK_SCENARIO: "migrate", SHADOW_SL: "0", SHADOW_HOLD_SEC: "4", GRAD_TIMEOUT_SEC: "4", SHADOW_AMM_POLL_MS: "500", SHADOW_MAX_SEC: "12" }),
 ]);
@@ -340,7 +344,7 @@ const [lagOn, lagOff, lag2] = await Promise.all([
   asrt(trades.every((t) => t.late === true && t.lateSec >= 3 && t.stallSec >= 5 && t.holdSec >= 6), `[stall on] each row says it is late and stalled, got ${JSON.stringify(trades[0])}`);
   asrt(new Set(trades.map((t) => `${t.variant}:${t.mint}`)).size === 9, "[stall on] each position is closed once");
   asrt(/STALL: the process did not run for \d+s/.test(out), "[stall on] the stall is printed");
-  asrt(opens.every((o) => o.shadowRev === 7) && trades.every((t) => t.shadowRev === 7), "[stall on] rows carry shadowRev 7");
+  asrt(opens.every((o) => o.shadowRev === 8) && trades.every((t) => t.shadowRev === 8), "[stall on] rows carry shadowRev 8");
 }
 
 // ---- P0: a migration check that keeps failing --------------------------------------------------------
@@ -426,7 +430,7 @@ const [lagOn, lagOff, lag2] = await Promise.all([
     asrt(skipped(lagOn) === 2, `[entry-lag on] both lagged entries are counted as entrySkipped (got ${JSON.stringify(stale)})`);
     asrt(stale.length === 2 && stale.every((x) => x.events === 0 && x.maxLagSec === 0 && x.entrySkipped === 1), `[entry-lag on] one periodic row + one written at the stop; events / maxLagSec keep their meaning (dropped > SHADOW_LATE_SEC) (got ${JSON.stringify(stale)})`);
     asrt(/entry max lag 5s/.test(out) && /entry\(ies\) skipped: event older than 5s/.test(out), "[entry-lag on] the gate is shown at startup and the skips are printed");
-    asrt(opens.every((o) => o.shadowRev === 7), "[entry-lag on] rows carry shadowRev 7");
+    asrt(opens.every((o) => o.shadowRev === 8), "[entry-lag on] rows carry shadowRev 8");
   }
   // 2 s old: inside the default 5 s — opens exactly as before, lagSec ~2.
   {

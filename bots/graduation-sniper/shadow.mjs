@@ -23,7 +23,7 @@
 //
 // Variant J is the live graduation config (lib/grad-config.mjs). Variant I (enter after migration)
 // still reports "no data": the stream carries no AMM entry price. K / L / M / N are described in
-// lib/gshadow.mjs buildVariants; SHADOW_VARIANTS (e.g. "ABCDEFGHJ") narrows the set that trades.
+// lib/gshadow.mjs buildVariants; SHADOW_VARIANTS (e.g. "ABCDEFGHJ") picks the set that trades.
 //
 // The lab also watches its own clock (SHADOW_LATE_SEC, default 30; 0 = off). On Windows a paused
 // console (a click that starts a text selection, a scroll, Pause) blocks console.log and with it
@@ -50,13 +50,38 @@
 // to the pool, minus that). Per-mint state is dropped after 30 min without an event unless a
 // position is open; the creator / name indexes are trimmed by age; a gshadow_mem row every 10 min.
 // SHADOW_FEATURES=0 switches the collection off (gshadow_open then carries feat: null).
+//
+// "US hours" and the launcher (revision 8): the default set is A F J K L M N O P Q R (B C D E G H
+// stay defined; SHADOW_VARIANTS re-enables them). O–R are N without the holder minimum; O and P
+// open only when the entry event's on-chain time is inside SHADOW_HOURS_UTC (default "19-23",
+// 19:00:00 <= t < 23:00:00 UTC; "22-02" wraps over midnight); P and Q skip a token whose launcher
+// (the create event's signer `user`) made >= SHADOW_SERIAL_LAUNCHES (default 3) tokens in 24 h, or
+// launched it for another creator (user != creator), or whose create the lab did not see. The
+// launcher index is a decision input: it is kept with SHADOW_FEATURES=0 too. Invalid
+// SHADOW_HOURS_UTC / SHADOW_SERIAL_LAUNCHES stop the lab at the start. Skips by these gates are
+// counted per (variant, mint) in gshadow_mem (outsideHours, launcherUnknown, launcherMode,
+// serialLauncher); `feat` gains deployer, deployerIsCreator, deployerLaunches24h, inUsHours, hourUtc.
 import { PublicKey } from "@solana/web3.js";
 import { LIVE } from "../../lib/config.mjs";
 import { PUMP_PROGRAM, TRADE_EVENT_PREFIX } from "../../lib/constants.mjs";
 import { gradFillPct } from "../../lib/curve.mjs";
 import { parseCreate, tradeCreator } from "../../lib/events.mjs";
 import { previewExit } from "../../lib/exec.mjs";
-import { buildFeatures, createFeatureStore, evictIdle, noteCreate, noteTrade, storeStats, trimIndexes } from "../../lib/gshadow-features.mjs";
+import {
+  buildFeatures,
+  createFeatureStore,
+  createLauncherIndex,
+  deployerFeatures,
+  evictIdle,
+  launcherInfo,
+  launcherStats,
+  noteCreate,
+  noteLaunch,
+  noteTrade,
+  storeStats,
+  trimIndexes,
+  trimLaunchers,
+} from "../../lib/gshadow-features.mjs";
 import { getBondingCurveState } from "../../lib/pumpfun.mjs";
 import { ammSellQuote } from "../../lib/pumpswap.mjs";
 import { connection, rpcCall } from "../../lib/rpc.mjs";
@@ -72,12 +97,17 @@ import {
   entryTooLate,
   eventLagMs,
   fillGainPp,
+  hourUtc,
+  inHoursUtc,
   isLate,
+  knownVariantIds,
   openRow,
+  parseHoursUtc,
+  parseSerialLaunches,
   pushFillSample,
   stallGapMs,
   tradeRow,
-  variantAccepts,
+  variantGate,
 } from "../../lib/gshadow.mjs";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { SolanaWs } from "../../lib/ws.mjs";
@@ -109,11 +139,23 @@ const ENTRY_MAX_LAG_MS = entryMaxLagMs(process.env.SHADOW_ENTRY_MAX_LAG_SEC);
 const MOMENTUM = { pp: Number(process.env.SHADOW_MOMENTUM_PP || 5), sec: Number(process.env.SHADOW_MOMENTUM_SEC || 60) };
 const journal = new TradeJournal({ bot: "graduation-shadow" });
 
+// Revision 8: the hour window of O / P and the serial-launcher threshold of P / Q. A bad value is a
+// loud stop, never a silent default.
+let HOURS_UTC;
+let SERIAL_LAUNCHES;
+try {
+  HOURS_UTC = parseHoursUtc(process.env.SHADOW_HOURS_UTC);
+  SERIAL_LAUNCHES = parseSerialLaunches(process.env.SHADOW_SERIAL_LAUNCHES);
+} catch (e) {
+  console.error(`[shadow] ${e.message}`);
+  process.exit(1);
+}
+
 // A–I keep the lab-wide MIN_FILL / SHADOW_SL / SHADOW_HOLD_SEC; J reads the live graduation config.
-const VARIANTS = buildVariants({ minFill: MIN_FILL, sl: SL, holdSec: HOLD_SEC, live: readGradStrategy(), momentum: MOMENTUM });
+const VARIANTS = buildVariants({ minFill: MIN_FILL, sl: SL, holdSec: HOLD_SEC, live: readGradStrategy(), momentum: MOMENTUM, hours: HOURS_UTC, serialLaunches: SERIAL_LAUNCHES });
 const ACTIVE_VARIANTS = activeVariantIds(VARIANTS, process.env.SHADOW_VARIANTS);
 if (ACTIVE_VARIANTS.length === 0) {
-  console.error(`[shadow] SHADOW_VARIANTS="${process.env.SHADOW_VARIANTS}" selects no variant (known: ${activeVariantIds(VARIANTS).join("")}).`);
+  console.error(`[shadow] SHADOW_VARIANTS="${process.env.SHADOW_VARIANTS}" selects no variant (known: ${knownVariantIds(VARIANTS).join("")}).`);
   process.exit(1);
 }
 const CANDIDATE_MIN_FILL = candidateThreshold(VARIANTS, ACTIVE_VARIANTS);
@@ -145,6 +187,34 @@ function featSafe(fn) {
     if (featErrors === 1) log0(`features: ${e?.message || e} (journal-only; decisions are unaffected)`);
     return null;
   }
+}
+
+// Revision 8: the launcher index (lib/gshadow-features.mjs). It IS a decision input of P / Q, so it
+// is kept whenever one of them trades, or the features want deployer fields. A failure yields null,
+// which P / Q read as "launcher unknown" -> no open (the safe side).
+const LAUNCH_GATED = ACTIVE_VARIANTS.some((id) => VARIANTS[id].noSerialLauncher);
+const LAUNCHES = FEATURES || LAUNCH_GATED;
+const launches = createLauncherIndex();
+let launchErrors = 0;
+function launchSafe(fn) {
+  if (!LAUNCHES) return null;
+  try {
+    return fn();
+  } catch (e) {
+    launchErrors += 1;
+    if (launchErrors === 1) log0(`launcher index: ${e?.message || e} (P / Q treat the launcher as unknown)`);
+    return null;
+  }
+}
+// Entries stopped by a revision-8 gate, cumulative, counted once per (variant, mint) and gate.
+const gateSkips = { outsideHours: 0, launcherUnknown: 0, launcherMode: 0, serialLauncher: 0 };
+function noteGateSkip(reason, variantId, s) {
+  if (!(reason in gateSkips)) return;
+  s.gateNoted ??= new Set();
+  const k = `${variantId}:${reason}`;
+  if (s.gateNoted.has(k)) return;
+  s.gateNoted.add(k);
+  gateSkips[reason] += 1;
 }
 
 // trade-v3 event: mint 8..40, sol amount 40..48 (lamports), is_buy 56, user 57..89, timestamp 89
@@ -192,16 +262,23 @@ function enter(variantId, v, mint, s, gainPp = null, lagMs = null, feat = null) 
 // Would this variant try to open this mint on the current state? (Not opened yet, filter passes.)
 // `openedKeys` first: an already-opened (variant, mint) must not even start the exit-check RPC
 // when a long-evicted mint reappears in the stream.
-function wouldTry(variantId, v, mint, s, gainPp) {
+// `gate` (revision 8): { eventSec, launcher } — the entry event's on-chain time (O / P) and a lazy
+// getter of its launcherInfo (P / Q). Returns null when the variant would open, else the reason.
+function entryGate(variantId, v, mint, s, gainPp, gate = {}) {
   const key = `${variantId}:${mint}`;
-  if (openedKeys.has(key) || open.has(key) || s.entered.has(variantId)) return false;
-  return variantAccepts(v, { fill: s.fill, holders: s.buyers.size, gainPp });
+  if (openedKeys.has(key) || open.has(key) || s.entered.has(variantId)) return "opened";
+  return variantGate(v, { fill: s.fill, holders: s.buyers.size, gainPp, eventSec: gate.eventSec ?? null, launcher: gate.launcher ?? null });
 }
+const wouldTry = (variantId, v, mint, s, gainPp, gate) => entryGate(variantId, v, mint, s, gainPp, gate) === null;
 
 // `gainPp`: growth of the mint's fill over the momentum window (null without history) — only a
 // momentum variant (L) reads it.
-function tryEnter(variantId, v, mint, s, gainPp = null, lagMs = null, featAt = null) {
-  if (!wouldTry(variantId, v, mint, s, gainPp)) return;
+function tryEnter(variantId, v, mint, s, gainPp = null, lagMs = null, featAt = null, gate = {}) {
+  const why = entryGate(variantId, v, mint, s, gainPp, gate);
+  if (why !== null) {
+    noteGateSkip(why, variantId, s);
+    return;
+  }
   if (!v.exitCheck) {
     enter(variantId, v, mint, s, gainPp, lagMs, featAt);
     return;
@@ -367,12 +444,15 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
     if (!l.startsWith("Program data: ")) continue;
     const data = Buffer.from(l.slice(14), "base64");
     if (data.length < 129 || !data.subarray(0, 8).equals(TRADE_EVENT_PREFIX)) {
-      // Revision 7: a create event feeds the features only (creator, name, symbol, launch time).
+      // Revision 7: a create event feeds the features (creator, name, symbol, launch time).
+      // Revision 8: and the launcher index (signer `user`), a decision input of P / Q.
       // Not stale-filtered: its windows run on its own on-chain time.
-      featSafe(() => {
-        const c = parseCreate(data);
-        if (c) noteCreate(feats, c, Date.now());
-      });
+      if (!LAUNCHES) continue;
+      const c = launchSafe(() => parseCreate(data));
+      if (c) {
+        launchSafe(() => noteLaunch(launches, c));
+        featSafe(() => noteCreate(feats, c, Date.now()));
+      }
       continue;
     }
     const ev = parseEvent(data);
@@ -407,16 +487,26 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
     // every variant opening on this event journals the same object.
     if (s.fill >= 100 && s.curveCompleteSec == null) s.curveCompleteSec = ev.timestampSec;
     featSafe(() => noteTrade(feats, ev, { nowMs: s.lastEventAt, fill: s.fill, creatorOf: () => tradeCreator(data) }));
+    // Revision 8: who launched this mint, as of this event (memoized; null on an index failure,
+    // which P / Q read as unknown).
+    let launchNow;
+    const launcherAt = () => {
+      if (launchNow === undefined) launchNow = launchSafe(() => launcherInfo(launches, ev.mint, ev.timestampSec));
+      return launchNow;
+    };
+    const gate = { eventSec: ev.timestampSec, launcher: launcherAt };
     let featNow;
     const featAt = () => {
       if (featNow === undefined) {
-        featNow = featSafe(() =>
-          buildFeatures(feats, ev.mint, {
+        featNow = featSafe(() => {
+          const f = buildFeatures(feats, ev.mint, {
             nowSec: ev.timestampSec,
             curve: { virtualSolReserves: ev.virtualSolReserves, virtualTokenReserves: ev.virtualTokenReserves, realSolReserves: ev.realSolReserves },
             watchSec: (Date.now() - startedAt) / 1000,
-          }),
-        );
+          });
+          if (!f) return f;
+          return { ...f, ...deployerFeatures(launcherAt()), inUsHours: inHoursUtc(ev.timestampSec, HOURS_UTC), hourUtc: hourUtc(ev.timestampSec) };
+        });
       }
       return featNow;
     };
@@ -434,9 +524,9 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
     if (s.fill >= CANDIDATE_MIN_FILL) {
       journal.write({ type: "gshadow_candidate", mint: ev.mint, fill: s.fill, holders: s.buyers.size, price: s.price });
       if (entryLate) {
-        if (ACTIVE_VARIANTS.some((id) => wouldTry(id, VARIANTS[id], ev.mint, s, gainPp))) stale.entrySkipped += 1;
+        if (ACTIVE_VARIANTS.some((id) => wouldTry(id, VARIANTS[id], ev.mint, s, gainPp, gate))) stale.entrySkipped += 1;
       } else {
-        for (const id of ACTIVE_VARIANTS) tryEnter(id, VARIANTS[id], ev.mint, s, gainPp, lagMs, featAt);
+        for (const id of ACTIVE_VARIANTS) tryEnter(id, VARIANTS[id], ev.mint, s, gainPp, lagMs, featAt, gate);
       }
     }
   }
@@ -452,6 +542,7 @@ log0(
     (MOMENTUM_WINDOW_MS > 0 ? ` | L momentum +${MOMENTUM.pp}pp / ${MOMENTUM.sec}s` : "") +
     " | do not select text in this window: a paused console freezes the lab",
 );
+log0(`US hours (O/P): ${HOURS_UTC.text} UTC | serial launcher (P/Q): >= ${SERIAL_LAUNCHES} creates in 24 h, or user != creator, or create not seen | launcher index ${LAUNCHES ? "on" : "off"}`);
 
 // Rate-limited (once a minute): the tick runs every second, and a run that sits permanently at the
 // cap would otherwise flood the log. Never throttled into silence about a prune, though — that is
@@ -505,10 +596,25 @@ function flushStale(now, { force = false } = {}) {
 const FEAT_SWEEP_MS = 60_000;
 const MEM_ROW_MS = Number(process.env.SHADOW_MEM_ROW_SEC || 600) * 1000;
 let featSweptAt = Date.now();
+let launchSweptAt = Date.now();
 let memRowAt = Date.now();
 function memRow(now) {
   const m = process.memoryUsage();
-  const row = { type: "gshadow_mem", upSec: Math.round((now - startedAt) / 1000), mintState: mintState.size, open: open.size, features: FEATURES, ...storeStats(feats), featErrors, rssMB: Math.round(m.rss / 1048576), heapMB: Math.round(m.heapUsed / 1048576) };
+  const row = {
+    type: "gshadow_mem",
+    upSec: Math.round((now - startedAt) / 1000),
+    mintState: mintState.size,
+    open: open.size,
+    features: FEATURES,
+    ...storeStats(feats),
+    featErrors,
+    // Revision 8: launcher index size and the cumulative gate skips (per variant and mint).
+    ...launcherStats(launches),
+    launchErrors,
+    ...gateSkips,
+    rssMB: Math.round(m.rss / 1048576),
+    heapMB: Math.round(m.heapUsed / 1048576),
+  };
   journal.write(row);
   return row;
 }
@@ -519,6 +625,10 @@ function featHousekeeping(now) {
       evictIdle(feats, now, new Set([...open.values()].map((p) => p.mint)));
       trimIndexes(feats, Math.floor(now / 1000));
     });
+  }
+  if (LAUNCHES && now - launchSweptAt >= FEAT_SWEEP_MS) {
+    launchSweptAt = now;
+    launchSafe(() => trimLaunchers(launches, Math.floor(now / 1000)));
   }
   if (MEM_ROW_MS > 0 && now - memRowAt >= MEM_ROW_MS) {
     memRowAt = now;

@@ -142,6 +142,27 @@ how much of the mint's life the lab saw), and `creatorLaunches24h` / `sameNameRe
 bounds until `watchSec` exceeds 24 h / 30 min. The trade-event creator fallback (`creatorSource:
 "trade"`) is decoded from the IDL layout; check it against `creatorSource: "create"` rows first.
 
+shadowRev 8 (same costsScheme) keeps A F J K L M N byte-for-byte (rev 7 and rev 8 rows of those
+variants are comparable) and takes B C D E G H off the default set. New paper variants, all N
+(fill 92–97, SL 0.7, timeout 300 s, exit on migration) with `minHolders` 0:
+
+| variant | rule |
+|---|---|
+| O | entry event's on-chain time inside `SHADOW_HOURS_UTC` (default 19:00 <= t < 23:00 UTC) |
+| P | O, and the launcher is known, not serial, not launcher-mode |
+| Q | launcher filter only, all hours |
+| R | no extra rule (N without the holder minimum) |
+
+Compare O vs R for the hour rule, Q vs R for the launcher filter, R vs N for the holder minimum.
+The launcher is the create event's signer (`user`), not its `creator`. Serial = at least
+`SHADOW_SERIAL_LAUNCHES` (3) creates by that signer in 24 h including this one; launcher-mode =
+`user != creator`; a mint whose create the lab did not see (restart, older than the process, older
+than 24 h) is unknown and P / Q skip it. The 24 h count is a lower bound until `feat.watchSec`
+exceeds 24 h. `gshadow_mem` carries cumulative skips per (variant, mint): `outsideHours`,
+`launcherUnknown`, `launcherMode`, `serialLauncher`, plus the index size (`launchMints`,
+`launchers`). `feat` gains `deployer`, `deployerIsCreator`, `deployerLaunches24h` (null when the
+create was not seen), `inUsHours` and `hourUtc` (of the opening event).
+
 ## How to run a real study
 
 ```powershell
