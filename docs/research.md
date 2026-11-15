@@ -163,6 +163,79 @@ exceeds 24 h. `gshadow_mem` carries cumulative skips per (variant, mint): `outsi
 `launchers`). `feat` gains `deployer`, `deployerIsCreator`, `deployerLaunches24h` (null when the
 create was not seen), `inUsHours` and `hourUtc` (of the opening event).
 
+## Mint census
+
+`node scripts/mint-census.mjs` (`lib/mint-census.mjs`, censusRev 1) records EVERY pump.fun launch the
+stream shows — base rates and early predictors for a new strategy, where the shadow lab sees only
+mints at fill >= 92 % and journals features only when a variant opens. Read-only: the pump program's
+log stream and nothing else (zero RPC calls, no keypair, `--live` refused). Its own instance lock
+(`data/census/.census.lock`), so it can run on the PC while the shadow lab runs on the phone.
+
+One `census_mint` row per mint, written when the mint finishes:
+
+| `final` | When | `migrated` |
+|---|---|---|
+| `complete` | an event with fill >= 100 % (`completeSec` = its on-chain time) | `true` |
+| `idle` | no event for `CENSUS_IDLE_SEC` (1800) of STREAM time (newest event time seen) | `false` |
+| `shutdown` | Ctrl+C / SIGTERM / `CENSUS_MAX_SEC`; `partial: true` | `null` |
+
+A mint that trades again after its idle row continues and later writes a new row with
+`resumed: true` (milestones and counters carried over; the flow features of the resumed part start
+from zero). **Analysis takes the last row per mint**; one unique mint = one observation; never pool
+different `censusRev`.
+
+Row fields: `mint`, `createSec` (on-chain), `createSeen`, `launcher` (= create `user`, the signer),
+`isCreator` (`user == creator`), `launches24h` (launcher's creates in 24 h incl. this one, lower
+bound for the first 24 h of a run), `devBuySol` (launcher's / creator's buys in the create slot or
+the first 10 s), `hourUtc` (of `createSec`, else of the first event), `maxFill`, `trades`,
+`uniqueTraders`, `lastSec`, `final`, `maxLagSec` (local clock − on-chain time, max over the mint's
+events), flags `partial` / `stall` / `resumed`, and `unpricedTrades` (when > 0: trade events
+whose payload carries zero reserves — about 9 % of all trade events, and for some mints every
+event; such a mint has `maxFill: null`, unknown, not 0). Rows with `unpricedTrades` also carry
+`unpricedLens` (sorted distinct payload lengths of those events, at most 4), and the raw bytes of the
+mint's FIRST such event: `unpricedSample` (bytes 8..24, right after the discriminator — for trade-v3
+that is the first half of the mint key) and `unpricedTail` (bytes 89..129: timestamp and the four
+reserve fields), hex, undecoded. A mint whose create was not seen has
+`createSeen: false` and `launcher`, `isCreator`, `launches24h`, `devBuySol`, `createSec` null (never
+guessed). Rows with `maxFill < CENSUS_FULL_MIN_FILL` (25) stop there (compact). Full rows add
+`name`, `symbol`, `creator`, `creatorSource`, `firstSec`, `firstSeenFill`, `maxFillSec`,
+`migrated`, `completeSec` and `milestones`:
+
+`milestones["25"|"50"|…]` — taken at the FIRST event whose fill reaches the milestone (a jump
+20 → 60 % records 25 and 50 at that event): `sec`, `secFromCreate`, `fill`, `price` (curve spot, SOL
+per token), `lagSec`, `holders` (wallets with a buy), `launcherBuySol`, `launcherSellSol`,
+`launcherSold`, `feat` (the rev-7 `feat` names from `lib/gshadow-features.mjs buildFeatures`:
+`ageSec`, `creatorBuySol`, `creatorSellSol`, `creatorTrades`, `creatorLaunches24h`, `sameNameRecent`,
+`trades`, `uniqueTraders`, `topWalletTradeShare`, `topWalletVolShare`, `top5NetSol`, `top5NetShare`,
+`buySol60`, `sellSol60`, `buys60`, `sells60`, `maxSell60Sol`, `priceRel`; per-mint constants live
+on the row), and after it: `minFillAfter` / `minSecAfter` (deepest fill before the mint ends),
+`ratioMinAfter` (curve price there / price at the milestone — the stop-loss question), `secTo100`
+(null if it never completed). Milestones are recorded only for crossings the census saw: a mint
+first seen at 30 % (create not seen) has no `25`. Use `createSeen: true` mints for base rates.
+
+Other rows: `census_stall` (the process clock jumped > 30 s; live mints and mints that start in
+the next 60 s carry `stall: true`), `census_gap` (see below), `census_mem` (every
+`CENSUS_MEM_ROW_SEC` and at the stop: rss, heap, live / idle-remembered mints, store sizes, row
+counts, `gaps`, `gapSecTotal`, `wsReconnects`, `unpricedByLen` {payload length: events}). Memory is bounded: a mint's state is
+dropped with its row, the launcher / creator / name indexes are trimmed by on-chain age, idle mints
+are remembered 24 h (for `resumed`).
+
+**Stream gaps.** `lib/ws.mjs` reconnects silently, and during a drop the census misses events (a
+milestone is then recorded at the next event; a mint created meanwhile is `createSeen: false`). No
+create / trade event for `CENSUS_GAP_SEC` (default 10 s; the normal rate is ~45 events/s) opens a
+gap; the next event closes it and writes `census_gap` {`startedAt` (the last event before the
+silence), `endedAt`, `gapSec`, `liveMints`} (`openAtStop: true` when the stop comes first). Every
+mint live at the gap start, every mint first seen within 60 s after it closes, and every milestone
+snapshot taken in that window carry `gap: true`. A process stall usually produces a gap row too (the
+timer and the socket resume together). `wsReconnects` in `census_mem` counts the socket's reconnects
+(an optional `onOpen` observer of `SolanaWs`, unused by every other bot). Exclude or show apart
+`gap` rows the same way as `stall` rows.
+
+```powershell
+node scripts/mint-census.mjs                                  # until Ctrl+C
+Copy-Item data\census\census-2026-11-*.jsonl agents\          # export for PROMPT
+```
+
 ## How to run a real study
 
 ```powershell

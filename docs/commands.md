@@ -78,6 +78,7 @@ to run one file: `node scripts/smoke.test.mjs`.
 | `node lib/wallet.mjs show [name]` | print the public address (no network) |
 | `node bots/graduation-sniper/shadow.mjs` | shadow (paper) run of the graduation variants |
 | `node scripts/analyze-graduation.mjs [journal]` | report on the shadow run |
+| `node scripts/mint-census.mjs` | mint census: read-only stream recorder, one `census_mint` row per pump.fun mint (milestones 25…100 %, migrated / idle) into `data/census/census-YYYY-MM-DD.jsonl` (UTC); no RPC calls, `--live` refused, own instance lock (can run beside the shadow lab). See [research.md](research.md#mint-census) |
 | `node scripts/sell-all.mjs` | list all tokens in the wallet; with `--live` — sell them one by one |
 | `node scripts/close-empty-atas.mjs` | reclaim rent from empty token accounts: plan only by default (list and rent sum); sends only with `--live` + `LIVE_CONFIRM=yes`; never touches non-zero accounts or WSOL; writes `ata_sweep` |
 | `node scripts/session-total.mjs [journal]` | sum the session totals from the journal |

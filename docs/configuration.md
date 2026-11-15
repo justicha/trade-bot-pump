@@ -109,6 +109,12 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `SHADOW_VARIANTS` | `AFJKLMNOPQR` | Which variants trade, letters, e.g. `ABCDEFGHJ`. Since shadowRev 8 B C D E G H are off unless named here |
 | `SHADOW_HOURS_UTC` | `19-23` | Variants O / P: UTC hour window of the entry event's on-chain time, `S <= hour < E`; `S > E` wraps (`22-02`). Invalid = the lab does not start |
 | `SHADOW_SERIAL_LAUNCHES` | `3` | Variants P / Q: a launcher (create-event signer) with this many creates in 24 h (incl. this one) is serial and skipped; integer >= 2, invalid = the lab does not start |
+| `CENSUS_MILESTONES` | `25,50,75,85,92,97,100` | Mint census: fill milestones (% of the 85 SOL real reserve), strictly increasing, each in (0, 100]. Invalid = the census does not start |
+| `CENSUS_IDLE_SEC` | `1800` | Mint census: a mint with no event for this many seconds of stream time gets its row (`final: "idle"`); integer >= 1 |
+| `CENSUS_FULL_MIN_FILL` | `25` | Mint census: a mint whose max fill is below this gets a compact row (no milestone snapshots); 0–100 |
+| `CENSUS_MAX_SEC` | `0` | Mint census: stop after this many seconds (`0` = until Ctrl+C) |
+| `CENSUS_MEM_ROW_SEC` | `600` | Mint census: interval of `census_mem` rows; `0` = only at the stop |
+| `CENSUS_DIR` | `data/census` | Mint census output folder (also holds `.census.lock`) |
 | `REPLAY_MIN_TRADES` / `REPLAY_TEST_FRACTION` / `REPLAY_RESAMPLES` | `300` / `0.7` / `2000` | Replay strictness |
 | `SLIPPAGE_ASSUMED_BPS` | `50` | Extra slippage assumed by the cost model (`lib/fees.mjs`, `lib/pessimistic.mjs`) |
 
