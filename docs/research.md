@@ -236,6 +236,38 @@ node scripts/mint-census.mjs                                  # until Ctrl+C
 Copy-Item data\census\census-2026-11-*.jsonl agents\          # export for PROMPT
 ```
 
+## RPC endpoint failover (shadow lab and mint census)
+
+With `RPC_URLS` set (see [configuration.md](configuration.md)), the shadow lab and the census switch
+to the next endpoint when a key runs out, instead of running on a dead stream for hours. The start
+line lists the endpoints as `#1 host, #2 host` (never a URL: keys live in it).
+
+Every switch writes one `rpc_switch` row — in the shadow journal (`data/journal/<date>.jsonl`) and
+in the census file:
+
+```json
+{"type":"rpc_switch","fromIdx":1,"toIdx":2,"host":"mainnet.helius-rpc.com","reason":"ws:ws-handshake-429","failures":3,"at":"2026-11-16T12:00:03.120Z"}
+```
+
+- `fromIdx` / `toIdx`: 1-based positions in `RPC_URLS`; `host`: the host of the NEW endpoint.
+- `reason`: `<channel>:<signal>`. Channel `ws` (the stream) or `http` (the lab's RPC calls for open
+  positions). Signals: `ws-handshake-429|401|403` (handshake rejected), `http-429|401|403 [rpc-error
+  <code> <message>]`, `rpc-error <code> <message>` (a JSON-RPC error such as Helius -32429 "max usage
+  reached" / -32005 "Too many requests", Alchemy 429 "compute units per second capacity" / -32600
+  "Monthly capacity limit exceeded", QuickNode -32007 / -32008 / -32029), `no-connect-60s` (no healthy websocket connect for 60 s).
+  Prefix `all-exhausted` = every endpoint was exhausted and this is the 60 s retry of the
+  least-recently-failed one (expect one such row per minute until a key answers).
+- `failures`: signals in a row on the old endpoint (`RPC_FAILOVER_AFTER`, default 3).
+
+`gshadow_mem` / `census_mem` carry `rpcIdx` (endpoint in use) and `rpcSwitches` (switches so far).
+These are journal-only fields: decisions are unchanged (no SHADOW_REV / censusRev bump). Rows written
+around a switch carry the existing flags — the census `census_gap` / `gap: true` (the socket is down
+for a few seconds), the shadow `gshadow_stale_events` / `late` / stall flags — handle them as usual.
+Open shadow positions keep being managed across a switch: their RPC calls go to the new endpoint.
+
+The PROMPT export greps `"type":"gshadow_` — add `rpc_switch` to see the switches themselves:
+`grep -hE '"type":"(gshadow_|rpc_switch)' data/journal/2026-11-1*.jsonl > gshadow-export-N.jsonl`.
+
 ## How to run a real study
 
 ```powershell

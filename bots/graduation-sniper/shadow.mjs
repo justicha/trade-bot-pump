@@ -62,7 +62,7 @@
 // counted per (variant, mint) in gshadow_mem (outsideHours, launcherUnknown, launcherMode,
 // serialLauncher); `feat` gains deployer, deployerIsCreator, deployerLaunches24h, inUsHours, hourUtc.
 import { PublicKey } from "@solana/web3.js";
-import { LIVE } from "../../lib/config.mjs";
+import { LIVE, RPC_TIMEOUT_MS } from "../../lib/config.mjs";
 import { PUMP_PROGRAM, TRADE_EVENT_PREFIX } from "../../lib/constants.mjs";
 import { gradFillPct } from "../../lib/curve.mjs";
 import { parseCreate, tradeCreator } from "../../lib/events.mjs";
@@ -84,7 +84,8 @@ import {
 } from "../../lib/gshadow-features.mjs";
 import { getBondingCurveState } from "../../lib/pumpfun.mjs";
 import { ammSellQuote } from "../../lib/pumpswap.mjs";
-import { connection, rpcCall } from "../../lib/rpc.mjs";
+import { connection, rpcCall, setRpcFailoverFetch } from "../../lib/rpc.mjs";
+import { setupFailover, makeFailoverFetch } from "../../lib/rpc-failover.mjs";
 import { readGradStrategy } from "../../lib/grad-config.mjs";
 import {
   activeVariantIds,
@@ -149,6 +150,28 @@ try {
 } catch (e) {
   console.error(`[shadow] ${e.message}`);
   process.exit(1);
+}
+
+// RPC endpoint failover (KODING #20, journal only — no decision reads it): with RPC_URLS set, an
+// exhausted key (429 / 401 / 403, "limit / credits / max usage" errors, or 60 s without a websocket
+// connect) moves the stream AND the HTTP RPC of open positions to the next endpoint. Each switch is
+// an `rpc_switch` row; gshadow_mem carries rpcIdx / rpcSwitches. Without RPC_URLS: the single
+// RPC_URL exactly as before. Endpoints are logged as "#n host" only (keys live in the URL).
+let RPC;
+try {
+  RPC = setupFailover({
+    env: process.env,
+    live: LIVE,
+    log: (level, m) => (level === "info" ? console.log : console.error)(`[shadow] ${m}`),
+  });
+} catch (e) {
+  console.error(`[shadow] ${e.message}`);
+  process.exit(1);
+}
+for (const l of RPC.lines) console.log(`[shadow] ${l}`);
+if (RPC.failover) {
+  setRpcFailoverFetch(makeFailoverFetch(RPC.failover, { timeoutMs: RPC_TIMEOUT_MS }));
+  RPC.failover.onSwitch((row) => journal.write(row));
 }
 
 // A–I keep the lab-wide MIN_FILL / SHADOW_SL / SHADOW_HOLD_SEC; J reads the live graduation config.
@@ -431,6 +454,7 @@ function tickAmm(key, pos, v, now) {
 }
 
 const ws = new SolanaWs();
+if (RPC.failover) ws.useFailover(RPC.failover);
 await ws.connect();
 
 ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
@@ -612,6 +636,9 @@ function memRow(now) {
     ...launcherStats(launches),
     launchErrors,
     ...gateSkips,
+    // KODING #20 (journal only): the endpoint in use (1-based) and the switches so far.
+    rpcIdx: RPC.failover ? RPC.failover.idx : 1,
+    rpcSwitches: RPC.failover ? RPC.failover.switches : 0,
     rssMB: Math.round(m.rss / 1048576),
     heapMB: Math.round(m.heapUsed / 1048576),
   };

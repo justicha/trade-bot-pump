@@ -17,6 +17,12 @@
 // CENSUS_FULL_MIN_FILL (25), CENSUS_MAX_SEC (0 = until stopped), CENSUS_MEM_ROW_SEC (600),
 // CENSUS_GAP_SEC (10).
 // A bad value stops the recorder at the start with the variable named.
+//
+// RPC endpoint failover (KODING #20): with RPC_URLS set (comma list, order = priority) the stream
+// moves to the next endpoint when a key is exhausted (handshake 429 / 401 / 403, a "limit / credits /
+// max usage" JSON-RPC error, RPC_FAILOVER_AFTER times in a row, or 60 s without a connect). Each
+// switch is an `rpc_switch` row in the census file; census_mem carries rpcIdx / rpcSwitches.
+// Endpoints are printed as "#n host" only. Without RPC_URLS: the single RPC_URL as before.
 if (process.argv.includes("--live")) {
   console.error("[census] mint-census is read-only; --live is not accepted.");
   process.exit(1);
@@ -36,10 +42,19 @@ const { ROOT } = await import("../lib/config.mjs");
 const { PUMP_PROGRAM } = await import("../lib/constants.mjs");
 const { SolanaWs } = await import("../lib/ws.mjs");
 const { stallGapMs } = await import("../lib/stall-guard.mjs");
+const { setupFailover } = await import("../lib/rpc-failover.mjs");
 
 const log0 = (m) => console.log(`[census] ${m}`);
 const DIR = process.env.CENSUS_DIR ? path.resolve(process.env.CENSUS_DIR) : path.join(ROOT, "data", "census");
 const LOCK = path.join(DIR, ".census.lock");
+
+let RPC;
+try {
+  RPC = setupFailover({ env: process.env, live: false, log: (level, m) => (level === "info" ? console.log : console.error)(`[census] ${m}`) });
+} catch (e) {
+  console.error(`[census] ${e.message}`);
+  process.exit(1);
+}
 
 const lock = C.acquireLock(LOCK);
 if (!lock.ok) {
@@ -57,7 +72,11 @@ const writeRows = (rows) => {
 
 let handlerErrors = 0;
 let wsOpens = 0; // successful (re)connects of the socket; reconnects = opens - 1
+for (const l of RPC.lines) log0(l);
+if (RPC.failover) RPC.failover.onSwitch((row) => writer.write(row));
+const rpcStats = () => (RPC.failover ? { rpcIdx: RPC.failover.idx, rpcSwitches: RPC.failover.switches } : { rpcIdx: 1, rpcSwitches: 0 });
 const ws = new SolanaWs();
+if (RPC.failover) ws.useFailover(RPC.failover);
 ws.onOpen = () => {
   wsOpens += 1;
 };
@@ -93,7 +112,7 @@ let houseAt = startedAt;
 let memAt = startedAt;
 
 function writeMem(now) {
-  const r = C.memRow(census, now, { rowsWritten: writer.written, bytesWritten: writer.bytes, handlerErrors, wsReconnects: Math.max(0, wsOpens - 1) });
+  const r = C.memRow(census, now, { rowsWritten: writer.written, bytesWritten: writer.bytes, handlerErrors, wsReconnects: Math.max(0, wsOpens - 1), ...rpcStats() });
   writer.write(r);
   return r;
 }
