@@ -153,7 +153,7 @@ try {
 }
 
 // RPC endpoint failover (KODING #20, journal only — no decision reads it): with RPC_URLS set, an
-// exhausted key (429 / 401 / 403, "limit / credits / max usage" errors, or 60 s without a websocket
+// exhausted key (429 / 401 / 402 / 403, "limit / credits / max usage" errors, or 60 s without a websocket
 // connect) moves the stream AND the HTTP RPC of open positions to the next endpoint. Each switch is
 // an `rpc_switch` row; gshadow_mem carries rpcIdx / rpcSwitches. Without RPC_URLS: the single
 // RPC_URL exactly as before. Endpoints are logged as "#n host" only (keys live in the URL).

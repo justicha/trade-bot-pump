@@ -15,6 +15,9 @@
 //   7. the shadow lab with RPC_URLS: startup line, gshadow_mem rpcIdx / rpcSwitches, no key text.
 //   8. live / other bots: RPC_URLS ignored with a warning; only shadow.mjs and mint-census.mjs
 //      install the failover (static check), and both opt-in hooks refuse --live in code.
+//   9. #22: RPC_URLS as a multi-line array in .env (lib/config.mjs parseEnvText), stray URL lines.
+//  10. #22 processes: the array from a real .env + a handshake 402 -> switch; a bad .env stops shadow /
+//      census and only warns elsewhere. HTTP 402 is in section 3.
 import "./lib/test-env.mjs";
 import { cleanEnv } from "./lib/test-env.mjs";
 import assert from "node:assert/strict";
@@ -104,6 +107,9 @@ const F = await import("../lib/rpc-failover.mjs");
 {
   assert.equal(F.wsErrorReason(new Error("Unexpected server response: 429")), "ws-handshake-429");
   assert.equal(F.wsErrorReason(new Error("Unexpected server response: 401")), "ws-handshake-401");
+  assert.equal(F.wsErrorReason(new Error("Unexpected server response: 402")), "ws-handshake-402", "#22: 402 Payment Required = exhausted");
+  assert.equal(F.httpReason(402, ""), "http-402", "#22: an HTTP RPC call answered 402");
+  assert.match(F.httpReason(402, '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Payment required"},"id":1}'), /^http-402/);
   assert.equal(F.wsErrorReason(new Error("Unexpected server response: 503")), null, "a 503 is not exhaustion (only the 60 s no-connect rule)");
   assert.equal(F.wsErrorReason(new Error("connect ECONNREFUSED 127.0.0.1:1")), null);
   assert.match(F.rpcErrorReason({ code: -32429, message: "max usage reached" }), /^rpc-error -32429 max usage reached$/);
@@ -128,7 +134,7 @@ const F = await import("../lib/rpc-failover.mjs");
   assert.equal(F.httpReason(200, '{"jsonrpc":"2.0","result":{"value":1},"id":1}'), null);
   assert.equal(F.httpReason(500, "oops"), null);
   assert.equal(F.safeText("bad https://mainnet.helius-rpc.com/?api-key=FIXTUREKEY9 x"), "bad <url> x");
-  ok("exhaustion signals: 401/403/429; Helius / Alchemy / QuickNode documented codes and messages; generic limit words; 503 / refused / Solana -32005 node-unhealthy / other errors are not");
+  ok("exhaustion signals: 401/402/403/429; Helius / Alchemy / QuickNode documented codes and messages; generic limit words; 503 / refused / Solana -32005 node-unhealthy / other errors are not");
 }
 
 // ---- 2. the controller (fake clock) --------------------------------------------------------------------
@@ -277,8 +283,19 @@ const reply = (res, status, obj) => {
   for (let i = 0; i < 3; i++) await assert.rejects(connection.getBalance(pk));
   assert.equal(await connection.getBalance(pk), 7_000_000_000);
   assert.equal(fo3.idx, 2);
-  for (const s of [h1, h2, h3]) s.close();
-  ok('HTTP: "max usage reached" (and 429 / -32005) on #1 three times -> the next call goes to #2 with its own URL');
+  // #22: HTTP 402 (payment required) on an RPC call counts the same way.
+  const h4 = await rpcServer((j, res) => reply(res, 402, { jsonrpc: "2.0", error: { code: -32000, message: "Payment required" }, id: j.id }));
+  const rows4 = [];
+  const fo4 = new F.RpcFailover({ endpoints: F.parseRpcUrlList(`http://127.0.0.1:${h4.address().port}/?api-key=FIXTUREKEYH4,${u2}`) });
+  fo4.onSwitch((r) => rows4.push(r));
+  setRpcFailoverFetch(F.makeFailoverFetch(fo4, { timeoutMs: 5000 }));
+  for (let i = 0; i < 3; i++) await assert.rejects(connection.getBalance(pk));
+  assert.equal(fo4.idx, 2, "3 x HTTP 402 -> #2");
+  assert.equal(await connection.getBalance(pk), 7_000_000_000);
+  assert.match(rows4[0].reason, /^http:http-402/);
+  assert.ok(!KEY_RE.test(JSON.stringify(rows4)));
+  for (const s of [h1, h2, h3, h4]) s.close();
+  ok('HTTP: "max usage reached" (and 429 / -32005, and 402) on #1 three times -> the next call goes to #2 with its own URL');
 }
 
 // ---- 4. websocket in process: subscribe rejected with -32429 -----------------------------------------
@@ -377,7 +394,7 @@ function rejectServer(status = 429) {
   s.upgrades = 0;
   s.on("upgrade", (req, sock) => {
     s.upgrades += 1;
-    sock.end(`HTTP/1.1 ${status} Too Many Requests\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n`);
+    sock.end(`HTTP/1.1 ${status} ${http.STATUS_CODES[status] || "Error"}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n`);
   });
   return new Promise((r) => s.listen(0, "127.0.0.1", () => r(s)));
 }
@@ -573,6 +590,124 @@ function startCensus(env) {
   assert.match(src("lib/ws.mjs"), /useFailover\(fo\) \{\r?\n\s+if \(LIVE\) throw/);
   assert.match(src("lib/rpc.mjs"), /setRpcFailoverFetch\(fn\) \{\r?\n\s+if \(LIVE\) throw/);
   ok("live / other bots: RPC_URLS ignored with one warning; only shadow + census install the failover; both hooks throw under --live");
+}
+
+// ---- 9. #22: RPC_URLS as a multi-line array in .env; stray URL lines; handshake 402 ----------------
+{
+  const Cfg = await import("../lib/config.mjs");
+  const K = (s) => `https://${s}.example/?api-key=FIXTUREKEY${s}`;
+  const comma = `${K("a")},${K("b")}|wss://b-ws.example/FIXTUREKEYb,${K("d")}`;
+  // (a) 3 items: plain; http|ws with a trailing comma; a commented-out key, a blank line, an inline comment; CRLF
+  const arrText = [
+    "RPC_URL=http://127.0.0.1:1/?api-key=FIXTUREKEY0",
+    "RPC_URLS=[   # keys, one per line",
+    `  ${K("a")}`,
+    `  ${K("b")}|wss://b-ws.example/FIXTUREKEYb,`,
+    `  # ${K("c")}`,
+    "",
+    `  ${K("d")}, # the last one`,
+    "]",
+    "SHADOW_MAX_SEC=3 # after the array",
+  ].join("\r\n");
+  const p = Cfg.parseEnvText(arrText);
+  assert.deepEqual(p.issues, []);
+  const val = Object.fromEntries(p.vars);
+  assert.equal(val.RPC_URLS, comma, "the array joins into the comma form");
+  assert.equal(val.SHADOW_MAX_SEC, "3", "the line after ']' is read as before");
+  assert.equal(val.RPC_URL, "http://127.0.0.1:1/?api-key=FIXTUREKEY0");
+  assert.deepEqual(F.parseRpcUrlList(val.RPC_URLS), F.parseRpcUrlList(comma), "the same endpoints as the comma form");
+  assert.equal(F.parseRpcUrlList(val.RPC_URLS).length, 3);
+  // (b) the single-line form and every other line: exactly parseEnvLine, as before #22
+  const plain = [`RPC_URLS=${comma} # inline`, "MIN_FILL=92 # alias", "# comment", "", 'NAME="a # b"', "lower=1", "  SPACED = 5  "];
+  assert.deepEqual(Cfg.parseEnvText(plain.join("\n")).vars, plain.map(Cfg.parseEnvLine).filter(Boolean));
+  assert.equal(Object.fromEntries(Cfg.parseEnvText(plain.join("\n")).vars).RPC_URLS, comma);
+  // only RPC_URLS opens an array: another NAME=[ stays the literal value "["
+  assert.deepEqual(Cfg.parseEnvText("OTHER=[\n]").vars, [["OTHER", "["]]);
+  // (c) a missing "]": at the end of the file, or before the next NAME= line (which is still read)
+  const open1 = Cfg.parseEnvText(["RPC_URL=http://x.example", "RPC_URLS=[", `  ${K("a")}`, `  ${K("b")}`].join("\n"));
+  assert.deepEqual(open1.issues, [{ kind: "unclosedArray", name: "RPC_URLS", line: 2 }]);
+  assert.ok(!open1.vars.some(([k]) => k === "RPC_URLS"), "RPC_URLS is not set from an unclosed array");
+  const open2 = Cfg.parseEnvText(["RPC_URLS=[", `  ${K("a")}`, "MIN_FILL=92"].join("\n"));
+  assert.deepEqual(open2.issues, [{ kind: "unclosedArray", name: "RPC_URLS", line: 1 }]);
+  assert.deepEqual(open2.vars, [["MIN_FILL", "92"]]);
+  // (d) a URL continued on a new line outside an array (silently lost before #22)
+  const stray = Cfg.parseEnvText([`RPC_URLS=${K("a")},`, `  ${K("b")}`, "wss://w.example/FIXTUREKEYw", "# https://commented.example"].join("\n"));
+  assert.deepEqual(stray.issues, [{ kind: "strayUrl", line: 2 }, { kind: "strayUrl", line: 3 }]);
+  for (const x of [...open1.issues, ...stray.issues]) assert.ok(!KEY_RE.test(Cfg.envIssueText(x)) && !/example/.test(Cfg.envIssueText(x)), Cfg.envIssueText(x));
+  assert.match(Cfg.envIssueText(stray.issues[0]), /^line 2 of \.env looks like a URL without NAME=/);
+  ok("#22 .env array: 3 items (plain, http|ws + trailing comma, comment / blank / inline comment, CRLF) = the comma form; single-line form and other lines unchanged; missing ']' and stray URL lines found by line number, no key text");
+}
+
+// ---- 10. #22 processes: the array from a real .env, ws handshake 402 -> switch; bad .env -> stop / warn --
+{
+  const r1 = await rejectServer(402);
+  const { wss: r2, W } = await censusFeedServer();
+  const root9 = tmp("census-array-root-");
+  const dir = tmp("census-array-");
+  fs.writeFileSync(
+    path.join(root9, ".env"),
+    [
+      "RPC_URL=http://127.0.0.1:1/?api-key=FIXTUREKEY0",
+      "RPC_URLS=[",
+      `  http://127.0.0.1:${r1.address().port}/?api-key=FIXTUREKEY1   # answers 402`,
+      "  # http://127.0.0.1:1/?api-key=FIXTUREKEYoff",
+      `  http://127.0.0.1:${r2.address().port}/?api-key=FIXTUREKEY2,`,
+      "]",
+    ].join("\n"),
+  );
+  const env = cleanEnv({ ROOT: root9, CENSUS_DIR: dir, CENSUS_MAX_SEC: "4" });
+  delete env.RPC_URL; // only the .env
+  const child = startCensus(env);
+  const killer = setTimeout(() => child.kill(), 40_000);
+  const code = await child.done;
+  clearTimeout(killer);
+  r1.close();
+  r2.close();
+  assert.equal(code, 0, `census exited 0 (stderr: ${child.err.split(/\r?\n/).slice(0, 3).join(" | ")})`);
+  assert.match(child.out, /rpc endpoints: #1 127\.0\.0\.1, #2 127\.0\.0\.1 \|/, "two endpoints from the .env array (the commented one skipped)");
+  assert.equal(r1.upgrades, 3, `3 handshakes answered 402 (got ${r1.upgrades})`);
+  assert.match(child.err, /endpoint #1 127\.0\.0\.1 exhausted \(ws:ws-handshake-402, 3 failure\(s\)\) -> switching to #2/);
+  const text = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), "utf8")).join("");
+  const rows = text.trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(rows.find((r) => r.type === "rpc_switch")?.reason, "ws:ws-handshake-402");
+  assert.ok(rows.some((r) => r.type === "census_mint" && r.mint === W.MIG_MINT), "events flowed from #2");
+  assert.ok(!KEY_RE.test(child.out + child.err + text), "no key text");
+
+  // A bad .env: the research processes stop at the start, every other process warns once.
+  const bads = {
+    unclosed: { lines: ["RPC_URL=http://127.0.0.1:1/?api-key=FIXTUREKEY0", "RPC_URLS=[", "  https://a.example/?api-key=FIXTUREKEY1", "  https://b.example/?api-key=FIXTUREKEY2"], re: /RPC_URLS=\[ at line 2 of \.env has no closing "\]" line/ },
+    stray: { lines: ["RPC_URL=http://127.0.0.1:1/?api-key=FIXTUREKEY0", "RPC_URLS=https://a.example/?api-key=FIXTUREKEY1,", "https://b.example/?api-key=FIXTUREKEY2"], re: /line 3 of \.env looks like a URL without NAME=/ },
+  };
+  const run = (script, envRoot, extra = {}) =>
+    new Promise((resolve) => {
+      const e = cleanEnv({ ROOT: envRoot, CENSUS_DIR: tmp("census-badenv-"), ...extra });
+      delete e.RPC_URL;
+      const c = spawn(process.execPath, [script], { cwd: root, env: e });
+      let t = "";
+      c.stdout.on("data", (b) => (t += String(b)));
+      c.stderr.on("data", (b) => (t += String(b)));
+      c.on("exit", (code) => resolve({ code, t }));
+    });
+  const probeDir = tmp("rpcurls-other22-");
+  const probe = path.join(probeDir, "other-bot.mjs");
+  fs.writeFileSync(probe, `await import(${JSON.stringify(new URL("../lib/config.mjs", import.meta.url).href)}); console.log("loaded");\n`);
+  for (const [name, b] of Object.entries(bads)) {
+    const r = tmp(`badenv-${name}-`);
+    fs.writeFileSync(path.join(r, ".env"), b.lines.join("\n"));
+    for (const [who, script] of [["census", path.join(here, "mint-census.mjs")], ["shadow", path.join(root, "bots", "graduation-sniper", "shadow.mjs")]]) {
+      const res = await run(script, r);
+      assert.equal(res.code, 1, `${name}: ${who} stops (exit ${res.code}: ${res.t.slice(0, 200)})`);
+      assert.match(res.t, b.re, `${name}: ${who} names the line`);
+      assert.ok(!KEY_RE.test(res.t) && !/a\.example|b\.example/.test(res.t), `${name}: ${who}: no URL / key in the text`);
+    }
+    const other = await run(probe, r);
+    assert.equal(other.code, 0, `${name}: another process goes on`);
+    assert.match(other.t, /loaded/);
+    assert.equal(other.t.match(/\[config\] warning: (RPC_URLS=\[ at|line \d+ of \.env)/g)?.length, 1, `${name}: one .env warning (${other.t})`);
+    assert.match(other.t, b.re);
+    assert.ok(!KEY_RE.test(other.t));
+  }
+  ok("#22 processes: census reads RPC_URLS from a .env array, #1 answers the handshake 402 x3 -> #2, rows flow; unclosed array / stray URL line -> census and shadow exit 1 naming the line, another process warns once; no key text");
 }
 
 console.log("PASS: rpc-failover");

@@ -353,7 +353,8 @@ Copy-Item data\census\census-2026-11-*.jsonl agents\          # export for PROMP
 
 With `RPC_URLS` set (see [configuration.md](configuration.md)), the shadow lab and the census switch
 to the next endpoint when a key runs out, instead of running on a dead stream for hours. The start
-line lists the endpoints as `#1 host, #2 host` (never a URL: keys live in it).
+line lists the endpoints as `#1 host, #2 host` (never a URL: keys live in it). Many keys read better
+as a multi-line array in `.env` (`RPC_URLS=[`, one key per line, `]`; see configuration.md, #22).
 
 Every switch writes one `rpc_switch` row — in the shadow journal (`data/journal/<date>.jsonl`) and
 in the census file:
@@ -364,7 +365,7 @@ in the census file:
 
 - `fromIdx` / `toIdx`: 1-based positions in `RPC_URLS`; `host`: the host of the NEW endpoint.
 - `reason`: `<channel>:<signal>`. Channel `ws` (the stream) or `http` (the lab's RPC calls for open
-  positions). Signals: `ws-handshake-429|401|403` (handshake rejected), `http-429|401|403 [rpc-error
+  positions). Signals: `ws-handshake-429|401|402|403` (handshake rejected; 402 = payment required / credits used up, #22), `http-429|401|402|403 [rpc-error
   <code> <message>]`, `rpc-error <code> <message>` (a JSON-RPC error such as Helius -32429 "max usage
   reached" / -32005 "Too many requests", Alchemy 429 "compute units per second capacity" / -32600
   "Monthly capacity limit exceeded", QuickNode -32007 / -32008 / -32029), `no-connect-60s` (no healthy websocket connect for 60 s).

@@ -19,7 +19,7 @@
 // A bad value stops the recorder at the start with the variable named.
 //
 // RPC endpoint failover (KODING #20): with RPC_URLS set (comma list, order = priority) the stream
-// moves to the next endpoint when a key is exhausted (handshake 429 / 401 / 403, a "limit / credits /
+// moves to the next endpoint when a key is exhausted (handshake 429 / 401 / 402 / 403, a "limit / credits /
 // max usage" JSON-RPC error, RPC_FAILOVER_AFTER times in a row, or 60 s without a connect). Each
 // switch is an `rpc_switch` row in the census file; census_mem carries rpcIdx / rpcSwitches.
 // Endpoints are printed as "#n host" only. Without RPC_URLS: the single RPC_URL as before.
