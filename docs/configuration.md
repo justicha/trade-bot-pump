@@ -118,6 +118,10 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `CENSUS_MAX_SEC` | `0` | Mint census: stop after this many seconds (`0` = until Ctrl+C) |
 | `CENSUS_MEM_ROW_SEC` | `600` | Mint census: interval of `census_mem` rows; `0` = only at the stop |
 | `CENSUS_DIR` | `data/census` | Mint census output folder (also holds `.census.lock`) |
+| `CENSUS_POOL` | `1` | Mint census rev 2: `0` = no PumpSwap pool watch after migrations (no pool subscription, no `census_pool` rows); `1` = on. Anything else = the census does not start |
+| `CENSUS_POOL_WATCH_SEC` | `3600` | Mint census: how long (on-chain seconds from the first pool event) a migrated mint's pool is watched before its `census_pool` row; integer 1–86400. A pool with no event for `CENSUS_IDLE_SEC` ends earlier |
+| `CENSUS_POOL_PRESUB_FILL` | `92` | Mint census: subscribe a mint's (future) PumpSwap pool when its fill first reaches this %, so the migration and the first pool trades are caught; `100` = only at the completion (#21 behaviour); 50–100. A mint that ends without completing drops the subscription (no row) |
+| `CENSUS_POOL_MODE` | `a` | Mint census pool stream: `a` = one subscription per watched pool (light); `b` = one subscription on the whole PumpSwap program (~0.5 MB/s). A rejected pool subscription switches `a` → `b` by itself (loud log, `census_pool_mode` row) |
 | `REPLAY_MIN_TRADES` / `REPLAY_TEST_FRACTION` / `REPLAY_RESAMPLES` | `300` / `0.7` / `2000` | Replay strictness |
 | `SLIPPAGE_ASSUMED_BPS` | `50` | Extra slippage assumed by the cost model (`lib/fees.mjs`, `lib/pessimistic.mjs`) |
 

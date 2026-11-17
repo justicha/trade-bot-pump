@@ -389,6 +389,11 @@ async function censusFeedServer() {
     sock.on("message", (raw) => {
       const m = JSON.parse(String(raw));
       if (m.method !== "logsSubscribe") return;
+      // census rev 2 also subscribes the migrated mint's PumpSwap pool: acknowledged, no feed
+      if (m.params?.[0]?.mentions?.[0] !== "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P") {
+        sock.send(JSON.stringify({ jsonrpc: "2.0", result: 92, id: m.id }));
+        return;
+      }
       wss.subs += 1;
       sock.send(JSON.stringify({ jsonrpc: "2.0", result: 91, id: m.id }));
       (async () => {

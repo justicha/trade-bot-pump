@@ -165,7 +165,7 @@ create was not seen), `inUsHours` and `hourUtc` (of the opening event).
 
 ## Mint census
 
-`node scripts/mint-census.mjs` (`lib/mint-census.mjs`, censusRev 1) records EVERY pump.fun launch the
+`node scripts/mint-census.mjs` (`lib/mint-census.mjs`, censusRev 2) records EVERY pump.fun launch the
 stream shows — base rates and early predictors for a new strategy, where the shadow lab sees only
 mints at fill >= 92 % and journals features only when a variant opens. Read-only: the pump program's
 log stream and nothing else (zero RPC calls, no keypair, `--live` refused). Its own instance lock
@@ -182,7 +182,8 @@ One `census_mint` row per mint, written when the mint finishes:
 A mint that trades again after its idle row continues and later writes a new row with
 `resumed: true` (milestones and counters carried over; the flow features of the resumed part start
 from zero). **Analysis takes the last row per mint**; one unique mint = one observation; never pool
-different `censusRev`.
+different `censusRev` (rev 2 = rev 1 + `census_pool`; its `census_mint` rows are unchanged except
+`censusRev`, so rev-1 and rev-2 mint rows may be compared, pool rows exist only in rev 2).
 
 Row fields: `mint`, `createSec` (on-chain), `createSeen`, `launcher` (= create `user`, the signer),
 `isCreator` (`user == creator`), `launches24h` (launcher's creates in 24 h incl. this one, lower
@@ -230,6 +231,68 @@ snapshot taken in that window carry `gap: true`. A process stall usually produce
 timer and the socket resume together). `wsReconnects` in `census_mem` counts the socket's reconnects
 (an optional `onOpen` observer of `SolanaWs`, unused by every other bot). Exclude or show apart
 `gap` rows the same way as `stall` rows.
+
+**PumpSwap pool path (rev 2, `lib/census-pool.mjs`).** When the census sees a curve complete
+(`census_mint` with `final: "complete"`), it watches that mint's canonical PumpSwap pool (a pure PDA,
+`lib/pumpswap-stream.mjs canonicalPool`, no RPC) and writes ONE `census_pool` row per mint. Mints first
+seen already in the pool are out of scope (their pool events count as `unknownPool`).
+**Pre-subscription (#21b):** the pool is subscribed when the mint's fill first reaches
+`CENSUS_POOL_PRESUB_FILL` (92; `100` = at the completion), before the pool exists, so the migration
+transaction (its `CreatePoolEvent` = the pool's opening reserves) and the first pool trades are caught
+(subscribing at the completion missed them: the first SEEN trade was 4–10 s late, vault 59–77 SOL instead
+of the open vault). Until the curve completes the watch is pending (events kept, no window, no row); a
+mint that ends without completing (idle / shutdown row) drops it: no `census_pool` row,
+`poolPresubDropped` in `census_mem`. Prices come
+from the pool's own Buy/SellEvents: before the trade = (quote vault + `virtual_quote_reserves`) /
+base vault, after the trade = the same after the trade's amounts — SOL per token, the unit of the
+curve prices (a fixture test shows the first pool price at 0.997 of the curve's last price; without
+the virtual quote reserves it would be 0.79). Time 0 = the FIRST pool trade (on-chain seconds); the
+watch ends `CENSUS_POOL_WATCH_SEC` (3600) later, earlier after `CENSUS_IDLE_SEC` without a pool event
+(`final: "idle"`), or at the stop (`final: "shutdown"`, `partial: true`).
+
+Row fields: `mint`, `pool`, `mode` (subscription mode, see below), `final`, `completeSec` (curve),
+`curveEndPrice` (curve price at the completing event), `firstPoolSec`, `poolDelaySec` (first pool event
+− completion), `firstPoolPrice` (before the first trade), `ratioOpen` (= `firstPoolPrice /
+curveEndPrice`), `quoteReserveSolAtFirst` (real SOL in the vault before the first trade);
+the open (#21b, when the `CreatePoolEvent` was seen): `t0` (`"create"` = the open was seen, `"trade"`
+= it was not; t = 0 of every checkpoint stays the first pool TRADE either way), `poolOpenSec`,
+`poolOpenPrice` (= `pool_quote_amount / pool_base_amount`: on a pump migration the open quote is the
+whole effective quote — right after the create a part of the vault becomes the virtual quote reserves;
+a real migration opened at 0.9998 of the standard curve end), `openRatio` (= `poolOpenPrice /
+curveEndPrice`), `quoteReserveSolAtOpen` (vault + virtual at the open), `poolMayhem` (the event's
+`is_mayhem_mode`: mayhem pools open far below the curve end), `firstTradeAfterOpenSec`,
+`firstTradeAtOpen` (the first trade seen started from the open reserves = no trade was missed);
+`ratio10s`, `ratio30s`, `ratio1m`, `ratio3m`, `ratio5m`, `ratio15m`, `ratio30m`, `ratio60m` = the
+last pool price at or before t / `curveEndPrice` (`null` when the watch did not reach t — idle end,
+stop, or t > `CENSUS_POOL_WATCH_SEC`); `minRatio*` / `minSec*` / `maxRatio*` / `maxSec*` for `1m`,
+`5m` and `All` (the opening price and the price after every trade; seconds from t = 0; `1m` / `5m`
+null when not reached); `flow1m`, `flow5m`, `flowAll` {`trades`, `buys`, `sells`, `buySol` (paid
+with fees), `sellSol` (received), `uniqueTraders`}; `launcherSellSol5m` / `creatorSellSol5m` (pool
+sells by the census row's launcher / creator in the first 5 m; null when unknown or not reached);
+`largestSellSol3m`, `largestSellWallet3m`, `largestSellSec3m`; `quoteReserveSolEnd`, `lastPoolSec`,
+`observedSec`, `events`, `unpricedEvents` (events without the virtual-reserve tail), traffic (#21b):
+`notes`, `failedNotes`, `logKB` (mode a: every notification of the pool's subscription; mode b:
+successful transactions holding the pool's events) and `traffic` {`pre`, `m0_5`, `m5_15`, `m15_60`}
+(the same per window, seconds from the first trade by the stream clock); flags
+`partial` / `stall` / `gap`. Join to `census_mint` by `mint`. Precision: a price "after" a trade is
+exact for the base side; in ~20 % of consecutive trades some pools keep the coin-creator + buyback
+fees in the quote vault, so the next event's reserves are higher by those fees (< 0.1 % of the price);
+checkpoints therefore use the next event's own reserves whenever one exists.
+
+Subscription (`CENSUS_POOL_MODE`): `a` (default) = one `logsSubscribe` per watched pool, made at the
+pre-subscription fill (or the completion) and dropped at the watch end or the drop (`lib/ws.mjs unsubscribe`: an ended pool is not resubscribed
+after a reconnect or an RPC failover switch; ~360 migrations a day ≈ 15 subscriptions at a time). If
+the server rejects a pool subscription (e.g. a per-connection limit) the census switches LOUDLY to
+`b` and writes `census_pool_mode` {`mode`, `reason`, `watchedPools`}; such a rejection is not an RPC
+exhaustion signal (no failover switch). `b` = one subscription on the whole PumpSwap program, filtered
+in-process — measured 2026-11-16 on the public endpoint: ~140 notifications/s, ~0.5 MB/s of log text
+(≈ 40 GB/day, 2/3 failed transactions), so `a` is the default. `CENSUS_POOL=0` turns the pool part off.
+`census_mem` adds `poolMode`, `poolLive`, `poolSubs`, `poolWatched`, `poolRows`, `poolEvents`,
+`unknownPool`, `poolUnpriced`, `poolAfterEnd`, `poolDup` (a transaction delivered by two pool
+subscriptions, processed once), `poolFailedTx`, `poolNotes`, `poolLogMB`, and (#21b) `poolPending`
+(pre-subscribed pools waiting for their completion), `poolPresubs`, `poolPresubDropped`,
+`poolPresubDroppedTraded` (dropped although pool trades had arrived: the completion was missed),
+`poolOpens`.
 
 ```powershell
 node scripts/mint-census.mjs                                  # until Ctrl+C

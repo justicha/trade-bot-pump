@@ -23,6 +23,14 @@
 // max usage" JSON-RPC error, RPC_FAILOVER_AFTER times in a row, or 60 s without a connect). Each
 // switch is an `rpc_switch` row in the census file; census_mem carries rpcIdx / rpcSwitches.
 // Endpoints are printed as "#n host" only. Without RPC_URLS: the single RPC_URL as before.
+//
+// Rev 2 (KODING #21): after each curve completion the census watches the mint's PumpSwap pool
+// (canonical PDA, no RPC) and writes one census_pool row (lib/census-pool.mjs). Stream: mode a = one
+// logsSubscribe per watched pool (made at the completion, ended with the watch; ~15 at a time),
+// mode b = one subscription on the whole PumpSwap program (heavy: ~0.7 MB/s measured 2026-11-16).
+// A rejected pool subscription switches to mode b loudly (census_pool_mode row).
+// Env: CENSUS_POOL (1; 0 = off, rev-1 behaviour), CENSUS_POOL_WATCH_SEC (3600), CENSUS_POOL_MODE (a),
+// CENSUS_POOL_PRESUB_FILL (92: subscribe the pool when the fill reaches it; 100 = at the completion).
 if (process.argv.includes("--live")) {
   console.error("[census] mint-census is read-only; --live is not accepted.");
   process.exit(1);
@@ -39,7 +47,8 @@ try {
 }
 
 const { ROOT } = await import("../lib/config.mjs");
-const { PUMP_PROGRAM } = await import("../lib/constants.mjs");
+const { PUMP_PROGRAM, PUMPSWAP_PROGRAM } = await import("../lib/constants.mjs");
+const { attachPoolStream } = await import("../lib/census-pool.mjs");
 const { SolanaWs } = await import("../lib/ws.mjs");
 const { stallGapMs } = await import("../lib/stall-guard.mjs");
 const { setupFailover } = await import("../lib/rpc-failover.mjs");
@@ -92,9 +101,33 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
     if (handlerErrors === 1) log0(`handler error: ${e?.stack || e}`);
   }
 });
+// PumpSwap pools of completed mints (rev 2). Subscriptions live in ws.subs like the pump one, so a
+// reconnect / failover switch resubscribes exactly the pools still watched.
+const poolStream = census.pools
+  ? attachPoolStream({
+      ws,
+      pw: census.pools,
+      programId: PUMPSWAP_PROGRAM.toBase58(),
+      log: (m) => process.stderr.write(`[census] ${m}
+`),
+      onRow: (r) => writer.write(r),
+      onLogs: (result, pool) => {
+        const logs = result?.value?.logs;
+        if (!Array.isArray(logs)) return;
+        const failed = !(logs[logs.length - 1] || "").includes("success");
+        try {
+          writeRows(C.handlePoolLogs(census, logs, { signature: result?.value?.signature ?? null, nowMs: Date.now(), pool, failed }));
+        } catch (e) {
+          handlerErrors += 1;
+          if (handlerErrors === 1) log0(`handler error: ${e?.stack || e}`);
+        }
+      },
+    })
+  : null;
 
 log0(
   `read-only, no RPC | milestones ${cfg.milestones.join(" ")} % | idle ${cfg.idleSec}s | gap after ${cfg.gapSec}s of silence | full row at maxFill >= ${cfg.fullMinFill} % | ` +
+    `${census.pools ? `pools: mode ${census.pools.mode}, watch ${cfg.poolWatchSec}s, subscribe at fill ${cfg.poolPresubFill >= 100 ? "100 (completion)" : cfg.poolPresubFill}` : "pools: off (CENSUS_POOL=0)"} | ` +
     `output ${writer.file()} (UTC date) | rev ${C.CENSUS_REV}${cfg.maxSec > 0 ? ` | stops after ${cfg.maxSec}s` : ""}`,
 );
 log0("do not select text in this window: a paused console freezes the recorder (stalls are journaled)");
@@ -112,7 +145,7 @@ let houseAt = startedAt;
 let memAt = startedAt;
 
 function writeMem(now) {
-  const r = C.memRow(census, now, { rowsWritten: writer.written, bytesWritten: writer.bytes, handlerErrors, wsReconnects: Math.max(0, wsOpens - 1), ...rpcStats() });
+  const r = C.memRow(census, now, { rowsWritten: writer.written, bytesWritten: writer.bytes, handlerErrors, wsReconnects: Math.max(0, wsOpens - 1), ...rpcStats(), ...(poolStream ? { poolSubs: poolStream.poolSubs } : {}) });
   writer.write(r);
   return r;
 }
@@ -133,6 +166,7 @@ const timer = setInterval(() => {
   // Stream gap: no create / trade event for CENSUS_GAP_SEC (the socket is down or reconnecting). The
   // next event closes it and its census_gap row comes out of handleLogs.
   if (C.checkGap(census, now, cfg.gapSec)) notes.push(`stream silent for ${cfg.gapSec}s: gap open, ${census.live.size} live mint(s) marked gap: true`);
+  writeRows(C.sweepPoolWatch(census)); // pool watches: window end / idle (cheap: ~15 pools)
   if (now - sweptAt >= SWEEP_MS) {
     sweptAt = now;
     writeRows(C.sweepIdle(census));
@@ -144,7 +178,7 @@ const timer = setInterval(() => {
   if (MEM_MS > 0 && now - memAt >= MEM_MS) {
     memAt = now;
     const r = writeMem(now);
-    notes.push(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | live ${r.liveMints} | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}) | launchers ${r.launchers} | ${(r.bytesWritten / 1048576).toFixed(2)} MB written`);
+    notes.push(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | live ${r.liveMints} | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}) | launchers ${r.launchers} | ${census.pools ? `pools live ${r.poolLive}, pending ${r.poolPending}, rows ${r.poolRows}, subs ${r.poolSubs}, mode ${r.poolMode} | ` : ""}${(r.bytesWritten / 1048576).toFixed(2)} MB written`);
   }
   for (const n of notes) log0(n); // console last: it is the thing that can block
 }, 1000);
@@ -159,8 +193,10 @@ async function stop(reason) {
   if (g) writer.write(g);
   const rows = C.finishAll(census);
   writeRows(rows);
+  const poolRows = C.finishPoolsAtStop(census);
+  writeRows(poolRows);
   const r = writeMem(Date.now());
-  log0(`=== CENSUS STOP (${reason}) === ${rows.length} live mint(s) written as partial | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}, idle ${r.idle}) | gaps ${r.gaps} (${r.gapSecTotal}s), ws reconnects ${r.wsReconnects} | ${(r.bytesWritten / 1048576).toFixed(2)} MB written | rss ${r.rssMB} MB`);
+  log0(`=== CENSUS STOP (${reason}) === ${rows.length} live mint(s) + ${poolRows.length} pool watch(es) written as partial | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}, idle ${r.idle}) | gaps ${r.gaps} (${r.gapSecTotal}s), ws reconnects ${r.wsReconnects} | ${(r.bytesWritten / 1048576).toFixed(2)} MB written | rss ${r.rssMB} MB`);
   log0(`file: ${writer.file()}`);
   await ws.close().catch(() => {});
   C.releaseLock(LOCK);
