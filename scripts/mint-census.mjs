@@ -31,6 +31,9 @@
 // A rejected pool subscription switches to mode b loudly (census_pool_mode row).
 // Env: CENSUS_POOL (1; 0 = off, rev-1 behaviour), CENSUS_POOL_WATCH_SEC (3600), CENSUS_POOL_MODE (a),
 // CENSUS_POOL_PRESUB_FILL (92: subscribe the pool when the fill reaches it; 100 = at the completion).
+// Rev 3 (KODING #21c): the fill of mayhem curves and of curves quoted in another mint comes from the
+// token side (they complete now too); a pending pool that shows its own event activates without the
+// completion (completeSeen: false). See lib/mint-census.mjs.
 if (process.argv.includes("--live")) {
   console.error("[census] mint-census is read-only; --live is not accepted.");
   process.exit(1);
@@ -178,7 +181,7 @@ const timer = setInterval(() => {
   if (MEM_MS > 0 && now - memAt >= MEM_MS) {
     memAt = now;
     const r = writeMem(now);
-    notes.push(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | live ${r.liveMints} | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}) | launchers ${r.launchers} | ${census.pools ? `pools live ${r.poolLive}, pending ${r.poolPending}, rows ${r.poolRows}, subs ${r.poolSubs}, mode ${r.poolMode} | ` : ""}${(r.bytesWritten / 1048576).toFixed(2)} MB written`);
+    notes.push(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | live ${r.liveMints} | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}) | launchers ${r.launchers} | ${census.pools ? `pools live ${r.poolLive}, pending ${r.poolPending}, rows ${r.poolRows}, no-complete ${r.poolActivatedNoComplete}, subs ${r.poolSubs}, mode ${r.poolMode} | ` : ""}${(r.bytesWritten / 1048576).toFixed(2)} MB written`);
   }
   for (const n of notes) log0(n); // console last: it is the thing that can block
 }, 1000);

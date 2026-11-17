@@ -165,6 +165,36 @@ export function poolSim({ base, quote, virtual }) {
   };
 }
 
+// KODING #21c: a full pump trade-v3 payload (layout: lib/events.mjs + the IDL tail read by
+// lib/mint-census.mjs tradeTail) on the standard curve's TOKEN side: virtual tokens `vTok`, real tokens
+// vTok - 279.9e12. `sol`: { vSol, realSol } in lamports, or null = an "unpriced" event (zero SOL side,
+// as a curve quoted in another mint). `quoteMint`: null = SOL (the default pubkey, as on mainnet).
+export const STD_OFFSET = 279_900_000_000_000n;
+export const vTokAtFill = (fill) => BigInt(Math.round(1.073e15 / ((fill / 100) * (85 / 30) + 1))); // tokenFill inverse
+export function curveTradePayload({ mint, user, isBuy = true, ts, vTok, rTok = null, sol = null, mayhem = false, quoteMint = null, ixName = "buy", solLamports = 10_000_000 }) {
+  const name = Buffer.from(ixName, "utf8");
+  const tail = 262 + name.length; // mayhem_mode
+  const buf = Buffer.alloc(tail + 1 + 32 + 4 + 32 + 8 * 6);
+  Buffer.from("bddb7fd34ee661ee", "hex").copy(buf, 0);
+  bytes32(mint).copy(buf, 8);
+  buf.writeBigUInt64LE(BigInt(sol ? solLamports : 0), 40);
+  buf.writeBigUInt64LE(1_000_000_000n, 48);
+  buf[56] = isBuy ? 1 : 0;
+  bytes32(user).copy(buf, 57);
+  buf.writeBigUInt64LE(BigInt(ts), 89);
+  const v = BigInt(vTok);
+  buf.writeBigUInt64LE(sol ? BigInt(sol.vSol) : 0n, 97);
+  buf.writeBigUInt64LE(v, 105);
+  buf.writeBigUInt64LE(sol ? BigInt(sol.realSol) : 0n, 113);
+  buf.writeBigUInt64LE(rTok === null ? v - STD_OFFSET : BigInt(rTok), 121);
+  buf.writeUInt32LE(name.length, 258);
+  name.copy(buf, 262);
+  buf[tail] = mayhem ? 1 : 0;
+  buf.writeUInt32LE(0, tail + 33); // shareholders: none
+  if (quoteMint) bytes32(quoteMint).copy(buf, tail + 37);
+  return buf;
+}
+
 // The pool of MIG_MINT right after its migration, on the scale of this mock's curve (its virtual
 // token reserve is fixed at 1.073e15, so the curve ends at 115e9 / 1.073e15 * 1e-3 = 1.0718e-7 SOL).
 export const MIG_POOL_START = { base: 800_000_000_000_000n, quote: 68_300_000_000n, virtual: 17_450_000_000n };

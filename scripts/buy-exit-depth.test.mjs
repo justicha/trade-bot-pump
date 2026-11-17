@@ -2,6 +2,10 @@
 //
 // Pure decision + the real previewExit math from lib/exec.mjs (the same call the bot uses for
 // TP/SL), plus a source guard that the bot wires it inside buyToken before any send.
+//
+// Hermetic (KODING #21c): lib/exec.mjs loads lib/config.mjs, which needs RPC_URL; the shared bootstrap
+// gives this process a throwaway RPC_URL and a temp ROOT (no repo .env, no keys/), like the other tests.
+import "./lib/test-env.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

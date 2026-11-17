@@ -5,6 +5,8 @@
 import { cleanEnv } from "./lib/test-env.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -70,6 +72,17 @@ for (const rel of targets) {
   assert.equal(got.cuLimit, null, "CU_LIMIT must be stripped");
   assert.equal(got.cuPrice, null, "CU_PRICE must be stripped");
   assert.equal(got.minFill, null, "GRAD_MIN_FILL_PCT must be stripped");
+}
+
+// No env at all (KODING #21c): tests that load lib/config.mjs must not need RPC_URL from the repo
+// .env. The child gets only the system variables and a ROOT with no .env in it, and no RPC_URL.
+{
+  const bare = cleanEnv({ ROOT: fs.mkdtempSync(path.join(os.tmpdir(), "test-noenv-")) });
+  delete bare.RPC_URL;
+  for (const rel of ["scripts/buy-exit-depth.test.mjs", "scripts/prebuy-sim.test.mjs"]) {
+    const res = spawnSync(process.execPath, [path.join(repo, rel)], { cwd: repo, encoding: "utf8", env: bare });
+    assert.equal(res.status, 0, `${rel} must pass with no .env and no RPC_URL, exited ${res.status}: ${String(res.stderr).slice(0, 300)}`);
+  }
 }
 
 assert.equal(leaked, 0, `${leaked} of ${targets.length} child tests leaked/failed under a poisoned parent env`);

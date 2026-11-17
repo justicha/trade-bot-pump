@@ -2,6 +2,10 @@
 //
 // The bot builds a real curve sell for the tokens it is about to buy and only simulates it; a
 // failing simulation must mean "no buy". No RPC here: buildVersionedTx/simulateTx are injected.
+//
+// Hermetic (KODING #21c): lib/pumpfun.mjs loads lib/config.mjs, which needs RPC_URL; the shared
+// bootstrap gives this process a throwaway RPC_URL and a temp ROOT (no repo .env, no keys/).
+import "./lib/test-env.mjs";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import fs from "node:fs";
 import path from "node:path";

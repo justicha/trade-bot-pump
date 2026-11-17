@@ -528,7 +528,7 @@ function poolCensus(cfg = {}) {
   f.trade(key(1120), 6, { ts: first + 301 + 500 });
   const [row] = C.sweepPoolWatch(f.census);
   assert.equal(row.type, "census_pool");
-  assert.equal(row.censusRev, 2);
+  assert.equal(row.censusRev, 3);
   assert.equal(row.final, "idle");
   assert.deepEqual(unwatched, [pool], "the idle end unwatches the pool");
   assert.equal(f.census.pools.byPool.size, 0);
@@ -638,12 +638,12 @@ function poolCensus(cfg = {}) {
   C.noteStall(s.f.census, 40_000, (T0 + 120) * 1000);
   assert.equal(C.finishPoolsAtStop(s.f.census)[0].stall, true);
 
-  // CENSUS_POOL=0: rev-1 behaviour (still censusRev 2)
+  // CENSUS_POOL=0: rev-1 behaviour (still censusRev 3)
   const off = feeder({ pool: false });
   const m = key(1140);
   off.create(m, { creator: key(1141), ts: T0 });
   const [mig] = off.trade(m, 100, { ts: T0 + 10 });
-  assert.equal(mig.censusRev, 2);
+  assert.equal(mig.censusRev, 3);
   assert.equal(off.census.pools, null);
   assert.deepEqual(C.handlePoolLogs(off.census, poolLogs([W.pumpSwapPayload(W.poolSim(MP).trade({ side: "buy", sol: 1, pool: S.canonicalPool(new PublicKey(m)).toBase58(), user: A, ts: T0 + 11 }))]), { nowMs: (T0 + 11) * 1000 }), []);
   assert.deepEqual(C.finishPoolsAtStop(off.census), []);
@@ -1053,6 +1053,322 @@ function poolCensus(cfg = {}) {
   ok("traffic: notes / failedNotes / logKB per pool row; windows pre / 0-5 m / 5-15 m / 15-60 m; mode b counts transactions holding the pool's event");
 }
 
+// ---- 16. rev 3 (#21c): fill from the token side (other-quote and mayhem curves) ----------------------
+{
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const feedRaw = (f, p, ts) => C.handleLogs(f.census, [DATA(p), "Program x success"], { slot: 5, nowMs: ts * 1000 + 300 });
+  const ct = (o) => W.curveTradePayload({ user: key(1601), ...o });
+  // the formula: SOL-equivalent fill on the constant-product curve (NOT the share of tokens sold)
+  assert.ok(Math.abs(C.tokenFill(1_073_000_000_000_000n)) < 1e-9, "launch -> 0");
+  assert.equal(Number(C.tokenFill(279_900_000_000_000n).toFixed(3)), 100.006, "real tokens 0 -> 100.006 (85.005 SOL)");
+  const half = 1.073e15 - 0.5 * 793.1e12; // half of the tokens sold
+  assert.equal(Number(C.tokenFill(half).toFixed(1)), 20.7, "50 % of the tokens sold = 20.7 % fill");
+  for (const fill of [25, 50, 92, 99]) assert.ok(Math.abs(C.tokenFill(W.vTokAtFill(fill)) - fill) < 1e-6);
+  // a normal SOL curve: the token side gives the SOL fill (real constant product)
+  {
+    const vTok = W.vTokAtFill(60);
+    const vSol = (30e9 * 1.073e15) / Number(vTok);
+    assert.ok(Math.abs(C.tokenFill(vTok) - ((vSol - 30e9) / 85e9) * 100) < 1e-6);
+  }
+
+  // (a) SOL-quoted curve with priced and unpriced events (the hypothetical rev-2 case): milestones, presub
+  //     at 92 on an unpriced event, completion on an unpriced event
+  {
+    const f = feeder();
+    const watched = [];
+    f.census.pools.hooks.watch = (p) => watched.push(p);
+    const m = key(1610);
+    const solAt = (fill) => {
+      const vTok = W.vTokAtFill(fill);
+      const vSol = BigInt(Math.round((30e9 * 1.073e15) / Number(vTok)));
+      return { vTok, sol: { vSol, realSol: vSol - 30_000_000_000n } };
+    };
+    f.create(m, { creator: key(1611), ts: T0 });
+    feedRaw(f, ct({ mint: m, ts: T0 + 1, ...solAt(30) }), T0 + 1); // priced
+    feedRaw(f, ct({ mint: m, ts: T0 + 2, ...solAt(60) }), T0 + 2); // priced
+    feedRaw(f, ct({ mint: m, ts: T0 + 3, vTok: W.vTokAtFill(80) }), T0 + 3); // unpriced: token side
+    assert.deepEqual(watched, [], "80 %: no presub");
+    feedRaw(f, ct({ mint: m, ts: T0 + 4, vTok: W.vTokAtFill(93) }), T0 + 4); // unpriced, 93 %
+    assert.equal(watched.length, 1, "presub at 92 on an unpriced event (token side)");
+    const rows = feedRaw(f, ct({ mint: m, ts: T0 + 6, vTok: 279_900_000_000_000n }), T0 + 6); // unpriced completion
+    const r = rows.find((x) => x.type === "census_mint");
+    assert.equal(r.final, "complete", "the completion on an unpriced event counts");
+    assert.equal(r.migrated, true);
+    assert.equal(r.maxFill, 100.01);
+    assert.equal(r.tokenFillEvents, 3);
+    assert.deepEqual(Object.keys(r.milestones), ["25", "50", "75", "85", "92", "97", "100"]);
+    assert.deepEqual(["25", "50", "75", "85", "92", "100"].map((k) => r.milestones[k].fillSource), ["price", "price", "token", "token", "token", "token"]);
+    assert.equal(r.milestones["75"].price, null, "no derived price on a token-side event");
+    assert.ok(r.milestones["50"].price > 0);
+    assert.equal(r.milestones["75"].ratioMinAfter, null, "a token-side milestone has no price: no ratio (never 0)");
+    assert.equal(r.milestones["25"].secTo100, 5);
+    assert.ok(!("quoteMint" in r) && !("mayhem" in r));
+    const [p] = C.finishPoolsAtStop(f.census);
+    assert.deepEqual([p.completeSeen, p.curveEndSource, p.curveEndPrice], [true, "standard", C.STANDARD_CURVE_END], "unpriced completion of a normal SOL curve: the constant curve end");
+    assert.equal(C.memRow(f.census, (T0 + 7) * 1000).tokenFill, 3);
+  }
+  // (b) a curve quoted in another mint (USDC): token-side fill, no SOL price, no pool watch
+  {
+    const f = feeder();
+    const watched = [];
+    f.census.pools.hooks.watch = (p) => watched.push(p);
+    const m = key(1620);
+    for (const [i, fill] of [10, 40, 95].entries()) feedRaw(f, ct({ mint: m, ts: T0 + i, vTok: W.vTokAtFill(fill), quoteMint: USDC, ixName: "buy_exact_quote_in" }), T0 + i);
+    assert.deepEqual(watched, [], "another quote mint: no presub (its pool is not the WSOL one)");
+    const [r] = feedRaw(f, ct({ mint: m, ts: T0 + 9, vTok: 279_900_000_000_000n, quoteMint: USDC }), T0 + 9);
+    assert.deepEqual([r.final, r.migrated, r.quoteMint, r.tokenFillEvents, r.unpricedTrades, r.maxFill], ["complete", true, USDC, 4, 4, 100.01]);
+    assert.equal(r.milestones["92"].fillSource, "token");
+    assert.equal(f.census.pools.byPool.size, 0, "no pool watch");
+    assert.equal(C.memRow(f.census, (T0 + 10) * 1000).poolSkipped, 1);
+  }
+  // (c) mayhem: priced events whose SOL side is cut (completes with ~0.4 SOL): token-side fill, the
+  //     completion seen, pool watched against the completing event's own (tiny) price
+  {
+    const f = feeder();
+    const m = key(1630);
+    const may = (fill, realSol, ts) => {
+      const vTok = W.vTokAtFill(fill);
+      return ct({ mint: m, ts, vTok, mayhem: true, sol: { vSol: realSol + 450_000_000n, realSol } });
+    };
+    f.create(m, { creator: key(1631), ts: T0 });
+    feedRaw(f, may(30, 100_000_000n, T0 + 1), T0 + 1);
+    feedRaw(f, may(80, 300_000_000n, T0 + 2), T0 + 2);
+    const rows = feedRaw(f, ct({ mint: m, ts: T0 + 3, vTok: 279_900_000_000_000n, mayhem: true, sol: { vSol: 862_452_427n, realSol: 412_206_538n } }), T0 + 3);
+    const r = rows.find((x) => x.type === "census_mint");
+    assert.equal(r.migrated, true, "mayhem completion at 0.41 SOL raised (SOL fill 0.48 %) is seen");
+    assert.equal(r.mayhem, true);
+    assert.equal(r.milestones["25"].fillSource, "token");
+    assert.ok(r.milestones["25"].price > 0, "a mayhem event keeps its own SOL price");
+    const [p] = C.finishPoolsAtStop(f.census);
+    assert.deepEqual([p.curveEndSource, p.curveEndPrice], ["price", Number(((862_452_427 / 279.9e12) * 1e-3).toPrecision(6))]);
+  }
+  // (d) a non-standard token side stays as before: unpriced -> unknown; priced -> the SOL fill
+  {
+    const f = feeder();
+    const u = key(1640);
+    feedRaw(f, ct({ mint: u, ts: T0, vTok: 900_000_000_000_000n, rTok: 688_200_000_000_000n }), T0); // offset 211.8e12, unpriced
+    const p = key(1641);
+    feedRaw(f, ct({ mint: p, ts: T0, vTok: 900_000_000_000_000n, rTok: 688_200_000_000_000n, sol: { vSol: 34_000_000_000n, realSol: 4_250_000_000n } }), T0);
+    const g = feeder();
+    const mh = key(1642);
+    feedRaw(g, ct({ mint: mh, ts: T0, vTok: 900_000_000_000_000n, rTok: 688_200_000_000_000n, mayhem: true }), T0); // mayhem, non-standard, unpriced
+    const rows = [...C.finishAll(f.census), ...C.finishAll(g.census)];
+    const by = (m) => rows.find((x) => x.mint === m);
+    assert.equal(by(u).maxFill, null, "non-standard token side, unpriced: still unknown");
+    assert.ok(!("tokenFillEvents" in by(u)));
+    assert.equal(by(p).maxFill, 5, "non-standard token side, priced: the SOL fill");
+    assert.equal(by(mh).maxFill, null, "mayhem with a non-standard token side stays unpriced");
+  }
+  // (e) real events of the 2026-11-17 stream (fixture): the tail decodes, the token side agrees
+  {
+    const FX = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "pump-curve-events.json"), "utf8"));
+    assert.ok(!/https?:|api-key/i.test(JSON.stringify(FX)), "the curve fixture carries no URL / key");
+    const seen = { other: 0, mayhem: 0, plain: 0, nonStd: 0 };
+    for (const e of FX.events) {
+      const d = Buffer.from(e.hex, "hex");
+      const tail = C.tradeTail(d);
+      assert.equal(tail.quoteMint, e.quoteMint, `${e.kind}: quote mint`);
+      assert.equal(tail.mayhem, e.mayhem, `${e.kind}: mayhem flag`);
+      const tok = C.tokenSide(d);
+      const vSol = d.readBigUInt64LE(97);
+      if (!tok.std) {
+        seen.nonStd += 1;
+        continue;
+      }
+      const tf = C.tokenFill(tok.vTok);
+      if (vSol === 0n) {
+        // other quote: the token side vs the quote side (real quote / (initial virtual quote x 85 / 30))
+        seen.other += 1;
+        const fq = (Number(e.realQuote) / ((Number(e.virtualQuote) - Number(e.realQuote)) * (85 / 30))) * 100;
+        assert.ok(Math.abs(tf - fq) < 0.05, `other quote: token fill ${tf.toFixed(4)} vs quote fill ${fq.toFixed(4)}`);
+      } else if (e.mayhem) seen.mayhem += 1;
+      else {
+        seen.plain += 1;
+        const fs_ = (Number(d.readBigUInt64LE(113)) / 85e9) * 100;
+        assert.ok(Math.abs(tf - fs_) < 0.001, `normal SOL curve: token fill ${tf.toFixed(5)} = SOL fill ${fs_.toFixed(5)}`);
+      }
+    }
+    assert.ok(seen.other >= 3 && seen.mayhem >= 2 && seen.plain >= 3 && seen.nonStd >= 1, JSON.stringify(seen));
+    // the real mayhem completion: SOL fill < 1 %, token side at 0 real tokens -> a migration row
+    const f = feeder();
+    let row = null;
+    for (const e of FX.mayhemCompletion.events) row = feedRaw(f, Buffer.from(e.hex, "hex"), e.ts).find((x) => x.type === "census_mint") ?? row;
+    assert.ok(row && row.migrated === true && row.mayhem === true, "the real mayhem completion makes a migration row");
+    assert.ok(Number(Buffer.from(FX.mayhemCompletion.events.at(-1).hex, "hex").readBigUInt64LE(113)) < 1e9, "with < 1 SOL raised");
+  }
+  // (f) the live run's data bugs: a fill that no curve can have (1.8e9 %) and a rounded 100 with tokens left
+  {
+    const f = feeder();
+    const bogus = key(1650);
+    f.trade(bogus, (300e9 / REAL_100) * 100, { ts: T0 }); // realSol 300 SOL -> fill 353 %
+    const may = key(1651);
+    const left = 5_000_000_000n; // 5 000 tokens left on the curve -> tokenFill 99.998 -> r2 100.00
+    const near = feedRaw(f, ct({ mint: may, ts: T0 + 1, vTok: 279_900_000_000_000n + left, mayhem: true, sol: { vSol: 700_000_000n, realSol: 300_000_000n } }), T0 + 1);
+    assert.deepEqual(near, [], "tokens left: not a completion although the rounded fill is 100.00");
+    const done = feedRaw(f, ct({ mint: may, ts: T0 + 2, vTok: 279_900_000_000_000n, mayhem: true, sol: { vSol: 700_000_000n, realSol: 300_000_000n } }), T0 + 2);
+    assert.equal(done.find((x) => x.type === "census_mint").migrated, true, "real tokens 0: the completion");
+    const [b] = C.finishAll(f.census);
+    assert.deepEqual([b.mint, b.maxFill, b.migrated ?? null], [bogus, null, null], "an impossible fill is not a migration");
+    assert.equal(C.memRow(f.census, (T0 + 3) * 1000).badFill, 1);
+  }
+  ok("token-side fill: formula; SOL curve priced + unpriced -> milestones (fillSource), presub at 92 and completion on unpriced events; other quote -> no pool; mayhem completion seen; non-standard stays; real fixture agrees");
+}
+
+// ---- 17. rev 3 (#21c): a pending pool activates on its own event without the curve completion --------
+{
+  const mk = () => {
+    const f = feeder({ idleSec: 600 });
+    return f;
+  };
+  const sim = () => W.poolSim(MP);
+  // (a) by the CreatePoolEvent: completeSec = its second; the mint row is a migration (completeSeen false)
+  {
+    const f = mk();
+    const m = key(1701);
+    const pool = S.canonicalPool(new PublicKey(m)).toBase58();
+    f.create(m, { creator: key(1702), ts: T0 });
+    f.trade(m, 93, { ts: T0 + 5 }); // pending; the completion is never delivered
+    const rows = C.handlePoolLogs(f.census, poolLogs([W.createPoolPayload({ ts: T0 + 9, pool, baseMint: m, poolBase: MP.base, poolQuote: MP.quote + MP.virtual })]), { signature: "c1", nowMs: (T0 + 9) * 1000, pool });
+    const r = rows.find((x) => x.type === "census_mint");
+    assert.deepEqual([r.final, r.migrated, r.completeSec, r.completeSeen], ["complete", true, T0 + 9, false], "the mint row: migrated, completion not seen");
+    assert.equal(f.census.pools.byPool.get(pool).pending, false);
+    const s = sim();
+    C.handlePoolLogs(f.census, poolLogs([W.pumpSwapPayload(s.trade({ side: "buy", sol: 1, pool, user: key(1703), ts: T0 + 10 }))]), { signature: "c2", nowMs: (T0 + 10) * 1000, pool });
+    const [p] = C.finishPoolsAtStop(f.census);
+    assert.deepEqual([p.completeSeen, p.completeSec, p.curveEndSource, p.curveEndPrice, p.t0, p.poolDelaySec], [false, T0 + 9, "standard", C.STANDARD_CURVE_END, "create", 1]);
+    const mem = C.memRow(f.census, (T0 + 11) * 1000);
+    assert.deepEqual([mem.poolActivatedNoComplete, mem.poolPresubDroppedTraded, mem.migrated], [1, 0, 1]);
+  }
+  // (b) by a pool trade: completeSec null; the idle end counts from the activation
+  {
+    const f = mk();
+    const m = key(1711);
+    const pool = S.canonicalPool(new PublicKey(m)).toBase58();
+    f.trade(m, 95, { ts: T0 });
+    const s = sim();
+    const rows = C.handlePoolLogs(f.census, poolLogs([W.pumpSwapPayload(s.trade({ side: "buy", sol: 1, pool, user: key(1712), ts: T0 + 3 }))]), { signature: "d1", nowMs: (T0 + 3) * 1000, pool });
+    assert.deepEqual(rows.filter((x) => x.type === "census_mint").map((x) => [x.migrated, x.completeSec, x.completeSeen]), [[true, null, false]]);
+    f.trade(key(1713), 5, { ts: T0 + 3 + 599 });
+    assert.deepEqual(C.sweepPoolWatch(f.census), [], "599 s after the activation: still watched");
+    f.trade(key(1713), 6, { ts: T0 + 3 + 600 });
+    const [p] = C.sweepPoolWatch(f.census);
+    assert.deepEqual([p.final, p.completeSeen, p.completeSec, p.poolDelaySec, p.firstPoolSec, p.events], ["idle", false, null, null, T0 + 3, 1]);
+  }
+  // (c) a mayhem curve: no constant end -> its last SOL price, with that event's fill
+  {
+    const f = mk();
+    const m = key(1721);
+    const pool = S.canonicalPool(new PublicKey(m)).toBase58();
+    const vTok = W.vTokAtFill(94);
+    C.handleLogs(f.census, [DATA(W.curveTradePayload({ mint: m, user: key(1722), ts: T0, vTok, mayhem: true, sol: { vSol: 700_000_000n, realSol: 300_000_000n } })), "Program x success"], { nowMs: T0 * 1000 });
+    assert.ok(f.census.pools.byPool.get(pool)?.pending, "mayhem presub on the token-side fill");
+    C.handlePoolLogs(f.census, poolLogs([W.pumpSwapPayload(sim().trade({ side: "buy", sol: 1, pool, user: key(1723), ts: T0 + 2 }))]), { signature: "e1", nowMs: (T0 + 2) * 1000, pool });
+    const [p] = C.finishPoolsAtStop(f.census);
+    assert.deepEqual([p.curveEndSource, p.curveEndPrice, p.curveEndFill], ["lastPrice", Number(((700_000_000 / Number(vTok)) * 1e-3).toPrecision(6)), 94]);
+  }
+  // (d) the completion arrives AFTER the activation (two streams): the watch takes the real curve end
+  {
+    const f = mk();
+    const m = key(1731);
+    const pool = S.canonicalPool(new PublicKey(m)).toBase58();
+    f.create(m, { creator: key(1732), ts: T0 });
+    f.trade(m, 96, { ts: T0 + 10 });
+    const s = sim();
+    const rows = C.handlePoolLogs(f.census, poolLogs([W.pumpSwapPayload(s.trade({ side: "buy", sol: 2, pool, user: key(1733), ts: T0 + 30 }))]), { signature: "f1", nowMs: (T0 + 30) * 1000, pool });
+    assert.equal(rows.find((x) => x.type === "census_mint").completeSeen, false);
+    f.trade(m, 100, { ts: T0 + 29 }); // the curve's completing event, late
+    const [p] = C.finishPoolsAtStop(f.census);
+    assert.deepEqual([p.completeSeen, p.lateComplete, p.completeSec, p.curveEndSource, p.curveEndPrice, p.poolDelaySec], [true, true, T0 + 29, "price", priceAt(100), 1]);
+    assert.equal(C.memRow(f.census, (T0 + 31) * 1000).poolLateComplete, 1);
+  }
+  ok("activation without the completion: by CreatePoolEvent (completeSec = its second) / by a pool trade (null), mint row migrated completeSeen false, standard / mayhem lastPrice curve end, late completion fixes the watch, poolPresubDroppedTraded 0");
+}
+
+// ---- 18. rev 3 (#21c): the outlier pools — real data, signed virtual quote, poolOdd ------------------
+{
+  const OJ = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "amm-open-jump-events.json"), "utf8"));
+  assert.ok(!/https?:|api-key/i.test(JSON.stringify(OJ)), "the outlier fixture carries no URL / key");
+  const J = OJ.jQVZ;
+  const ev = (t, i) => Buffer.from(J.txs[t].events[i].hex, "hex");
+  const create = S.parsePumpSwapCreatePool(ev(0, 0));
+  assert.equal(create.pool, J.pool);
+  assert.equal(S.canonicalPool(new PublicKey(J.mint)).toBase58(), J.pool, "the canonical WSOL pool");
+  assert.equal(create.quoteMint, "So11111111111111111111111111111111111111112");
+  const b1 = S.parsePumpSwapTrade(ev(1, 0));
+  const b2 = S.parsePumpSwapTrade(ev(1, 1));
+  const b3 = S.parsePumpSwapTrade(ev(2, 0));
+  assert.equal(b2.userQuote, 5_390_414_840_783n, "a real 5 390 SOL buy in the opening slot");
+  assert.equal(b2.baseAmount, 201_274_388_075_115n);
+  assert.equal(String(b3.poolBase), J.txs[1].poolBalancesAfter.base, "decoded base = the pool token account after the tx");
+  assert.equal(String(b3.poolQuote), J.txs[1].poolBalancesAfter.quote, "decoded vault = the pool WSOL account after the tx");
+  assert.ok(b3.virtualQuote < 0n, "virtual_quote_reserves is negative here");
+  // the constant product (vault + virtual) x base grows only by fees across the 5 390 SOL buy — with
+  // the SIGNED virtual; clamping it to 0 (rev 2) breaks it by > 0.6 %
+  const k = (q, v, b) => Number(q + v) * Number(b);
+  const k0 = k(b2.poolQuote, b2.virtualQuote, b2.poolBase);
+  const kSigned = k(b3.poolQuote, b3.virtualQuote, b3.poolBase) / k0 - 1;
+  const kClamped = k(b3.poolQuote, 0n, b3.poolBase) / k0 - 1;
+  assert.ok(kSigned >= 0 && kSigned < 0.005, `signed: k grows by fees only (${(kSigned * 100).toFixed(3)} %)`);
+  assert.ok(kClamped > 0.006, `clamped: off by ${(kClamped * 100).toFixed(3)} %`);
+  const pr = S.poolTradePrices(b3);
+  assert.equal(pr.before, S.quotePerBase(b3.poolQuote + b3.virtualQuote, b3.poolBase), "price with the signed virtual part");
+  // in the census: first seen = the trade after the big buy -> poolOdd openJump (data real, not a bug)
+  // a standard SOL curve (constant product on the token side) up to its completion: curve end 4.1088e-7
+  const stdTrade = (f, mint, fill, ts) => {
+    const vTok = fill >= 100 ? 279_900_000_000_000n : W.vTokAtFill(fill);
+    const vSol = BigInt(Math.round((30e9 * 1.073e15) / Number(vTok)));
+    return C.handleLogs(f.census, [DATA(W.curveTradePayload({ mint, user: key(1801), ts, vTok, sol: { vSol, realSol: vSol - 30_000_000_000n } })), "Program x success"], { nowMs: ts * 1000 + 500 });
+  };
+  const run = (txs) => {
+    const f = feeder();
+    stdTrade(f, J.mint, 99, create.timestampSec - 2);
+    stdTrade(f, J.mint, 100, create.timestampSec - 1);
+    for (const t of txs) C.handlePoolLogs(f.census, poolLogs(t.events.map((e) => Buffer.from(e.hex, "hex"))), { signature: t.signature, nowMs: t.blockTime * 1000 + 500, pool: J.pool });
+    return C.finishPoolsAtStop(f.census)[0];
+  };
+  const late = run([J.txs[2]]);
+  assert.deepEqual(late.poolOddReasons, ["openJump"]);
+  assert.equal(late.poolOdd, true);
+  assert.ok(late.ratioOpen > 3000, `first seen / curve end ${late.ratioOpen}`);
+  const all = run(J.txs);
+  assert.ok(!("poolOdd" in all), "the whole opening seen: the first trade is at the open, not odd");
+  assert.equal(all.t0, "create");
+  assert.equal(all.firstTradeAtOpen, true);
+  assert.ok(all.maxRatioAll > 3000, "the jump is in the path");
+  // F3pz: the migration transaction's logs are truncated; buys inside it never reach the stream
+  {
+    const F = OJ.F3pz;
+    const fc = S.parsePumpSwapCreatePool(Buffer.from(F.txs[0].events[0].hex, "hex"));
+    const ft = S.parsePumpSwapTrade(Buffer.from(F.txs[1].events[0].hex, "hex"));
+    assert.equal(String(ft.poolQuote), F.txs[0].poolBalancesAfter.quote, "the pool after the migration tx = the next trade's before");
+    assert.ok(ft.poolBase < fc.poolBase, "base left the pool inside the migration transaction (no event in the logs)");
+    const f = feeder();
+    stdTrade(f, F.mint, 100, fc.timestampSec - 1);
+    const truncatedLogs = [...poolLogs([Buffer.from(F.txs[0].events[0].hex, "hex")]), "Log truncated"];
+    C.handlePoolLogs(f.census, truncatedLogs, { signature: F.txs[0].signature, nowMs: fc.timestampSec * 1000, pool: F.pool });
+    C.handlePoolLogs(f.census, poolLogs(F.txs[1].events.map((e) => Buffer.from(e.hex, "hex"))), { signature: F.txs[1].signature, nowMs: F.txs[1].blockTime * 1000 + 500, pool: F.pool });
+    const [r] = C.finishPoolsAtStop(f.census);
+    assert.equal(r.firstTradeAtOpen, false, "the first trade seen is not at the open reserves");
+    assert.equal(r.logTruncatedNotes, 1);
+    assert.ok(r.poolOddReasons.includes("openLogTruncated"), "cut logs at the open make the row odd");
+    // a cut later in a busy pool is routine: counted, not odd
+    const g2 = feeder();
+    stdTrade(g2, F.mint, 100, fc.timestampSec - 1);
+    C.handlePoolLogs(g2.census, poolLogs(F.txs[1].events.map((e) => Buffer.from(e.hex, "hex"))), { signature: "late-1", nowMs: F.txs[1].blockTime * 1000 + 500, pool: F.pool });
+    stdTrade(g2, key(1850), 5, F.txs[1].blockTime + 60); // the stream clock moves on
+    C.handlePoolLogs(g2.census, [...poolLogs([]), "Log truncated"], { signature: "late-2", nowMs: (F.txs[1].blockTime + 60) * 1000, pool: F.pool });
+    const [r2] = C.finishPoolsAtStop(g2.census);
+    assert.equal(r2.logTruncatedNotes, 1);
+    assert.ok(!(r2.poolOddReasons || []).includes("openLogTruncated"), "a cut 60 s after the first trade is not odd");
+    assert.equal(C.memRow(f.census, Date.now()).poolLogTruncated, 1);
+    // the pump stream counts its truncated notifications too
+    const g = feeder();
+    C.handleLogs(g.census, ["Program x invoke [1]", "Log truncated"], { nowMs: T0 * 1000 });
+    assert.equal(C.memRow(g.census, T0 * 1000).logTruncated, 1);
+  }
+  ok("outliers: real 5 390 SOL opening buy decoded to the lamport (= pool token accounts), signed virtual quote keeps k (clamped breaks it), first seen after it -> poolOdd openJump; truncated migration logs -> openLogTruncated (a later cut only counted)");
+}
+
 // ---- 7. the process: static check, fixture RPC sees 0 requests, rows, --live, bad env, lock -------
 function importGraph(entry) {
   const seen = new Set();
@@ -1154,7 +1470,7 @@ async function runCensus(env, args = []) {
   const fileBytes = fs.statSync(path.join(censusDir, files[0])).size;
   const lastLine = Buffer.byteLength(JSON.stringify(rows[rows.length - 1])) + 1;
   assert.equal(mem[0].bytesWritten, fileBytes - lastLine, "census_mem counts the bytes written before it");
-  assert.ok(rows.every((r) => r.ts && r.censusRev === 2));
+  assert.ok(rows.every((r) => r.ts && r.censusRev === 3));
   assert.equal(connections, 0, `the fixture RPC saw ${connections} connection(s)`);
   assert.ok(!fs.existsSync(path.join(censusDir, ".census.lock")), "the lock is released at the stop");
   ok("process: real recorder on a fixture stream writes the expected rows; fixture RPC counted 0 requests");
@@ -1187,7 +1503,7 @@ async function runCensus(env, args = []) {
   assert.equal(a.ws.length, 3);
   assert.equal(a.pool.length, 1);
   const p = a.pool[0];
-  assert.deepEqual([p.mint, p.pool, p.mode, p.final, p.censusRev], [W.MIG_MINT, W.MIG_POOL, "a", "watch", 2]);
+  assert.deepEqual([p.mint, p.pool, p.mode, p.final, p.censusRev], [W.MIG_MINT, W.MIG_POOL, "a", "watch", 3]);
   assert.ok(Math.abs(p.ratioOpen - 1) < 0.01, `mock pool opens on the curve's scale (${p.ratioOpen})`);
   assert.equal(p.flowAll.trades, 2, "buy + launcher sell; the event past the 2 s window ends it");
   assert.equal(p.flowAll.sellSol > 0, true);
@@ -1206,7 +1522,7 @@ async function runCensus(env, args = []) {
   assert.deepEqual(off.ws, [SUB(PUMP_ID)], "CENSUS_POOL=0: no pool subscription at all");
   assert.equal(off.pool.length, 0);
   assert.equal(off.mem.poolMode, "off");
-  assert.ok(off.rows.some((x) => x.type === "census_mint" && x.migrated === true && x.censusRev === 2));
+  assert.ok(off.rows.some((x) => x.type === "census_mint" && x.migrated === true && x.censusRev === 3));
 
   const rej = await run({ WS_MOCK_POOL_REJECT: "1" });
   assert.deepEqual(rej.ws.slice(0, 3), [SUB(PUMP_ID), SUB(W.MIG_POOL), SUB(W.PUMPSWAP)], "rejected pool subscription -> one on the PumpSwap program");

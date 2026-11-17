@@ -165,7 +165,7 @@ create was not seen), `inUsHours` and `hourUtc` (of the opening event).
 
 ## Mint census
 
-`node scripts/mint-census.mjs` (`lib/mint-census.mjs`, censusRev 2) records EVERY pump.fun launch the
+`node scripts/mint-census.mjs` (`lib/mint-census.mjs`, censusRev 3) records EVERY pump.fun launch the
 stream shows — base rates and early predictors for a new strategy, where the shadow lab sees only
 mints at fill >= 92 % and journals features only when a variant opens. Read-only: the pump program's
 log stream and nothing else (zero RPC calls, no keypair, `--live` refused). Its own instance lock
@@ -183,7 +183,9 @@ A mint that trades again after its idle row continues and later writes a new row
 `resumed: true` (milestones and counters carried over; the flow features of the resumed part start
 from zero). **Analysis takes the last row per mint**; one unique mint = one observation; never pool
 different `censusRev` (rev 2 = rev 1 + `census_pool`; its `census_mint` rows are unchanged except
-`censusRev`, so rev-1 and rev-2 mint rows may be compared, pool rows exist only in rev 2).
+`censusRev`, so rev-1 and rev-2 mint rows may be compared, pool rows exist only in rev 2). **Rev 3
+changes `census_mint` semantics** (the fill of mayhem and other-quote curves, below): rev-3 mint rows
+must not be pooled with rev 1 / 2 without a note; for normal SOL curves the numbers are the same.
 
 Row fields: `mint`, `createSec` (on-chain), `createSeen`, `launcher` (= create `user`, the signer),
 `isCreator` (`user == creator`), `launches24h` (launcher's creates in 24 h incl. this one, lower
@@ -191,8 +193,11 @@ bound for the first 24 h of a run), `devBuySol` (launcher's / creator's buys in 
 the first 10 s), `hourUtc` (of `createSec`, else of the first event), `maxFill`, `trades`,
 `uniqueTraders`, `lastSec`, `final`, `maxLagSec` (local clock − on-chain time, max over the mint's
 events), flags `partial` / `stall` / `resumed`, and `unpricedTrades` (when > 0: trade events
-whose payload carries zero reserves — about 9 % of all trade events, and for some mints every
-event; such a mint has `maxFill: null`, unknown, not 0). Rows with `unpricedTrades` also carry
+whose payload carries a zero SOL side — rev 3: these are curves quoted in another mint, see below;
+before rev 3 such a mint had `maxFill: null`). Rev 3 adds `tokenFillEvents` (events whose fill came
+from the token side), `mayhem: true` (the TradeEvent's `mayhem_mode`), `quoteMint` (the curve's quote
+mint when it is not SOL) and `completeSeen: false` (completed by its pool's own event, see the pool
+section). Rows with `unpricedTrades` also carry
 `unpricedLens` (sorted distinct payload lengths of those events, at most 4), and the raw bytes of the
 mint's FIRST such event: `unpricedSample` (bytes 8..24, right after the discriminator — for trade-v3
 that is the first half of the mint key) and `unpricedTail` (bytes 89..129: timestamp and the four
@@ -203,8 +208,9 @@ guessed). Rows with `maxFill < CENSUS_FULL_MIN_FILL` (25) stop there (compact). 
 `migrated`, `completeSec` and `milestones`:
 
 `milestones["25"|"50"|…]` — taken at the FIRST event whose fill reaches the milestone (a jump
-20 → 60 % records 25 and 50 at that event): `sec`, `secFromCreate`, `fill`, `price` (curve spot, SOL
-per token), `lagSec`, `holders` (wallets with a buy), `launcherBuySol`, `launcherSellSol`,
+20 → 60 % records 25 and 50 at that event): `sec`, `secFromCreate`, `fill`, `fillSource` (rev 3:
+`"price"` = realSol / 85 SOL, `"token"` = the token side), `price` (curve spot, SOL per token; null on
+an event without the SOL side), `lagSec`, `holders` (wallets with a buy), `launcherBuySol`, `launcherSellSol`,
 `launcherSold`, `feat` (the rev-7 `feat` names from `lib/gshadow-features.mjs buildFeatures`:
 `ageSec`, `creatorBuySol`, `creatorSellSol`, `creatorTrades`, `creatorLaunches24h`, `sameNameRecent`,
 `trades`, `uniqueTraders`, `topWalletTradeShare`, `topWalletVolShare`, `top5NetSol`, `top5NetShare`,
@@ -220,6 +226,32 @@ the next 60 s carry `stall: true`), `census_gap` (see below), `census_mem` (ever
 counts, `gaps`, `gapSecTotal`, `wsReconnects`, `unpricedByLen` {payload length: events}). Memory is bounded: a mint's state is
 dropped with its row, the launcher / creator / name indexes are trimmed by on-chain age, idle mints
 are remembered 24 h (for `resumed`).
+
+**Fill from the token side (rev 3, KODING #21c).** The pump `TradeEvent` (IDL 2026-11) carries
+`quote_mint`, `virtual_quote_reserves`, `real_quote_reserves` and `mayhem_mode` after `ix_name`.
+Measured on 66 872 live events (2026-11-17, 15 min) plus a 14-min raw sample:
+- the "unpriced" events (zero SOL side, ~17 % of trade events) are ALL curves quoted in another mint
+  (USDC, other pump tokens, ...; none SOL-quoted). Their token side is the standard curve
+  (virtual − real tokens = 279.9e12 in every event), and the SOL-equivalent fill from it,
+  `tokenFill = (30 / 85) × (1.073e15 / vTok − 1) × 100` (the constant product: vSol = 30 SOL × 1.073e15 /
+  vTok), equals their quote-side fill (real quote / (initial virtual quote × 85 / 30)) to
+  p50 7e-7 pp / max 0.027 pp (10 748 events of non-mayhem other-quote curves). NOT `1 − realTok / 793.1e12`:
+  that is the share of tokens sold (50 % sold = 20.7 % fill);
+- mayhem curves (~60 % of creates) have the standard token side but their virtual SOL is cut on the
+  fly (k / k0 from 0.004 to 9): they COMPLETE (real tokens 0) with ~0.1–1 SOL raised, i.e. a SOL fill of
+  0.1–1 %. Rev 2 never saw these completions: 7 of 12 curve completions in the 14-min sample (6 mayhem,
+  1 other-quote) were invisible to it;
+- on normal SOL curves the token-side fill equals realSol / 85 to < 0.0001 pp (26 461 events).
+So rev 3 takes the fill from the token side for an event without the SOL side and for every mayhem
+event (when the token side is standard; a non-standard one — 5 mints at 211.8e12 in the sample —
+keeps the old rule), and the SOL fill otherwise. The completion is `fill >= 100` on that fill
+(= real tokens 0), for every curve; on a standard token side the fill is capped at 99.99 while real
+tokens remain (a rounded 99.996 is not a completion). A fill > 200 % is not a curve state (two
+non-pump "mints" with one event at 1.8e9 % were seen live): the event counts as a trade without a
+fill (`badFill` in `census_mem`). Prices stay SOL-only (no derived price). Curves quoted in another
+mint get no pool watch (their pool is not the WSOL canonical pool; `poolSkipped`). `census_mem` adds
+`tokenFill` (events) and `logTruncated` (pump notifications whose logs the validator cut: events after
+the cut are lost).
 
 **Stream gaps.** `lib/ws.mjs` reconnects silently, and during a drop the census misses events (a
 milestone is then recorded at the next event; a mint created meanwhile is `createSeen: false`). No
@@ -242,7 +274,13 @@ transaction (its `CreatePoolEvent` = the pool's opening reserves) and the first 
 (subscribing at the completion missed them: the first SEEN trade was 4–10 s late, vault 59–77 SOL instead
 of the open vault). Until the curve completes the watch is pending (events kept, no window, no row); a
 mint that ends without completing (idle / shutdown row) drops it: no `census_pool` row,
-`poolPresubDropped` in `census_mem`. Prices come
+`poolPresubDropped` in `census_mem`. **Rev 3 (#21c):** a pending watch whose pool shows its own
+`CreatePoolEvent` or a trade while the mint's completion was not seen is activated (the curve did
+complete): the mint row is written as `final: "complete"`, `migrated: true`, `completeSeen: false`
+(`completeSec` = the `CreatePoolEvent` second if that was the event, else null), and the pool row
+carries `completeSeen: false` (`poolActivatedNoComplete` in `census_mem`). If the curve's completing
+event arrives after that (the pump and pool subscriptions are separate streams), the watch takes its
+second and price (`lateComplete: true`, `poolLateComplete`). Prices come
 from the pool's own Buy/SellEvents: before the trade = (quote vault + `virtual_quote_reserves`) /
 base vault, after the trade = the same after the trade's amounts — SOL per token, the unit of the
 curve prices (a fixture test shows the first pool price at 0.997 of the curve's last price; without
@@ -251,8 +289,11 @@ watch ends `CENSUS_POOL_WATCH_SEC` (3600) later, earlier after `CENSUS_IDLE_SEC`
 (`final: "idle"`), or at the stop (`final: "shutdown"`, `partial: true`).
 
 Row fields: `mint`, `pool`, `mode` (subscription mode, see below), `final`, `completeSec` (curve),
-`curveEndPrice` (curve price at the completing event), `firstPoolSec`, `poolDelaySec` (first pool event
-− completion), `firstPoolPrice` (before the first trade), `ratioOpen` (= `firstPoolPrice /
+`completeSeen` (rev 3), `curveEndPrice` and `curveEndSource` (rev 3: `"price"` = the curve price at the
+completing event; `"standard"` = the constant 4.1088e-7 of a normal SOL curve whose completion was not
+seen or had no SOL side; `"lastPrice"` = a mayhem curve without a seen completion: its last SOL price,
+with that event's fill in `curveEndFill`), `firstPoolSec`, `poolDelaySec` (first pool event
+− completion; null when `completeSec` is null), `firstPoolPrice` (before the first trade), `ratioOpen` (= `firstPoolPrice /
 curveEndPrice`), `quoteReserveSolAtFirst` (real SOL in the vault before the first trade);
 the open (#21b, when the `CreatePoolEvent` was seen): `t0` (`"create"` = the open was seen, `"trade"`
 = it was not; t = 0 of every checkpoint stays the first pool TRADE either way), `poolOpenSec`,
@@ -274,7 +315,15 @@ sells by the census row's launcher / creator in the first 5 m; null when unknown
 `notes`, `failedNotes`, `logKB` (mode a: every notification of the pool's subscription; mode b:
 successful transactions holding the pool's events) and `traffic` {`pre`, `m0_5`, `m5_15`, `m15_60`}
 (the same per window, seconds from the first trade by the stream clock); flags
-`partial` / `stall` / `gap`. Join to `census_mint` by `mint`. Precision: a price "after" a trade is
+`partial` / `stall` / `gap`; rev 3: `logTruncatedNotes` (notifications of this pool whose logs were
+cut) and `poolOdd: true` with `poolOddReasons` — `"openJump"` (first seen price >= 1.5 × the curve end)
+and / or `"openLogTruncated"` (logs cut before the first pool trade or within 10 s of it; later cuts
+are routine in busy pools and only counted). The six rev-2 outliers (`ratioOpen` 1.8–4 090) were checked on chain
+(KODING_REPORT_21c): the data is real — buys in the pool's opening slot (one of 5 390 SOL), some of
+them inside the migration transaction itself, whose logs end with `Log truncated` so the stream never
+shows them; the census saw the pool only after them. `virtual_quote_reserves` is signed and goes
+negative after such a buy (−34.4 SOL there); rev 3 uses it signed (rev 2 clamped it to 0: a price
+error of ~0.6 % in those pools only). Join to `census_mint` by `mint`. Precision: a price "after" a trade is
 exact for the base side; in ~20 % of consecutive trades some pools keep the coin-creator + buyback
 fees in the quote vault, so the next event's reserves are higher by those fees (< 0.1 % of the price);
 checkpoints therefore use the next event's own reserves whenever one exists.
@@ -292,7 +341,8 @@ in-process — measured 2026-11-16 on the public endpoint: ~140 notifications/s,
 subscriptions, processed once), `poolFailedTx`, `poolNotes`, `poolLogMB`, and (#21b) `poolPending`
 (pre-subscribed pools waiting for their completion), `poolPresubs`, `poolPresubDropped`,
 `poolPresubDroppedTraded` (dropped although pool trades had arrived: the completion was missed),
-`poolOpens`.
+`poolOpens`, and (rev 3) `poolActivatedNoComplete`, `poolLateComplete`, `poolLogTruncated`,
+`poolSkipped`.
 
 ```powershell
 node scripts/mint-census.mjs                                  # until Ctrl+C
