@@ -167,7 +167,7 @@ function feeder(cfg = {}) {
   const rows = C.finishAll(f.census);
   const c = rows.find((x) => x.mint === small);
   const full = rows.find((x) => x.mint === exact);
-  const compactKeys = ["type", "censusRev", "mint", "createSec", "createSeen", "launcher", "isCreator", "launches24h", "devBuySol", "hourUtc", "maxFill", "trades", "uniqueTraders", "lastSec", "final", "maxLagSec", "partial"];
+  const compactKeys = ["type", "censusRev", "mint", "createSec", "createSeen", "launcher", "isCreator", "launches24h", "devBuySol", "hourUtc", "maxFill", "trades", "uniqueTraders", "lastSec", "final", "maxLagSec", "partial", "mayhem"];
   assert.deepEqual(Object.keys(c), compactKeys, "compact row = the listed fields only");
   assert.equal(c.maxFill, 24.9);
   assert.ok(full.milestones && full.milestones["25"], "maxFill 25 -> full row with snapshots");
@@ -648,8 +648,8 @@ function poolCensus(cfg = {}) {
   assert.deepEqual(C.handlePoolLogs(off.census, poolLogs([W.pumpSwapPayload(W.poolSim(MP).trade({ side: "buy", sol: 1, pool: S.canonicalPool(new PublicKey(m)).toBase58(), user: A, ts: T0 + 11 }))]), { nowMs: (T0 + 11) * 1000 }), []);
   assert.deepEqual(C.finishPoolsAtStop(off.census), []);
   assert.equal(C.memRow(off.census, T0 * 1000).poolMode, "off");
-  // census_mint rows: the same keys as rev 1 (only censusRev changed)
-  assert.deepEqual(Object.keys(mig), ["type", "censusRev", "mint", "createSec", "createSeen", "launcher", "isCreator", "launches24h", "devBuySol", "hourUtc", "maxFill", "trades", "uniqueTraders", "lastSec", "final", "maxLagSec", "name", "symbol", "creator", "creatorSource", "firstSec", "firstSeenFill", "maxFillSec", "migrated", "completeSec", "milestones"]);
+  // census_mint rows: the same keys as rev 1 (only censusRev changed) + #21e mayhem (always present)
+  assert.deepEqual(Object.keys(mig), ["type", "censusRev", "mint", "createSec", "createSeen", "launcher", "isCreator", "launches24h", "devBuySol", "hourUtc", "maxFill", "trades", "uniqueTraders", "lastSec", "final", "maxLagSec", "name", "symbol", "creator", "creatorSource", "firstSec", "firstSeenFill", "maxFillSec", "migrated", "completeSec", "milestones", "mayhem"]);
 
   // env
   const e = C.parseCensusEnv({});
@@ -1102,7 +1102,7 @@ function poolCensus(cfg = {}) {
     assert.ok(r.milestones["50"].price > 0);
     assert.equal(r.milestones["75"].ratioMinAfter, null, "a token-side milestone has no price: no ratio (never 0)");
     assert.equal(r.milestones["25"].secTo100, 5);
-    assert.ok(!("quoteMint" in r) && !("mayhem" in r));
+    assert.ok(!("quoteMint" in r) && r.mayhem === false, "#21e: a parsed non-mayhem tail -> mayhem false");
     const [p] = C.finishPoolsAtStop(f.census);
     assert.deepEqual([p.completeSeen, p.curveEndSource, p.curveEndPrice], [true, "standard", C.STANDARD_CURVE_END], "unpriced completion of a normal SOL curve: the constant curve end");
     assert.equal(C.memRow(f.census, (T0 + 7) * 1000).tokenFill, 3);
@@ -1369,6 +1369,306 @@ function poolCensus(cfg = {}) {
   ok("outliers: real 5 390 SOL opening buy decoded to the lamport (= pool token accounts), signed virtual quote keeps k (clamped breaks it), first seen after it -> poolOdd openJump; truncated migration logs -> openLogTruncated (a later cut only counted)");
 }
 
+// ---- 19. #21e: pool traffic budget (phase 1 logs -> phase 2 vaults), vault price, mayhem tri-state ------
+const PA = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "amm-pool-accounts.json"), "utf8"));
+const acct = (data, slot) => W.accountResult(data, slot);
+{
+  // (a) the vault derivation on 7 real pools (normal + mayhem): = PoolState @139 / @171; decoders
+  const T22 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+  const SPL = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  assert.equal(PA.pools.length, 7);
+  let mayhem = 0;
+  for (const x of PA.pools) {
+    assert.equal(S.canonicalPool(new PublicKey(x.mint)).toBase58(), x.pool);
+    assert.deepEqual(S.poolVaults(x.mint, x.pool), { baseVault: x.baseVault, quoteVault: x.quoteVault }, `${x.mint}: derived vaults`);
+    const d = Buffer.from(x.pool_account, "base64");
+    const dec = PSS.decodePool(d);
+    assert.deepEqual([dec.baseVault.toBase58(), dec.quoteVault.toBase58()], [x.baseVault, x.quoteVault], "the pool account names the same vaults");
+    assert.equal(S.poolAccountVirtual(d), dec.virtualQuoteReserves, "virtual @245 = the AMM sell decoder's");
+    assert.deepEqual([x.baseOwner, x.quoteOwner], [T22, SPL]);
+    assert.equal(S.tokenAccountAmount(Buffer.from(x.base_account, "base64")) > 0n, true);
+    if (dec.isMayhem) {
+      mayhem += 1;
+      assert.ok(dec.virtualQuoteReserves < 0n, "mayhem pools carry a NEGATIVE virtual quote (signed)");
+    }
+  }
+  assert.equal(mayhem, 2);
+  assert.equal(S.tokenAccountAmount(Buffer.alloc(71)), null);
+  assert.equal(S.poolAccountVirtual(Buffer.alloc(260)), null);
+  ok("vaults: derivation = PoolState vaults on 7 real pools (5 normal, 2 mayhem), Token-2022 base / SPL quote; amount @64, signed virtual @245");
+}
+{
+  // (b) phase 2 on a REAL pool (HUZcQqm6..., the 900 MB/h pool of #21c): the census prices the slot from
+  // the real base vault, quote vault and pool account exactly as (quote + virtual) / base
+  const x = PA.pools.find((p) => p.mint.startsWith("HUZcQqm6"));
+  const f = feeder({ idleSec: 5000, poolLogsSec: 30 });
+  f.create(x.mint, { creator: key(1901), ts: T0 });
+  assert.equal(f.trade(x.mint, 100, { ts: T0 + 10 })[0].migrated, true);
+  const pw = f.census.pools;
+  const subs = [];
+  pw.hooks.watchVaults = (w) => subs.push([w.vault.baseVault, w.vault.quoteVault, w.pool]);
+  C.handlePoolLogs(f.census, poolLogs([W.pumpSwapPayload(W.poolSim(MP).trade({ side: "buy", sol: 1, pool: x.pool, user: key(1902), ts: T0 + 12 }))]), { signature: "real-1", nowMs: (T0 + 12) * 1000, pool: x.pool });
+  f.trade(key(1903), 3, { ts: T0 + 42 });
+  C.sweepPoolWatch(f.census);
+  assert.deepEqual(subs, [[x.baseVault, x.quoteVault, x.pool]], "phase 2 subscribes the real vaults + the pool account");
+  for (const [kind, b64] of [["pool", x.pool_account], ["base", x.base_account], ["quote", x.quote_account]]) C.handlePoolAccount(f.census, acct(Buffer.from(b64, "base64"), x.slot), { pool: x.pool, kind });
+  const base = Buffer.from(x.base_account, "base64").readBigUInt64LE(64);
+  const quote = Buffer.from(x.quote_account, "base64").readBigUInt64LE(64);
+  const virt = PSS.decodePool(Buffer.from(x.pool_account, "base64")).virtualQuoteReserves;
+  const want = ((Number(quote) + Number(virt)) / Number(base)) * 1e-3;
+  const w = pw.byPool.get(x.pool);
+  assert.ok(Math.abs(w.lastPrice / want - 1) < 1e-12, `vault price ${w.lastPrice} = ${want}`);
+  assert.ok(want > 1e-8 && want < 1e-5, "SOL per whole token, the census scale");
+  const [row] = C.finishPoolsAtStop(f.census);
+  assert.deepEqual([row.phase2, row.logsCutReason, row.logsUntilSec, row.vaults.prices, row.vaults.virtSource], ["vaults", "time", 30, 1, "account"]);
+  // (the mock curve ends at 1.07e-7, below this real pool's price: the vault price is the row's max)
+  assert.equal(row.maxRatioAll, Math.round((want / row.curveEndPrice) * 1e4) / 1e4, "the vault price enters the row's ratios");
+  ok(`vault price from a real fixture: (quote ${Number(quote) / 1e9} + virtual ${Number(virt) / 1e9}) SOL / base -> ${want.toPrecision(4)} SOL per token`);
+}
+{
+  // (c) phase switch by TIME on the mock pool; phase-2 prices drive min / max / checkpoints, logs drive flows
+  const { f, m, pool, sim, trade } = poolCensus({ poolLogsSec: 60 });
+  const pw = f.census.pools;
+  const calls = [];
+  pw.hooks.unwatch = (p) => calls.push(["unwatch", p]);
+  pw.hooks.watchVaults = (w) => calls.push(["vaults", w.vault.baseVault, w.vault.quoteVault]);
+  pw.hooks.unwatchVaults = (p) => calls.push(["unwatchVaults", p]);
+  const first = T0 + 105;
+  trade({ side: "buy", sol: 1, user: key(1911), ts: first });
+  trade({ side: "sell", tokens: 2_000_000_000_000n, user: key(1912), ts: first + 20 });
+  f.trade(key(1913), 3, { ts: first + 59 });
+  C.sweepPoolWatch(f.census);
+  assert.deepEqual(calls, [], "59 s after the first trade: still logs");
+  f.trade(key(1913), 3, { ts: first + 60 });
+  C.sweepPoolWatch(f.census);
+  const v = S.poolVaults(m, pool);
+  assert.deepEqual(calls, [["unwatch", pool], ["vaults", v.baseVault, v.quoteVault]], "60 s: logs dropped, vaults subscribed");
+  assert.equal(pw.counts.poolLogsCutTime, 1);
+  const tradesBefore = pw.byPool.get(pool).fAll.trades;
+  trade({ side: "buy", sol: 5, user: key(1914), ts: first + 61 }); // in flight at the cut: ignored
+  assert.deepEqual([pw.counts.poolAfterCut, pw.byPool.get(pool).fAll.trades], [1, tradesBefore]);
+  // a pumped state, seen only through the vaults (sim.st did not move: the in-flight trade was ignored
+  // by the census, but the simulator applied it — use explicit amounts)
+  const B = sim.st.base - 30_000_000_000_000n;
+  const Q = sim.st.quote + 9_000_000_000n;
+  const V = sim.st.virtual;
+  f.trade(key(1913), 3, { ts: first + 70 });
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(B), 5000), { pool, kind: "base" });
+  assert.equal(pw.byPool.get(pool).vault.prices, 0, "base vault alone: no price");
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(Q), 4999), { pool, kind: "quote" });
+  assert.equal(pw.byPool.get(pool).vault.prices, 0, "vaults of different slots: no price");
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(Q), 5000), { pool, kind: "quote" });
+  const p1 = S.quotePerBase(Q + V, B);
+  assert.equal(pw.byPool.get(pool).vault.prices, 1);
+  assert.equal(pw.byPool.get(pool).lastPrice, p1);
+  // the pool account of the same slot changes the virtual: the slot is priced again with it
+  C.handlePoolAccount(f.census, acct(W.poolAccountData(V + 1_000_000_000n), 5000), { pool, kind: "pool" });
+  const p2 = S.quotePerBase(Q + V + 1_000_000_000n, B);
+  assert.deepEqual([pw.byPool.get(pool).vault.prices, pw.byPool.get(pool).lastPrice, pw.byPool.get(pool).vault.virtSource], [2, p2, "account"]);
+  C.handlePoolAccount(f.census, acct(Buffer.alloc(10), 5001), { pool, kind: "base" });
+  assert.equal(pw.counts.vaultBadData, 1);
+  f.trade(key(1913), 3, { ts: first + 310 });
+  const [row] = C.finishPoolsAtStop(f.census);
+  assert.deepEqual(calls.at(-1), ["unwatchVaults", pool], "the vaults are dropped with the watch");
+  const ce = row.curveEndPrice;
+  const r = (x) => Math.round((x / ce) * 1e4) / 1e4;
+  assert.deepEqual([row.phase2, row.logsCutReason, row.logsUntilSec], ["vaults", "time", 60]);
+  assert.equal(row.maxRatioAll, r(p2), "the vault-phase peak is the max");
+  assert.equal(row.ratio5m, r(p2), "a checkpoint after the cut takes the vault price");
+  assert.ok(row.ratio1m !== null && row.ratio1m < row.maxRatioAll, "1 m: the logs-phase price");
+  assert.equal(row.flowAll.trades, 2, "flows: phase 1 only");
+  assert.ok(row.flow1m !== null, "1 m window covered by the logs (cut at 60 s)");
+  assert.deepEqual([row.flow5m, row.largestSellSol3m, row.launcherSellSol5m, row.creatorSellSol5m], [null, null, null, null], "windows the logs did not cover are null, never partial");
+  assert.deepEqual(row.vaults.notes, { base: 2, quote: 2, pool: 1 });
+  assert.deepEqual([row.vaults.prices, row.vaults.p2Notes], [2, 5]);
+  assert.ok(row.vaults.KB > 0);
+  const mem = C.memRow(f.census, (first + 310) * 1000);
+  assert.deepEqual([mem.poolLogsCutTime, mem.poolLogsCutBytes, mem.vaultPrices, mem.vaultNotes], [1, 0, 2, 5]);
+  assert.ok(mem.vaultMB > 0);
+  ok("phase switch by time: logs until first + CENSUS_POOL_LOGS_SEC, then vaults (paired by slot, pool account = virtual); ratios from both phases, flows phase 1 only, uncovered windows null");
+}
+{
+  // (d) phase switch by BYTES; never before the first trade; never in mode b; CENSUS_POOL_VAULTS=0 = rev 3
+  const failedBig = (n) => [`Program ${PUMPSWAP_ID} invoke [1]`, "Program log: " + "x".repeat(n), `Program ${PUMPSWAP_ID} failed: custom program error: 0x1774`];
+  const run = (cfg, { modeB = false } = {}) => {
+    const { f, pool, trade } = poolCensus({ poolLogsMB: 0.01, ...cfg }); // 10 485.76 bytes
+    const pw = f.census.pools;
+    if (modeB) pw.mode = "b";
+    const calls = [];
+    pw.hooks.watchVaults = () => calls.push("vaults");
+    C.handlePoolLogs(f.census, failedBig(12_000), { signature: "pre", nowMs: (T0 + 104) * 1000, pool, failed: true });
+    const pre = pw.byPool.get(pool).phase;
+    trade({ side: "buy", sol: 1, user: key(1921), ts: T0 + 105 });
+    return { f, pw, pool, calls, pre };
+  };
+  const a = run({});
+  assert.equal(a.pre, 1, "12 KB of logs BEFORE the first trade: no cut (nothing to price yet)");
+  assert.deepEqual([a.pw.byPool.get(a.pool).phase, a.pw.byPool.get(a.pool).logsCutReason, a.calls], [2, "bytes", ["vaults"]], "the first trade's notification passes 10 KB: cut by bytes");
+  assert.equal(a.pw.counts.poolLogsCutBytes, 1);
+  // crossing exactly: below the limit stays, the notification that passes it cuts
+  const { f, pool, trade } = poolCensus({ poolLogsMB: 0.01 });
+  const pw = f.census.pools;
+  trade({ side: "buy", sol: 1, user: key(1922), ts: T0 + 105 });
+  const w = pw.byPool.get(pool);
+  const left = Math.ceil(pw.cfg.logsBytes - w.logBytes);
+  const lineFor = (n) => n - failedBig(0).reduce((s, l) => s + l.length, 0);
+  C.handlePoolLogs(f.census, failedBig(lineFor(left - 1)), { signature: "b1", nowMs: (T0 + 106) * 1000, pool, failed: true });
+  assert.ok(w.phase === 1 && pw.cfg.logsBytes - w.logBytes > 0 && pw.cfg.logsBytes - w.logBytes <= 1, "just below the limit: logs");
+  C.handlePoolLogs(f.census, failedBig(10), { signature: "b2", nowMs: (T0 + 107) * 1000, pool, failed: true });
+  assert.deepEqual([w.phase, w.logsCutReason], [2, "bytes"], "past the limit: vaults");
+  const b = run({}, { modeB: true });
+  assert.deepEqual([b.pw.byPool.get(b.pool).phase, b.calls], [1, []], "mode b: no per-pool cut");
+  const off = run({ poolVaults: false });
+  assert.deepEqual([off.pw.byPool.get(off.pool).phase, off.calls], [1, []], "CENSUS_POOL_VAULTS=0: logs for the whole window");
+  const [row] = C.finishPoolsAtStop(off.f.census);
+  assert.deepEqual([row.phase2, row.logsUntilSec, row.logsCutReason, row.vaults], [null, null, null, null]);
+  // env
+  const e = C.parseCensusEnv({});
+  assert.deepEqual([e.poolLogsSec, e.poolLogsMB, e.poolVaults, e.poolVaultCheck], [900, 40, true, false]);
+  for (const [k, v] of [["CENSUS_POOL_LOGS_SEC", "0"], ["CENSUS_POOL_LOGS_SEC", "1.5"], ["CENSUS_POOL_LOGS_MB", "0"], ["CENSUS_POOL_VAULTS", "yes"], ["CENSUS_POOL_VAULT_CHECK", "2"]]) assert.throws(() => C.parseCensusEnv({ [k]: v }), new RegExp(k));
+  ok("phase switch by bytes: the notification passing CENSUS_POOL_LOGS_MB cuts (just below does not); not before the first trade; not in mode b; CENSUS_POOL_VAULTS=0 keeps rev 3; env 900 s / 40 MB");
+}
+{
+  // (e) vault check: vaults from the first trade beside the logs; each vault slot vs the event of that
+  // slot that left the same base vault, in either arrival order
+  const { f, pool, sim } = poolCensus({ poolVaultCheck: true });
+  const pw = f.census.pools;
+  const calls = [];
+  pw.hooks.watchVaults = () => calls.push("vaults");
+  pw.hooks.unwatch = () => calls.push("unwatch");
+  const ev = (o, slot, ts) => C.handlePoolLogs(f.census, poolLogs([W.pumpSwapPayload(sim.trade({ pool, ts, ...o }))]), { signature: `chk-${slot}-${ts}`, nowMs: ts * 1000, pool, slot });
+  ev({ side: "buy", sol: 1, user: key(1931) }, 7000, T0 + 105);
+  assert.deepEqual(calls, ["vaults"], "check mode: vaults at the first trade, logs kept");
+  // slot 7000: the vaults hold exactly the event's state after the trade -> error 0
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(sim.st.base), 7000), { pool, kind: "base" });
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(sim.st.quote), 7000), { pool, kind: "quote" });
+  // slot 7001: the vaults arrive FIRST (two streams); the quote vault is 2 000 lamports above the event's
+  // computed state (a coin-creator fee kept in the vault, KODING_REPORT_21) -> a tiny error
+  const sim2 = W.poolSim(sim.st);
+  const next = sim2.trade({ side: "buy", sol: 0.4, pool, user: key(1932), ts: T0 + 106 });
+  void next;
+  const st2 = { ...sim2.st };
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(st2.base), 7001), { pool, kind: "base" });
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(st2.quote + 2_000n), 7001), { pool, kind: "quote" });
+  ev({ side: "buy", sol: 0.4, user: key(1932) }, 7001, T0 + 106);
+  // slot 7002: an event whose state the vaults never show (another tx of the slot came last) -> unmatched
+  ev({ side: "sell", tokens: 1_000_000_000_000n, user: key(1933) }, 7002, T0 + 107);
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(sim.st.base + 5n), 7002), { pool, kind: "base" });
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(sim.st.quote), 7002), { pool, kind: "quote" });
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(sim.st.base), 7300), { pool, kind: "base" });
+  C.handlePoolAccount(f.census, acct(W.tokenAccountData(sim.st.quote), 7300), { pool, kind: "quote" });
+  const w = pw.byPool.get(pool);
+  assert.equal(w.vault.pairs, 2);
+  assert.equal(w.vault.errs[0], 0, "same state, same price");
+  const want = S.quotePerBase(st2.quote + 2_000n + st2.virtual, st2.base) / S.quotePerBase(st2.quote + st2.virtual, st2.base) - 1;
+  assert.ok(Math.abs(w.vault.errs[1] - want) < 1e-15 && want > 0 && want < 1e-7, `fee left in the vault: error ${w.vault.errs[1]}`);
+  assert.equal(w.vault.unmatched, 1, "a vault slot whose state no event of the slot left: unmatched");
+  assert.equal(w.vault.prices, 0, "phase 1: the vault prices do not feed the path");
+  const [row] = C.finishPoolsAtStop(f.census);
+  assert.deepEqual([row.vaults.checkPairs, row.vaults.checkUnmatched], [2, 1]);
+  const mem = C.memRow(f.census, (T0 + 107) * 1000);
+  assert.deepEqual([mem.vaultCheckPairs, mem.vaultCheckUnmatched, mem.vaultCheckVirtualDiff], [2, 1, 0]);
+  assert.equal(mem.vaultCheckErrMax, Number(want.toPrecision(3)));
+  ok(`vault check: vault slot vs the same-state trade event, either arrival order; unmatched counted (max error ${mem.vaultCheckErrMax})`);
+}
+{
+  // (f) lib/ws.mjs: account subscriptions end with accountUnsubscribe (also before the confirmation)
+  const WebSocketServer = (await import("ws")).default.Server;
+  const { SolanaWs } = await import("../lib/ws.mjs?real-socket");
+  const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  const seen = [];
+  let hold = null;
+  wss.on("connection", (sock) => {
+    let next = 500;
+    sock.on("message", (raw) => {
+      const m = JSON.parse(String(raw));
+      seen.push([m.method, m.params[0], m.params[1]?.encoding ?? null]);
+      if (m.method === "accountSubscribe") {
+        next += 1;
+        const id = next;
+        const answer = () => sock.send(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: id }));
+        if (m.params[0] === "HOLD") hold = answer; // confirmed later
+        else if (m.params[0] === "REJECT") sock.send(JSON.stringify({ jsonrpc: "2.0", id: m.id, error: { code: -32603, message: "too many" } }));
+        else {
+          answer();
+          setTimeout(() => sock.send(JSON.stringify({ jsonrpc: "2.0", method: "accountNotification", params: { subscription: id, result: acct(W.tokenAccountData(7n), 9) } })), 20);
+        }
+      } else if (m.method.endsWith("Unsubscribe")) sock.send(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: true }));
+    });
+  });
+  await new Promise((r) => wss.on("listening", r));
+  const ws = new SolanaWs(`ws://127.0.0.1:${wss.address().port}`);
+  await ws.connect();
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const got = [];
+  const errs = [];
+  const a = ws.subscribeAccount("ACC1", (r) => got.push(r), "confirmed", { encoding: "base64" });
+  ws.subscribeAccount("REJECT", () => {}, "confirmed", { encoding: "base64", onError: (e) => errs.push(e.message) });
+  const h = ws.subscribeAccount("HOLD", () => {}, "confirmed", { encoding: "base64" });
+  for (let i = 0; i < 100 && (got.length === 0 || !hold); i++) await wait(20);
+  assert.equal(S.tokenAccountAmount(Buffer.from(got[0].value.data[0], "base64")), 7n, "the handler gets the notification's result");
+  assert.deepEqual(errs, ["too many"], "a rejected account subscription goes to its onError");
+  assert.equal(ws.unsubscribe(a), true);
+  assert.equal(ws.unsubscribe(h), true, "unsubscribed before the server confirmed");
+  hold();
+  for (let i = 0; i < 100 && seen.filter((x) => x[0] === "accountUnsubscribe").length < 2; i++) await wait(20);
+  assert.deepEqual(seen.filter((x) => x[0] === "accountUnsubscribe").map((x) => x[1]).sort(), [501, 503], "accountUnsubscribe for both (never logsUnsubscribe)");
+  assert.ok(!seen.some((x) => x[0] === "logsUnsubscribe"));
+  assert.ok(seen.filter((x) => x[0] === "accountSubscribe").every((x) => x[2] === "base64"));
+  assert.ok(![...ws.subs.values()].some((s) => s.params[0] === "ACC1" || s.params[0] === "HOLD"), "ended subscriptions are not resubscribed after a reconnect");
+  await ws.close();
+  await new Promise((r) => wss.close(r));
+  ok("lib/ws.mjs: subscribeAccount base64 + onError; unsubscribe -> accountUnsubscribe, also for one not yet confirmed");
+}
+{
+  // (g) census_mint mayhem: true / false / null (#21d point 2) on REAL creates and trades
+  const FXM = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "pump-create-mayhem.json"), "utf8"));
+  const { parseCreate } = await import("../lib/events.mjs");
+  const may = FXM.events.find((e) => e.mayhem === true);
+  const nor = FXM.events.find((e) => e.mayhem === false);
+  const feed = (f, b64, ts) => C.handleLogs(f.census, [DATA(Buffer.from(b64, "base64")), "Program x success"], { nowMs: ts * 1000 + 300 });
+  const lastRow = (f, mint) => C.finishAll(f.census).find((r) => r.mint === mint);
+  const tsOf = (b64) => Number(Buffer.from(b64, "base64").readBigInt64LE(89));
+  for (const e of FXM.events) assert.equal(C.createMayhem(parseCreate(Buffer.from(e.create, "base64"))), e.mayhem, `${e.mint}: create tail byte = the trade's mayhem_mode`);
+  // create only (no trade): from the create
+  let f = feeder();
+  feed(f, may.create, T0);
+  assert.equal(lastRow(f, may.mint).mayhem, true, "real mayhem create only -> true");
+  f = feeder();
+  feed(f, nor.create, T0);
+  assert.equal(lastRow(f, nor.mint).mayhem, false, "real non-mayhem create only -> false");
+  // trade only (create not seen): from the trade tail
+  f = feeder();
+  feed(f, may.trade, tsOf(may.trade));
+  assert.equal(lastRow(f, may.mint).mayhem, true, "real mayhem trade only -> true");
+  f = feeder();
+  feed(f, nor.trade, tsOf(nor.trade));
+  assert.equal(lastRow(f, nor.mint).mayhem, false, "real non-mayhem trade only -> false");
+  // neither tail parsable: null (the mock create has no token-program tail; a trade cut to 200 bytes
+  // still parses as a trade, with reserves, but has no tail)
+  f = feeder();
+  const m0 = key(1941);
+  f.create(m0, { creator: key(1942), ts: T0 });
+  const short = tradePayload({ mint: m0, user: key(1944), isBuy: true, realSol: 0.3 * REAL_100, solLamports: 1e8, ts: T0 + 1 }).subarray(0, 200);
+  C.handleLogs(f.census, [DATA(short), "Program x success"], { nowMs: (T0 + 1) * 1000 + 300 });
+  const r0 = lastRow(f, m0);
+  assert.equal(r0.trades, 1, "the short trade was processed");
+  assert.ok("mayhem" in r0 && r0.mayhem === null, "no parsable tail -> null (present, not absent)");
+  f = feeder();
+  const m1 = key(1945);
+  f.create(m1, { creator: key(1946), ts: T0 });
+  f.trade(m1, 30, { ts: T0 + 1 }); // the mock trade-v3 carries a full tail with mayhem_mode 0
+  assert.equal(lastRow(f, m1).mayhem, false, "a full trade tail with mayhem_mode 0 -> false");
+  assert.equal(C.createMayhem({ tail: Buffer.alloc(40) }), null, "a tail that does not start with a token program -> null");
+  // a disagreement: the later true wins, counted once
+  f = feeder();
+  feed(f, nor.create, T0);
+  for (const [i, fill] of [[1, 10], [2, 11]]) C.handleLogs(f.census, [DATA(W.curveTradePayload({ mint: nor.mint, user: key(1943), ts: T0 + i, vTok: W.vTokAtFill(fill), mayhem: true, sol: { vSol: 400_000_000n, realSol: 300_000_000n } })), "Program x success"], { nowMs: (T0 + i) * 1000 });
+  const mem = C.memRow(f.census, T0 * 1000);
+  assert.deepEqual([lastRow(f, nor.mint).mayhem, mem.mayhemConflict, mem.mayhemFromCreate, mem.mayhemFromTrade], [true, 1, 1, 0]);
+  ok("mayhem tri-state: real create (tail byte after token_program) and real trade tails -> true / false; neither -> null; conflict -> true, counted");
+}
+
 // ---- 7. the process: static check, fixture RPC sees 0 requests, rows, --live, bad env, lock -------
 function importGraph(entry) {
   const seen = new Set();
@@ -1545,8 +1845,25 @@ async function runCensus(env, args = []) {
   assert.ok(drop.ws.includes(SUB(dropPool)), "a mint at 94 % gets its pool subscribed");
   assert.equal(drop.ws.filter((x) => x.startsWith("logsUnsubscribe")).length, 2, "MIG pool at its window end, the dropped pool at the stop");
   assert.deepEqual([drop.mem.poolPresubs, drop.mem.poolPresubDropped, drop.pool.length], [2, 1, 1], "dropped: no census_pool row");
+  // #21e: phase 2 in the real process — 0.001 MB of logs pass at the first trade's notification: the
+  // pool's logs are dropped, its base vault / quote vault / pool account subscribed (base64), two slots
+  // priced from them, all three dropped at the stop
+  const v = await run({ CENSUS_POOL_WATCH_SEC: "30", CENSUS_POOL_LOGS_MB: "0.001" });
+  assert.match(v.out, /logs until 900s \/ 0\.001 MB then vaults/);
+  const ACC = (a) => `accountSubscribe ${a}`;
+  assert.deepEqual(v.ws.slice(0, 2), [SUB(PUMP_ID), SUB(W.MIG_POOL)]);
+  assert.match(v.ws[2] || "", /^logsUnsubscribe \d+$/, "phase 1 ends: the pool's logs are dropped");
+  assert.deepEqual(v.ws.slice(3, 6), [ACC(W.MIG_VAULTS.baseVault), ACC(W.MIG_VAULTS.quoteVault), ACC(W.MIG_POOL)], "then the two vaults and the pool account");
+  assert.equal(v.ws.filter((x) => /^accountUnsubscribe \d+$/.test(x)).length, 3, "all three dropped at the stop");
+  assert.equal(v.ws.length, 9);
+  const vp = v.pool[0];
+  assert.deepEqual([vp.phase2, vp.logsCutReason, vp.logsUntilSec, vp.final, vp.flowAll.trades], ["vaults", "bytes", 0, "shutdown", 1]);
+  assert.deepEqual([vp.vaults.prices, vp.vaults.notes, vp.vaults.virtSource], [2, { base: 2, quote: 2, pool: 1 }, "account"]);
+  const top = W.VAULT_STATES[1];
+  assert.equal(vp.maxRatioAll, Math.round((S.quotePerBase(top.quote + W.MIG_POOL_START.virtual, top.base) / vp.curveEndPrice) * 1e4) / 1e4, "the vault-phase price is the max");
+  assert.deepEqual([v.mem.poolLogsCutBytes, v.mem.vaultPrices, v.mem.vaultNotes, v.mem.vaultSubs, v.mem.poolPhase2], [1, 2, 5, 0, 0]);
   assert.equal(connections, 0, `the fixture RPC saw ${connections} connection(s)`);
-  ok("process (rev 2): mode a subscribe at complete / unsubscribe at the end; CENSUS_POOL=0 no pool subscription; rejection -> mode b; mode b at start; #21b open + first trade caught, traffic, presub drop; no key text");
+  ok("process (rev 2): mode a subscribe at complete / unsubscribe at the end; CENSUS_POOL=0 no pool subscription; rejection -> mode b; mode b at start; #21b open + first trade caught, traffic, presub drop; #21e logs -> vaults (accountSubscribe x3, priced, accountUnsubscribe x3); no key text");
 }
 
 {

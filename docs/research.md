@@ -195,7 +195,11 @@ the first 10 s), `hourUtc` (of `createSec`, else of the first event), `maxFill`,
 events), flags `partial` / `stall` / `resumed`, and `unpricedTrades` (when > 0: trade events
 whose payload carries a zero SOL side — rev 3: these are curves quoted in another mint, see below;
 before rev 3 such a mint had `maxFill: null`). Rev 3 adds `tokenFillEvents` (events whose fill came
-from the token side), `mayhem: true` (the TradeEvent's `mayhem_mode`), `quoteMint` (the curve's quote
+from the token side), `mayhem` (rev 3.1, #21e: always present, `true` / `false` / `null` — the create-v2
+tail's `is_mayhem_mode` (the byte after `token_program`; it equals the TradeEvent's `mayhem_mode` in 31 of 31
+real mints), else the first parsed TradeEvent tail, `null` when neither was parsed; a later `true` wins and a
+disagreement is counted (`mayhemConflict`); rev-3 rows written before #21e carry `mayhem: true` or no field),
+`quoteMint` (the curve's quote
 mint when it is not SOL) and `completeSeen: false` (completed by its pool's own event, see the pool
 section). Rows with `unpricedTrades` also carry
 `unpricedLens` (sorted distinct payload lengths of those events, at most 4), and the raw bytes of the
@@ -343,6 +347,35 @@ subscriptions, processed once), `poolFailedTx`, `poolNotes`, `poolLogMB`, and (#
 `poolPresubDroppedTraded` (dropped although pool trades had arrived: the completion was missed),
 `poolOpens`, and (rev 3) `poolActivatedNoComplete`, `poolLateComplete`, `poolLogTruncated`,
 `poolSkipped`.
+
+**Pool traffic budget (rev 3.1, KODING #21e; `CENSUS_REV` stays 3).** One hot pool sent 900 MB of logs in
+its hour on a US evening (#21c), and 80–100 % of a pool's log bytes come in its first 5 minutes. Phase 1
+(`logs`, as above) lasts until the first of `CENSUS_POOL_LOGS_SEC` (900) after the first pool trade or the
+moment the pool's log bytes pass `CENSUS_POOL_LOGS_MB` (40; bytes before the first trade count but cut
+only after it). Phase 2 (`vaults`, until the window ends): the pool's logs subscription is dropped and
+three `accountSubscribe` (base64, confirmed) follow the price — the base vault (ATA(pool, mint,
+Token-2022)), the quote vault (ATA(pool, WSOL, SPL Token)) and the pool account (its signed
+`virtual_quote_reserves` @245); the derivation equals the PoolState's vault fields on 7 real pools.
+A slot is priced as (quote vault + virtual) / base vault once BOTH vaults of that slot arrived (both
+move on every trade; a slot where only one moved is skipped), again if the pool account of the same
+slot comes after them; the virtual is the pool account's last value, else the last trade event's.
+Failed transactions change no account. Phase 2 feeds `ratio*`, `minRatio*` / `maxRatio*` and the idle
+clock; flows, traders, launcher / creator sells and the largest sell come from phase 1 only: a fixed
+window phase 1 did not cover (`flow1m` < 60 s, `largestSell*3m` < 180 s, `flow5m` and the 5-m sells
+< 300 s) is `null`, never partial, and `flowAll` covers phase 1. New row fields: `logsUntilSec`
+(seconds from the first trade when phase 1 ended; null = never cut), `logsCutReason` (`"time"` |
+`"bytes"`), `phase2` (`"vaults"` | null), `vaults` {`notes` {`base`, `quote`, `pool`}, `KB` (JSON size
+of the notifications), `p2Notes`, `p2KB` (phase 2 only), `prices` (slots priced in phase 2),
+`virtSource` (`"account"` | `"event"`), `virtChanges`} or null; phase-1 traffic stays `logKB` /
+`traffic`. Mode `b` has no per-pool cut. `CENSUS_POOL_VAULTS=0` = rev 3 (logs for the whole window).
+`CENSUS_POOL_VAULT_CHECK=1` (measurement): the vaults are subscribed already at the first pool trade,
+beside the logs, and each vault slot is compared with the trade event of that slot that left the
+same base vault: `vaults.checkPairs`, `checkUnmatched`, `checkErrP50`, `checkErrMax` per row and
+`vaultCheckPairs`, `vaultCheckUnmatched`, `vaultCheckVirtualDiff`, `vaultCheckErrP50` / `P90` / `Max` in
+`census_mem`. `census_mem` also adds `poolPhase2`, `poolLogsCutTime`, `poolLogsCutBytes`, `poolAfterCut`
+(pool events of a pool already in phase 2: in flight at the cut, ignored), `vaultNotes`, `vaultMB`,
+`vaultPrices`, `vaultBadData`, `vaultUnknown`, `vaultSubRejected`, `vaultSubs`, and `mayhemFromCreate`,
+`mayhemFromTrade`, `mayhemConflict`.
 
 ```powershell
 node scripts/mint-census.mjs                                  # until Ctrl+C

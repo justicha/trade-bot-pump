@@ -34,6 +34,12 @@
 // Rev 3 (KODING #21c): the fill of mayhem curves and of curves quoted in another mint comes from the
 // token side (they complete now too); a pending pool that shows its own event activates without the
 // completion (completeSeen: false). See lib/mint-census.mjs.
+// Rev 3.1 (KODING #21e): pool traffic budget. A pool's logs subscription ends at the first of
+// CENSUS_POOL_LOGS_SEC (900) after its first trade or CENSUS_POOL_LOGS_MB (40) of logs; then the price
+// follows accountSubscribe on its two vaults + the pool account until the window ends (phase 2,
+// lib/census-pool.mjs). CENSUS_POOL_VAULTS=0 = logs for the whole window (rev 3); CENSUS_POOL_VAULT_CHECK=1
+// subscribes the vaults from the first pool trade and measures the vault price against the trade
+// events (census_mem vaultCheckErr*). census_mint `mayhem` is true / false / null.
 if (process.argv.includes("--live")) {
   console.error("[census] mint-census is read-only; --live is not accepted.");
   process.exit(1);
@@ -119,7 +125,15 @@ const poolStream = census.pools
         if (!Array.isArray(logs)) return;
         const failed = !(logs[logs.length - 1] || "").includes("success");
         try {
-          writeRows(C.handlePoolLogs(census, logs, { signature: result?.value?.signature ?? null, nowMs: Date.now(), pool, failed }));
+          writeRows(C.handlePoolLogs(census, logs, { signature: result?.value?.signature ?? null, nowMs: Date.now(), pool, failed, slot: result?.context?.slot ?? null }));
+        } catch (e) {
+          handlerErrors += 1;
+          if (handlerErrors === 1) log0(`handler error: ${e?.stack || e}`);
+        }
+      },
+      onAccount: (result, pool, kind) => {
+        try {
+          writeRows(C.handlePoolAccount(census, result, { pool, kind }));
         } catch (e) {
           handlerErrors += 1;
           if (handlerErrors === 1) log0(`handler error: ${e?.stack || e}`);
@@ -130,7 +144,7 @@ const poolStream = census.pools
 
 log0(
   `read-only, no RPC | milestones ${cfg.milestones.join(" ")} % | idle ${cfg.idleSec}s | gap after ${cfg.gapSec}s of silence | full row at maxFill >= ${cfg.fullMinFill} % | ` +
-    `${census.pools ? `pools: mode ${census.pools.mode}, watch ${cfg.poolWatchSec}s, subscribe at fill ${cfg.poolPresubFill >= 100 ? "100 (completion)" : cfg.poolPresubFill}` : "pools: off (CENSUS_POOL=0)"} | ` +
+    `${census.pools ? `pools: mode ${census.pools.mode}, watch ${cfg.poolWatchSec}s, subscribe at fill ${cfg.poolPresubFill >= 100 ? "100 (completion)" : cfg.poolPresubFill}, ${cfg.poolVaults ? `logs until ${cfg.poolLogsSec}s / ${cfg.poolLogsMB} MB then vaults${cfg.poolVaultCheck ? " (vault check on)" : ""}` : "logs for the whole window (CENSUS_POOL_VAULTS=0)"}` : "pools: off (CENSUS_POOL=0)"} | ` +
     `output ${writer.file()} (UTC date) | rev ${C.CENSUS_REV}${cfg.maxSec > 0 ? ` | stops after ${cfg.maxSec}s` : ""}`,
 );
 log0("do not select text in this window: a paused console freezes the recorder (stalls are journaled)");
@@ -148,7 +162,7 @@ let houseAt = startedAt;
 let memAt = startedAt;
 
 function writeMem(now) {
-  const r = C.memRow(census, now, { rowsWritten: writer.written, bytesWritten: writer.bytes, handlerErrors, wsReconnects: Math.max(0, wsOpens - 1), ...rpcStats(), ...(poolStream ? { poolSubs: poolStream.poolSubs } : {}) });
+  const r = C.memRow(census, now, { rowsWritten: writer.written, bytesWritten: writer.bytes, handlerErrors, wsReconnects: Math.max(0, wsOpens - 1), ...rpcStats(), ...(poolStream ? { poolSubs: poolStream.poolSubs, vaultSubs: poolStream.vaultSubs } : {}) });
   writer.write(r);
   return r;
 }
@@ -181,7 +195,7 @@ const timer = setInterval(() => {
   if (MEM_MS > 0 && now - memAt >= MEM_MS) {
     memAt = now;
     const r = writeMem(now);
-    notes.push(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | live ${r.liveMints} | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}) | launchers ${r.launchers} | ${census.pools ? `pools live ${r.poolLive}, pending ${r.poolPending}, rows ${r.poolRows}, no-complete ${r.poolActivatedNoComplete}, subs ${r.poolSubs}, mode ${r.poolMode} | ` : ""}${(r.bytesWritten / 1048576).toFixed(2)} MB written`);
+    notes.push(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | live ${r.liveMints} | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}) | launchers ${r.launchers} | ${census.pools ? `pools live ${r.poolLive}, pending ${r.poolPending}, phase 2 ${r.poolPhase2}, rows ${r.poolRows}, no-complete ${r.poolActivatedNoComplete}, subs ${r.poolSubs} + vault ${r.vaultSubs}, logs ${r.poolLogMB} MB, vaults ${r.vaultMB} MB, mode ${r.poolMode} | ` : ""}${(r.bytesWritten / 1048576).toFixed(2)} MB written`);
   }
   for (const n of notes) log0(n); // console last: it is the thing that can block
 }, 1000);

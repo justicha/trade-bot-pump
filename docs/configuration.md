@@ -122,6 +122,10 @@ used when the variable is absent; "`.env.example`" is what the sample file ships
 | `CENSUS_POOL_WATCH_SEC` | `3600` | Mint census: how long (on-chain seconds from the first pool event) a migrated mint's pool is watched before its `census_pool` row; integer 1–86400. A pool with no event for `CENSUS_IDLE_SEC` ends earlier |
 | `CENSUS_POOL_PRESUB_FILL` | `92` | Mint census: subscribe a mint's (future) PumpSwap pool when its fill first reaches this %, so the migration and the first pool trades are caught; `100` = only at the completion (#21 behaviour); 50–100. A mint that ends without completing drops the subscription (no row); rev 3: a pending pool that shows its own event is activated without the completion (`completeSeen: false`) |
 | `CENSUS_POOL_MODE` | `a` | Mint census pool stream: `a` = one subscription per watched pool (light); `b` = one subscription on the whole PumpSwap program (~0.5 MB/s). A rejected pool subscription switches `a` → `b` by itself (loud log, `census_pool_mode` row) |
+| `CENSUS_POOL_LOGS_SEC` | `900` | Mint census rev 3.1 (#21e): a pool's logs subscription (phase 1) ends this many seconds after its first pool trade (stream clock); then its price follows the two vaults + the pool account (phase 2). Integer 1–86400 |
+| `CENSUS_POOL_LOGS_MB` | `40` | Mint census rev 3.1: phase 1 also ends when the pool's log bytes pass this many MB (0.001–100000) |
+| `CENSUS_POOL_VAULTS` | `1` | Mint census rev 3.1: `0` = no phase 2, logs for the whole watch (rev 3 behaviour); `1` = on |
+| `CENSUS_POOL_VAULT_CHECK` | `0` | Mint census rev 3.1, measurement: `1` = subscribe the vaults already at the first pool trade and compare the vault price with the trade events (phase-2 price error in `census_mem`) |
 | `REPLAY_MIN_TRADES` / `REPLAY_TEST_FRACTION` / `REPLAY_RESAMPLES` | `300` / `0.7` / `2000` | Replay strictness |
 | `SLIPPAGE_ASSUMED_BPS` | `50` | Extra slippage assumed by the cost model (`lib/fees.mjs`, `lib/pessimistic.mjs`) |
 

@@ -16,11 +16,14 @@
 // logsUnsubscribe is answered `true`. WS_MOCK_CENSUS_LOG=<file> appends every method the socket
 // receives ("logsSubscribe <mention>" / "logsUnsubscribe <subId>") so a test can check the lifecycle.
 // WS_MOCK_POOL_REJECT=1 answers a pool subscription with a JSON-RPC error (the mode b fallback).
+// #21e: accountSubscribe / accountUnsubscribe are logged the same way ("accountSubscribe <address>" /
+// "accountUnsubscribe <subId>"); MIG_POOL's base vault, quote vault and pool account then play
+// buildVaultNotifications (base64 account data, like the real endpoint with encoding base64).
 import fs from "node:fs";
 import { EventEmitter } from "node:events";
 import { PublicKey } from "@solana/web3.js";
 import { toBase58Safe } from "../../lib/events.mjs";
-import { canonicalPool } from "../../lib/pumpswap-stream.mjs";
+import { canonicalPool, poolVaults } from "../../lib/pumpswap-stream.mjs";
 import { createPayload, tradePayload } from "./ws-mock-shadow.mjs";
 
 const PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
@@ -244,6 +247,34 @@ export function buildPoolNotifications() {
   ];
 }
 
+// ---- #21e: MIG_POOL's accounts in phase 2 -----------------------------------------------------------
+export const MIG_VAULTS = poolVaults(MIG_MINT, MIG_POOL);
+// A token account (165 bytes, amount u64 @64) / a PoolState (301 bytes, virtual_quote_reserves i128 @245).
+export function tokenAccountData(amount) {
+  const b = Buffer.alloc(165);
+  b.writeBigUInt64LE(BigInt(amount), 64);
+  return b;
+}
+export function poolAccountData(virtual) {
+  const b = Buffer.alloc(301);
+  const v = BigInt(virtual);
+  b.writeBigUInt64LE(v & 0xffffffffffffffffn, 245);
+  b.writeBigInt64LE(v >> 64n, 253);
+  return b;
+}
+export const accountResult = (data, slot) => ({ context: { slot }, value: { lamports: 2_039_280, data: [data.toString("base64"), "base64"], owner: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", executable: false, rentEpoch: 0, space: data.length } });
+// Two slots of the pool after the logs phase (amounts in raw units); the pool account notifies once.
+export const VAULT_STATES = [
+  { slot: 3000, base: MIG_POOL_START.base - 5_000_000_000_000n, quote: MIG_POOL_START.quote + 1_500_000_000n },
+  { slot: 3001, base: MIG_POOL_START.base - 20_000_000_000_000n, quote: MIG_POOL_START.quote + 6_000_000_000n },
+];
+export function buildVaultNotifications(address) {
+  if (address === MIG_VAULTS.baseVault) return VAULT_STATES.map((x, i) => ({ delayMs: i ? 300 : 100, payload: () => accountResult(tokenAccountData(x.base), x.slot) }));
+  if (address === MIG_VAULTS.quoteVault) return VAULT_STATES.map((x, i) => ({ delayMs: i ? 300 : 150, payload: () => accountResult(tokenAccountData(x.quote), x.slot) }));
+  if (address === MIG_POOL) return [{ delayMs: 120, payload: () => accountResult(poolAccountData(MIG_POOL_START.virtual), 3000) }];
+  return [];
+}
+
 // ---- the socket ----------------------------------------------------------------------------------
 class CensusMockSocket extends EventEmitter {
   constructor(url) {
@@ -260,14 +291,14 @@ class CensusMockSocket extends EventEmitter {
     if (this.logFile) fs.appendFileSync(this.logFile, `${line}\n`);
   }
 
-  _play(list, subId, startMs = 200) {
+  _play(list, subId, startMs = 200, method = "logsNotification") {
     let acc = startMs;
     for (const n of list) {
       acc += n.delayMs;
       this.timers.push(
         setTimeout(() => {
           if (this.readyState !== 1) return;
-          this.emit("message", JSON.stringify({ jsonrpc: "2.0", method: "logsNotification", params: { subscription: subId, result: n.payload() } }));
+          this.emit("message", JSON.stringify({ jsonrpc: "2.0", method, params: { subscription: subId, result: n.payload() } }));
         }, acc),
       );
     }
@@ -281,9 +312,18 @@ class CensusMockSocket extends EventEmitter {
       return;
     }
     if (typeof msg.id !== "number") return;
-    if (msg.method === "logsUnsubscribe") {
-      this._log(`logsUnsubscribe ${msg.params?.[0]}`);
+    if (msg.method === "logsUnsubscribe" || msg.method === "accountUnsubscribe") {
+      this._log(`${msg.method} ${msg.params?.[0]}`);
       setTimeout(() => this.emit("message", JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: true })), 0);
+      return;
+    }
+    if (msg.method === "accountSubscribe") {
+      const address = msg.params?.[0];
+      this._log(`accountSubscribe ${address}`);
+      this.subId += 1;
+      const subId = this.subId;
+      setTimeout(() => this.emit("message", JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: subId })), 0);
+      this._play(buildVaultNotifications(address), subId, 0, "accountNotification");
       return;
     }
     if (msg.method !== "logsSubscribe") return;
