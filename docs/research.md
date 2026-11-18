@@ -393,7 +393,7 @@ Every switch writes one `rpc_switch` row — in the shadow journal (`data/journa
 in the census file:
 
 ```json
-{"type":"rpc_switch","fromIdx":1,"toIdx":2,"host":"mainnet.helius-rpc.com","reason":"ws:ws-handshake-429","failures":3,"at":"2026-11-16T12:00:03.120Z"}
+{"type":"rpc_switch","fromIdx":1,"toIdx":2,"host":"mainnet.helius-rpc.com","reason":"ws:ws-handshake-429","failures":3,"at":"2026-11-16T12:00:03.120Z","state":"exhausted","lastClose":{"code":1006,"reason":""},"lastError":"Unexpected server response: 429","attempts":3}
 ```
 
 - `fromIdx` / `toIdx`: 1-based positions in `RPC_URLS`; `host`: the host of the NEW endpoint.
@@ -403,10 +403,32 @@ in the census file:
   reached" / -32005 "Too many requests", Alchemy 429 "compute units per second capacity" / -32600
   "Monthly capacity limit exceeded", QuickNode -32007 / -32008 / -32029), `no-connect-60s` (no healthy websocket connect for 60 s).
   Prefix `all-exhausted` = every endpoint was exhausted and this is the 60 s retry of the
-  least-recently-failed one (expect one such row per minute until a key answers).
+  least-recently-failed one (expect one such row per minute until a key answers). Prefix
+  `all-unreachable` = the same retry while every endpoint is unreachable (#23: the device's network
+  is likely down, not the credits). Prefix `all-down` = the same retry while every endpoint is thin
+  or unreachable and none is out of credits. Census only: `census:thin-stream` (#23:
+  `CENSUS_THIN_GAPS` gaps within 10 min on the endpoint; see configuration.md).
 - `failures`: signals in a row on the old endpoint (`RPC_FAILOVER_AFTER`, default 3).
+- `state` (#23): why the old endpoint was left. `exhausted` = a limit signal (401 / 402 / 403 / 429,
+  limit / credits errors; blocked for `RPC_FAILOVER_COOLDOWN_MIN`, 60). `unreachable` =
+  `no-connect-60s` without a limit signal (blocked for `RPC_FAILOVER_UNREACH_MIN`, 2): NOT a credit
+  problem — a phone losing its network or put to sleep drops every key this way. `thin` (census
+  only) = the socket was up but the stream had `CENSUS_THIN_GAPS` gaps in 10 min (blocked for
+  `RPC_FAILOVER_UNREACH_MIN`); such rows also carry `thinGaps` (the gap count of the verdict).
+- `lastClose` (#23): the old endpoint's last websocket close in this window, `{code, reason}` (reason
+  scrubbed, ≤ 80 chars) or `null`. 1006 with an empty reason = the connection died without a close
+  frame (network); a provider close usually has its own code (1008 / 4xxx) and text.
+- `lastError` (#23): the old endpoint's last websocket error text in this window (scrubbed) or `null`.
+- `attempts` (#23): websocket connect attempts on the old endpoint in this no-connect window.
 
-`gshadow_mem` / `census_mem` carry `rpcIdx` (endpoint in use) and `rpcSwitches` (switches so far).
+`gshadow_mem` / `census_mem` carry `rpcIdx` (endpoint in use), `rpcSwitches` (switches so far) and
+`rpcUnreachable` (#23: how many of them were `state: "unreachable"`). `census_mem` also carries
+`rpcThin` (switches with `state: "thin"`) and `rpcLimitErrors` (#23): JSON-RPC error answers to any
+subscription (the pump one, pool / vault ones, unsubscribes) that name a plan limit, counted by
+error code (`{"-32005": 12, "?": 3}`; `"?"` = no numeric code; codes only, no text), e.g. Chainstack
+-32005 "You've exceeded the RPS limit" or "Concurrent websocket subscription limit reached: 1". The
+counter never switches by itself (the failover's own rules decide). The census reads them through an
+optional `SolanaWs.onRpcError` observer (unused by every other process).
 These are journal-only fields: decisions are unchanged (no SHADOW_REV / censusRev bump). Rows written
 around a switch carry the existing flags — the census `census_gap` / `gap: true` (the socket is down
 for a few seconds), the shadow `gshadow_stale_events` / `late` / stall flags — handle them as usual.

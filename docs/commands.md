@@ -89,3 +89,15 @@ to run one file: `node scripts/smoke.test.mjs`.
 
 Each direct command prints its own exact syntax when run without
 arguments: the files start with a "Usage" block.
+
+## Phone (Termux)
+
+Android puts Termux to sleep and kills its sockets, so a long shadow / census run on a phone drops
+every RPC endpoint in turn (`rpc_switch` rows with `state: "unreachable"`, the line
+`[rpc] no endpoint reachable ... the network of this device is likely down`). Before a long run:
+
+- run `termux-wake-lock` in the Termux session (release later with `termux-wake-unlock`);
+- disable battery optimisation for Termux (Android Settings → Apps → Termux → Battery → Unrestricted).
+
+Unreachable endpoints are tried again after `RPC_FAILOVER_UNREACH_MIN` (default 2 min), so the run
+resumes by itself once the network is back; see [configuration.md](configuration.md#rpc-and-network).

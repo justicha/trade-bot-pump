@@ -155,7 +155,7 @@ try {
 // RPC endpoint failover (KODING #20, journal only — no decision reads it): with RPC_URLS set, an
 // exhausted key (429 / 401 / 402 / 403, "limit / credits / max usage" errors, or 60 s without a websocket
 // connect) moves the stream AND the HTTP RPC of open positions to the next endpoint. Each switch is
-// an `rpc_switch` row; gshadow_mem carries rpcIdx / rpcSwitches. Without RPC_URLS: the single
+// an `rpc_switch` row; gshadow_mem carries rpcIdx / rpcSwitches / rpcUnreachable. Without RPC_URLS: the single
 // RPC_URL exactly as before. Endpoints are logged as "#n host" only (keys live in the URL).
 let RPC;
 try {
@@ -639,6 +639,8 @@ function memRow(now) {
     // KODING #20 (journal only): the endpoint in use (1-based) and the switches so far.
     rpcIdx: RPC.failover ? RPC.failover.idx : 1,
     rpcSwitches: RPC.failover ? RPC.failover.switches : 0,
+    // KODING #23: of those, switches for "unreachable" (no connect for 60 s), not for credits.
+    rpcUnreachable: RPC.failover ? RPC.failover.unreachableSwitches : 0,
     rssMB: Math.round(m.rss / 1048576),
     heapMB: Math.round(m.heapUsed / 1048576),
   };

@@ -1833,6 +1833,10 @@ async function runCensus(env, args = []) {
   assert.deepEqual([rej.pool[0].mode, rej.pool[0].final, rej.pool[0].flowAll.trades], ["b", "watch", 2]);
   assert.equal(rej.mem.poolSubs, 1);
   assert.equal(rej.mem.rpcSwitches, 0);
+  // #23: the plan-limit error of the pool subscription is counted by code (no failover needed).
+  assert.deepEqual(rej.mem.rpcLimitErrors, { "-32602": 1 }, `census_mem rpcLimitErrors (got ${JSON.stringify(rej.mem.rpcLimitErrors)})`);
+  assert.equal(rej.mem.rpcThin, 0);
+  assert.deepEqual(off.mem.rpcLimitErrors, {}, "no error: an empty map");
 
   const b = await run({ CENSUS_POOL_MODE: "b" });
   assert.deepEqual(b.ws.slice(0, 2), [SUB(PUMP_ID), SUB(W.PUMPSWAP)], "mode b: one program subscription from the start");

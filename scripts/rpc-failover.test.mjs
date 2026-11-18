@@ -18,6 +18,11 @@
 //   9. #22: RPC_URLS as a multi-line array in .env (lib/config.mjs parseEnvText), stray URL lines.
 //  10. #22 processes: the array from a real .env + a handshake 402 -> switch; a bad .env stops shadow /
 //      census and only warns elsewhere. HTTP 402 is in section 3.
+//  11. #23: "unreachable" (no connect 60 s, eligible again after RPC_FAILOVER_UNREACH_MIN) vs
+//      "exhausted" (limit signal, 60 min); the network-down line; rpc_switch diagnostics (state,
+//      lastClose, lastError, attempts) without key text; the ws disconnect line with the close code.
+//  12. #23 point 4: thin stream (CENSUS_THIN_GAPS gaps in 10 min -> state "thin"), fake clock.
+//  13. #23 point 4 in the census process: a mock endpoint with a gap every 2.5 s -> switch.
 import "./lib/test-env.mjs";
 import { cleanEnv } from "./lib/test-env.mjs";
 import assert from "node:assert/strict";
@@ -159,7 +164,7 @@ function mk(n, opts = {}) {
   fo.fail("http", "http-429");
   assert.equal(fo.idx, 2, "3 in a row: switched");
   assert.equal(rows.length, 1);
-  assert.deepEqual({ ...rows[0], at: undefined }, { type: "rpc_switch", fromIdx: 1, toIdx: 2, host: "h2.example", reason: "http:http-429", failures: 3, at: undefined });
+  assert.deepEqual({ ...rows[0], at: undefined }, { type: "rpc_switch", fromIdx: 1, toIdx: 2, host: "h2.example", reason: "http:http-429", failures: 3, at: undefined, state: "exhausted", lastClose: null, lastError: null, attempts: 0 });
   assert.equal(fo.fail("http", "x", 1), false, "a late answer of the endpoint we left is ignored");
   assert.equal(fo.stats().rpcSwitches, 1);
   ok("N in a row (default 3) switches; a success resets the run; stale answers of the old endpoint are ignored");
@@ -338,16 +343,22 @@ function wsServer({ subscribeError = false } = {}) {
   ws.baseReconnectMs = 50;
   ws.useFailover(fo);
   const got = [];
+  const rpcErrs = [];
+  ws.onRpcError = (e) => rpcErrs.push(e.code); // #23 observer (census rpcLimitErrors)
   ws.subscribeLogs("Prog1111111111111111111111111111111111111111", (r) => got.push(r.value.signature));
   await ws.connect();
   const t0 = Date.now();
   while (got.length < 5 && Date.now() - t0 < 10_000) await wait(50);
   assert.equal(w1.subs, 3, `#1 rejected the subscribe 3 times (got ${w1.subs})`);
+  assert.deepEqual(rpcErrs, [-32429, -32429, -32429], "#23: onRpcError sees every error answer, the failover still acts on them");
   assert.equal(fo.idx, 2);
   assert.equal(w2.subs, 1, "resubscribed on #2");
   assert.deepEqual(got, ["sig-1", "sig-2", "sig-3", "sig-4", "sig-5"], "events flow from #2");
   assert.equal(rows.length, 1);
   assert.match(rows[0].reason, /^ws:rpc-error -32429 max usage reached$/);
+  // #23: the socket of #1 is terminated AFTER the switch; its close belongs to #1, not to #2.
+  assert.equal(fo.st[0].lastClose?.code, 1006, `#1 keeps its own close (got ${JSON.stringify(fo.st[0].lastClose)})`);
+  assert.equal(fo.st[1].lastClose, null, "#2 is not blamed for #1's close");
   await ws.close();
   w1.close();
   w2.close();
@@ -462,13 +473,19 @@ function startCensus(env) {
   const rows = text.trim().split("\n").map((l) => JSON.parse(l));
   const sw = rows.filter((r) => r.type === "rpc_switch");
   assert.equal(sw.length, 1);
-  const { ts: _ts, at, ...swRest } = sw[0];
+  const { ts: _ts, at, state, lastClose, lastError, attempts, ...swRest } = sw[0];
   assert.deepEqual(swRest, { type: "rpc_switch", fromIdx: 1, toIdx: 2, host: "127.0.0.1", reason: "ws:ws-handshake-429", failures: 3 });
   assert.ok(Number.isFinite(Date.parse(at)), "at is an ISO time");
+  // #23 diagnostics: a limit status is "exhausted"; the socket's last close / error, attempts in the window.
+  assert.equal(state, "exhausted");
+  assert.equal(lastClose?.code, 1006, `the rejected handshake closes 1006 (got ${JSON.stringify(lastClose)})`);
+  assert.match(lastError, /Unexpected server response: 429/);
+  assert.equal(attempts, 3);
   assert.ok(rows.some((r) => r.type === "census_mint" && r.mint === W.MIG_MINT && r.migrated === true), "events flowed from #2 (the migrated mint row)");
   const mem = rows.filter((r) => r.type === "census_mem").at(-1);
   assert.equal(mem.rpcIdx, 2);
   assert.equal(mem.rpcSwitches, 1);
+  assert.equal(mem.rpcUnreachable, 0, "#23: census_mem rpcUnreachable (a 429 switch is not one)");
   assert.ok(!KEY_RE.test(child.out + child.err + text), `no URL / key text in stdout, stderr or rows: ${(child.out + child.err + text).match(new RegExp(`.{0,60}(${KEY_RE.source}).{0,20}`, "i"))?.[0]}`);
   ok("census: #1 rejects the handshake with 429 x3 -> #2, resubscribed, rows flow, rpc_switch row, census_mem rpcIdx 2; no key text anywhere");
 }
@@ -528,7 +545,7 @@ function startCensus(env) {
   const text = fs.readdirSync(jdir).map((f) => fs.readFileSync(path.join(jdir, f), "utf8")).join("");
   const rows = text.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
   const mem = rows.filter((r) => r.type === "gshadow_mem").at(-1);
-  assert.ok(mem && mem.rpcIdx === 1 && mem.rpcSwitches === 0, `gshadow_mem rpcIdx / rpcSwitches (got ${JSON.stringify(mem && { rpcIdx: mem.rpcIdx, rpcSwitches: mem.rpcSwitches })})`);
+  assert.ok(mem && mem.rpcIdx === 1 && mem.rpcSwitches === 0 && mem.rpcUnreachable === 0, `gshadow_mem rpcIdx / rpcSwitches / rpcUnreachable (#23) (got ${JSON.stringify(mem && { rpcIdx: mem.rpcIdx, rpcSwitches: mem.rpcSwitches, rpcUnreachable: mem.rpcUnreachable })})`);
   assert.ok(rows.some((r) => r.type === "gshadow_open"), "the lab still trades on the stream");
   assert.ok(!KEY_RE.test(out + err + text), "no key text in the shadow output or journal");
   // Bad list: loud stop, no key echoed.
@@ -708,6 +725,382 @@ function startCensus(env) {
     assert.ok(!KEY_RE.test(other.t));
   }
   ok("#22 processes: census reads RPC_URLS from a .env array, #1 answers the handshake 402 x3 -> #2, rows flow; unclosed array / stray URL line -> census and shadow exit 1 naming the line, another process warns once; no key text");
+}
+
+// ---- 11. #23: unreachable vs exhausted, network-down line, close codes ------------------------------
+// One no-connect window on the current endpoint: an attempt, then another one 61 s later.
+const noConnect = (m) => {
+  m.fo.beforeWsAttempt();
+  m.adv(61_000);
+  m.fo.beforeWsAttempt();
+};
+const loudLines = (logs) => logs.filter(([lv]) => lv === "error").map(([, m]) => m);
+{
+  // (a) no-connect-60s -> "unreachable": eligible again after 2 min (not after the 60 min cooldown).
+  const a = mk(2);
+  noConnect(a); // #1 unreachable -> #2
+  assert.equal(a.fo.idx, 2);
+  assert.equal(a.rows[0].state, "unreachable");
+  assert.equal(a.rows[0].reason, "ws:no-connect-60s");
+  assert.equal(a.fo.stats().rpcUnreachable, 1);
+  assert.equal(a.fo.stats().rpcSwitches, 1);
+  const warn = a.logs.find(([lv]) => lv === "warn")[1];
+  assert.match(warn, /^\[rpc\] endpoint #1 h1\.example unreachable \(ws:no-connect-60s, 1 connect attempt\(s\), last close none\) -> switching to #2 h2\.example$/);
+  assert.ok(!/exhausted/.test(warn), "the switch line does not call it exhausted");
+  a.adv(60_000); // #1 unreachable 60 s ago
+  for (let i = 0; i < 3; i++) a.fo.fail("ws", "ws-handshake-402"); // #2 out of credits
+  assert.equal(a.fo.allDown, true, "1 min after: #1 is not eligible yet");
+
+  const b = mk(2);
+  noConnect(b);
+  b.adv(121_000); // #1 unreachable 2 min 1 s ago
+  for (let i = 0; i < 3; i++) b.fo.fail("ws", "ws-handshake-402");
+  assert.equal(b.fo.allDown, false, "2 min after: #1 is eligible again (the 60 min cooldown would block it)");
+  assert.equal(b.fo.idx, 1);
+  assert.equal(b.rows.at(-1).state, "exhausted", "the 402 switch is an exhaustion");
+  assert.equal(b.fo.stats().rpcUnreachable, 1);
+
+  // RPC_FAILOVER_UNREACH_MIN: default 2, range 0..60, in the startup line.
+  const env = { RPC_URLS: "https://a.example/?api-key=FIXTUREKEY1,https://b.example/?api-key=FIXTUREKEY2" };
+  const d = F.setupFailover({ env });
+  assert.equal(d.failover.unreachMs, 120_000);
+  assert.match(d.lines.join("\n"), /cooldown 60 min \(exhausted\), 2 min \(unreachable\)/);
+  assert.equal(F.setupFailover({ env: { ...env, RPC_FAILOVER_UNREACH_MIN: "0" } }).failover.unreachMs, 0);
+  assert.equal(F.setupFailover({ env: { ...env, RPC_FAILOVER_UNREACH_MIN: "60" } }).failover.unreachMs, 3_600_000);
+  assert.throws(() => F.setupFailover({ env: { ...env, RPC_FAILOVER_UNREACH_MIN: "61" } }), /RPC_FAILOVER_UNREACH_MIN must be a number in 0\.\.60/);
+  ok("#23 no-connect-60s -> state unreachable, eligible again after 2 min (not 1 min, not 60); RPC_FAILOVER_UNREACH_MIN default 2, 0..60");
+}
+{
+  // (b) 402 x3 -> exhausted, still blocked at 59 min, eligible at 61 min (unchanged).
+  const a = mk(2);
+  for (let i = 0; i < 3; i++) a.fo.fail("ws", "ws-handshake-402");
+  assert.equal(a.rows[0].state, "exhausted");
+  assert.equal(a.fo.stats().rpcUnreachable, 0);
+  a.adv(59 * 60_000);
+  for (let i = 0; i < 3; i++) a.fo.fail("ws", "ws-handshake-402");
+  assert.equal(a.fo.allDown, true, "59 min: #1 still exhausted");
+  const b = mk(2);
+  for (let i = 0; i < 3; i++) b.fo.fail("ws", "ws-handshake-402");
+  b.adv(61 * 60_000);
+  for (let i = 0; i < 3; i++) b.fo.fail("ws", "ws-handshake-402");
+  assert.equal(b.fo.allDown, false);
+  assert.equal(b.fo.idx, 1, "61 min: back to #1");
+  ok("#23 402 x3 -> still exhausted for 60 min (unchanged)");
+}
+{
+  // (c1) every endpoint unreachable, 2 endpoints (all-down mode): the network-down line, no "add a key".
+  const a = mk(2);
+  noConnect(a); // #1 at +61 s
+  a.adv(61_000);
+  a.fo.beforeWsAttempt(); // #2 at +122 s: #1 only 61 s ago -> all down
+  assert.equal(a.fo.allDown, true);
+  const loud = loudLines(a.logs);
+  assert.deepEqual(loud, ["[rpc] no endpoint reachable for 122 s (all 2 unreachable, none out of credits): the network of this device is likely down; retrying every 60 s"]);
+  assert.ok(!/add a key|exhausted/i.test(loud.join("\n")));
+  assert.match(a.rows.at(-1).reason, /^all-unreachable ws:no-connect-60s$/, "the 60 s probe row");
+  assert.equal(a.rows.at(-1).state, "unreachable");
+  assert.equal(a.fo.reconnectDelay(1000), 60_000, "retrying every 60 s");
+  a.fo.wsHealthy();
+  assert.ok(a.logs.some(([lv, m]) => lv === "warn" && /answers again: failover recovered/.test(m)), "recovery line as today");
+
+  // (c2) 4 endpoints: still cycling (each eligible again after 2 min) -> the line is logged too, once per 10 min.
+  const c = mk(4);
+  c.fo.beforeWsAttempt();
+  for (let k = 0; k < 8; k++) {
+    c.adv(61_000);
+    c.fo.beforeWsAttempt();
+  }
+  assert.equal(c.fo.allDown, false, "4 keys, 61 s each: one is always eligible again");
+  assert.equal(c.rows.length, 8);
+  assert.ok(c.rows.every((r) => r.state === "unreachable"));
+  assert.equal(c.fo.stats().rpcUnreachable, 8);
+  const loud4 = loudLines(c.logs);
+  assert.equal(loud4.length, 1, `one loud line in 8 min (got ${loud4.length})`);
+  assert.match(loud4[0], /^\[rpc\] no endpoint reachable for 244 s \(all 4 unreachable, none out of credits\): the network of this device is likely down/);
+  c.fo.wsHealthy();
+  assert.ok(c.logs.some(([lv, m]) => lv === "warn" && /answers again: failover recovered/.test(m)), "recovery line after the network-down line");
+
+  // (c3) one exhausted + the rest unreachable -> the old "ALL ... exhausted ... add a key" line.
+  const e = mk(3);
+  e.fo.beforeWsAttempt();
+  for (let i = 0; i < 3; i++) e.fo.fail("ws", "ws-handshake-402"); // #1 exhausted -> #2
+  e.adv(61_000);
+  e.fo.beforeWsAttempt(); // #2 unreachable -> #3
+  e.adv(61_000);
+  e.fo.beforeWsAttempt(); // #3 unreachable: #1 cooling, #2 61 s ago -> all down
+  assert.equal(e.fo.allDown, true);
+  const loudE = loudLines(e.logs);
+  assert.equal(loudE.length, 1);
+  assert.match(loudE[0], /^\[rpc\] ALL 3 RPC endpoint\(s\) exhausted \(last: ws:no-connect-60s\)\..*Add a key to RPC_URLS/);
+  assert.ok(!/network/.test(loudE[0]));
+  assert.match(e.rows.at(-1).reason, /^all-exhausted /);
+  ok("#23 all unreachable -> network-down line (all-down and cycling), no 'add a key'; one exhausted + rest unreachable -> the old line; recovery line");
+}
+{
+  // (d) rpc_switch diagnostics from the controller hooks: scrubbed, per endpoint, fresh per window.
+  const a = mk(2);
+  a.fo.beforeWsAttempt();
+  a.fo.wsError(new Error("connect ETIMEDOUT https://h1.example/?api-key=FIXTUREKEY1 now"), 1);
+  a.fo.wsClosed(1006, Buffer.from(""), 1);
+  a.fo.beforeWsAttempt();
+  a.fo.wsClosed(4000, Buffer.from("bye wss://h1.example/?api-key=FIXTUREKEY1"), 1);
+  a.adv(61_000);
+  a.fo.beforeWsAttempt();
+  const r = a.rows[0];
+  assert.deepEqual({ state: r.state, lastClose: r.lastClose, lastError: r.lastError, attempts: r.attempts }, { state: "unreachable", lastClose: { code: 4000, reason: "bye <url>" }, lastError: "connect ETIMEDOUT <url> now", attempts: 2 });
+  assert.ok(!KEY_RE.test(JSON.stringify(a.rows) + JSON.stringify(a.logs)), "no key text in rows / lines");
+  assert.match(a.logs.find(([lv]) => lv === "warn")[1], /unreachable \(ws:no-connect-60s, 2 connect attempt\(s\), last close 4000 bye <url>, last error: connect ETIMEDOUT <url> now\)/);
+  // A late close of the old socket is recorded for the endpoint it belongs to, not the new one.
+  a.fo.wsClosed(1006, "", 1);
+  a.adv(61_000);
+  a.fo.beforeWsAttempt();
+  assert.deepEqual([a.rows[1].fromIdx, a.rows[1].lastClose, a.rows[1].lastError, a.rows[1].attempts], [2, null, null, 1], "#2's own window: nothing of #1's socket");
+  ok("#23 rpc_switch row: state / lastClose {code, reason} / lastError / attempts, scrubbed, per endpoint");
+}
+{
+  // (e) real sockets: #1 accepts TCP but kills every upgrade (key in the path), #2 serves. With a short
+  // no-connect window the census-style socket moves to #2; the row and every line are key-free.
+  const { log: wsLog } = await import("../lib/logger.mjs");
+  const lines = [];
+  const origWarn = wsLog.warn;
+  wsLog.warn = (...a) => {
+    lines.push(a.join(" "));
+    origWarn(...a);
+  };
+  const dead = http.createServer((_req, res) => res.end());
+  dead.upgrades = 0;
+  dead.on("upgrade", (_req, sock) => {
+    dead.upgrades += 1;
+    sock.destroy();
+  });
+  await new Promise((r) => dead.listen(0, "127.0.0.1", r));
+  const w2 = await wsServer();
+  const fl = [];
+  const fo = new F.RpcFailover({ endpoints: F.parseRpcUrlList(`http://127.0.0.1:${dead.address().port}/FIXTUREKEYD1/,http://127.0.0.1:${w2.address().port}/FIXTUREKEYD2/`), noConnectMs: 1500, log: (lv, m) => fl.push([lv, m]) });
+  const rows = [];
+  fo.onSwitch((r) => rows.push(r));
+  const { SolanaWs } = await import("../lib/ws.mjs");
+  const ws = new SolanaWs("ws://127.0.0.1:1");
+  ws.baseReconnectMs = 100;
+  ws.maxReconnectMs = 300;
+  ws.useFailover(fo);
+  const got = [];
+  ws.subscribeLogs("Prog1111111111111111111111111111111111111111", (r) => got.push(r.value.signature));
+  await ws.connect();
+  const t0 = Date.now();
+  while (got.length < 5 && Date.now() - t0 < 15_000) await wait(50);
+  await ws.close();
+  wsLog.warn = origWarn;
+  dead.close();
+  w2.close();
+  assert.equal(got.length, 5, "events flow from #2");
+  assert.ok(dead.upgrades >= 2, `#1 was retried in its window (upgrades ${dead.upgrades})`);
+  assert.equal(rows.length, 1);
+  const r = rows[0];
+  assert.equal(r.state, "unreachable");
+  assert.equal(r.reason, "ws:no-connect-60s");
+  assert.equal(r.lastClose?.code, 1006, `a dead upgrade closes 1006 (got ${JSON.stringify(r.lastClose)})`);
+  assert.equal(typeof r.lastError, "string");
+  assert.ok(r.attempts >= 2 && r.attempts === dead.upgrades, `attempts ${r.attempts} = upgrades ${dead.upgrades}`);
+  const disc = lines.filter((l) => /^\[ws\] disconnected/.test(l));
+  assert.ok(disc.length >= 2 && disc.every((l) => /^\[ws\] disconnected \(code 1006\), reconnecting in \d+ms \(attempt \d+\)$/.test(l)), disc.join(" | "));
+  assert.ok(!KEY_RE.test(JSON.stringify(rows) + lines.join("\n") + JSON.stringify(fl)), "no key text in the row or any line");
+  ok("#23 real sockets: #1 kills every upgrade -> unreachable after the window, row lastClose 1006 / lastError / attempts, '[ws] disconnected (code 1006)', no key text");
+}
+{
+  // (f) lib/ws.mjs disconnect line: with failover the code and scrubbed reason; without, as before.
+  const { log: wsLog } = await import("../lib/logger.mjs");
+  const { SolanaWs } = await import("../lib/ws.mjs");
+  const closer = new WebSocket.Server({ port: 0, host: "127.0.0.1" });
+  closer.on("connection", (sock) => sock.close(4001, "bye https://x.example/?api-key=FIXTUREKEYz"));
+  await new Promise((r) => closer.on("listening", r));
+  const port = closer.address().port;
+  const capture = async (mkWs) => {
+    const lines = [];
+    const origWarn = wsLog.warn;
+    wsLog.warn = (...a) => lines.push(a.join(" "));
+    const ws = mkWs();
+    await ws.connect();
+    const t0 = Date.now();
+    while (!lines.some((l) => /^\[ws\] disconnected/.test(l)) && Date.now() - t0 < 5000) await wait(20);
+    await ws.close();
+    wsLog.warn = origWarn;
+    return lines.find((l) => /^\[ws\] disconnected/.test(l));
+  };
+  const plainLine = await capture(() => new SolanaWs(`ws://127.0.0.1:${port}`));
+  assert.match(plainLine, /^\[ws\] disconnected, reconnecting in \d+ms \(attempt 1\)$/, `without failover: the old line (${plainLine})`);
+  const foLine = await capture(() => new SolanaWs("ws://127.0.0.1:1").useFailover(new F.RpcFailover({ endpoints: F.parseRpcUrlList(`http://127.0.0.1:${port}/?api-key=FIXTUREKEYc`) })));
+  assert.match(foLine, /^\[ws\] disconnected \(code 4001, bye <url>\), reconnecting in \d+ms \(attempt 1\)$/, `with failover: code + reason (${foLine})`);
+  assert.ok(!KEY_RE.test(foLine));
+  closer.close();
+  ok("#23 ws disconnect line: '(code 4001, bye <url>)' with failover; byte-for-byte the old line without");
+}
+
+// ---- 12. #23 point 4: thin stream (census) -----------------------------------------------------------
+{
+  const MIN = 60_000;
+  // Fake clock: gap [start, end] closes at `end`; the detector + the failover share the clock.
+  const thinSetup = (n = 2) => {
+    const m = mk(n);
+    const det = F.createThinStreamDetector({ gaps: 3 });
+    m.fo.onSwitch(() => det.noteSwitch(m.now()));
+    const gap = (lenMs = 12_000) => {
+      const start = m.now();
+      m.adv(lenMs);
+      const v = det.noteGap(start, m.now());
+      if (v) m.fo.thin(v);
+      return v;
+    };
+    return { ...m, det, gap };
+  };
+  // (a) 3 gaps within 10 min -> switch, state thin, loud line, short cooldown.
+  const a = thinSetup(2);
+  a.fo.wsHealthy(); // the socket is "healthy" all along
+  assert.equal(a.gap(), null);
+  a.adv(3 * MIN);
+  assert.equal(a.gap(), null);
+  a.adv(3 * MIN);
+  assert.deepEqual(a.gap(), { k: 3, windowMin: 10 }, "3rd gap within 10 min: thin");
+  assert.equal(a.fo.idx, 2);
+  assert.equal(a.rows.length, 1);
+  const { at: _a, ...row } = a.rows[0];
+  assert.deepEqual(row, { type: "rpc_switch", fromIdx: 1, toIdx: 2, host: "h2.example", reason: "census:thin-stream", failures: 0, state: "thin", lastClose: null, lastError: null, attempts: 0, thinGaps: 3 });
+  assert.deepEqual(loudLines(a.logs), ["[rpc] endpoint #1 h1.example gives a thin stream (3 gaps in 10 min): switching to #2 h2.example"]);
+  assert.equal(a.fo.stats().rpcThin, 1);
+  assert.equal(a.fo.stats().rpcUnreachable, 0);
+  a.adv(2 * MIN + 1000);
+  for (let i = 0; i < 3; i++) a.fo.fail("ws", "ws-handshake-402");
+  assert.equal(a.fo.idx, 1, "a thin endpoint is eligible again after RPC_FAILOVER_UNREACH_MIN (2), like unreachable");
+  assert.equal(a.fo.allDown, false);
+
+  // (b) 2 gaps -> no switch; 3 gaps spread over > 10 min -> no switch.
+  const b = thinSetup(2);
+  b.gap();
+  b.adv(MIN);
+  b.gap();
+  b.adv(9 * MIN);
+  assert.equal(b.fo.idx, 1, "2 gaps: no switch");
+  b.gap(); // the first one closed > 10 min ago
+  assert.equal(b.fo.idx, 1, "3 gaps over 10 min 12 s: no switch");
+  assert.equal(b.rows.length, 0);
+
+  // (c) gaps right after a census_stall -> no switch; a stall also drops the gaps counted before it.
+  const c = thinSetup(2);
+  c.gap();
+  c.gap();
+  c.det.noteStall(c.now()); // the phone slept
+  for (let i = 0; i < 4; i++) {
+    c.gap();
+    c.adv(MIN);
+  }
+  assert.equal(c.fo.idx, 1, "gaps within 10 min after a stall: no switch");
+  assert.equal(c.det.counted, 0);
+  c.adv(6 * MIN); // > 10 min since the stall
+  c.gap();
+  c.gap();
+  c.gap();
+  assert.equal(c.fo.idx, 2, "10 min after the stall the detector counts again");
+
+  // (d) a gap that started before the last switch (the switch's own silence) is not the new endpoint's.
+  const d = thinSetup(3);
+  d.gap();
+  d.gap();
+  d.gap(); // #1 thin -> #2 at t
+  assert.equal(d.fo.idx, 2);
+  const tSwitch = d.now();
+  assert.equal(d.det.noteGap(tSwitch - 5000, tSwitch + 3000), null);
+  assert.equal(d.det.counted, 0, "started before the switch: not counted");
+  d.gap();
+  d.gap();
+  assert.equal(d.fo.idx, 2, "2 own gaps on #2: no switch yet");
+
+  // (e) every endpoint thin (none out of credits) -> its own loud line, never "add a key" / "network".
+  const e = thinSetup(2);
+  for (let i = 0; i < 3; i++) e.gap(); // #1 thin -> #2
+  for (let i = 0; i < 3; i++) e.gap(); // #2 thin, #1 still in its 2 min -> all down
+  assert.equal(e.fo.allDown, true);
+  const le = loudLines(e.logs);
+  assert.match(le.at(-1), /^\[rpc\] no endpoint gives a full stream \(2 thin, 0 unreachable, none out of credits\); retrying/);
+  assert.ok(!/add a key|network/i.test(le.join("\n")), le.join(" | "));
+  assert.match(e.rows.at(-1).reason, /^all-down census:thin-stream$/);
+
+  // (f) knobs and the plan-limit counter classification.
+  assert.equal(F.thinGapsFromEnv({}), 3);
+  assert.equal(F.thinGapsFromEnv({ CENSUS_THIN_GAPS: "0" }), 0);
+  assert.throws(() => F.thinGapsFromEnv({ CENSUS_THIN_GAPS: "x" }), /CENSUS_THIN_GAPS must be a number in 0\.\.100/);
+  const off = F.createThinStreamDetector({ gaps: 0 });
+  for (let i = 0; i < 5; i++) assert.equal(off.noteGap(i * 1000, i * 1000 + 500), null, "0 = off");
+  assert.ok(F.isLimitError({ code: -32005, message: "You've exceeded the RPS limit available on the current plan" }));
+  assert.equal(F.limitErrorKey({ code: -32005, message: "x" }), "-32005");
+  assert.ok(F.isLimitError({ message: "Concurrent websocket subscription limit reached: 1" }));
+  assert.equal(F.limitErrorKey({ message: "Concurrent websocket subscription limit reached: 1" }), "?");
+  assert.ok(F.isLimitError({ code: -32602, message: "too many subscriptions on this connection" }));
+  assert.ok(!F.isLimitError({ code: -32602, message: "Invalid param: WrongSize" }));
+  assert.ok(!F.isLimitError({ code: -32005, message: "Node is behind by 42 slots" }));
+  ok("#23 thin stream: 3 gaps in 10 min -> switch (state thin, census:thin-stream, loud line, 2 min cooldown); 2 gaps / > 10 min -> none; gaps after a stall -> none; a switch's own gap not counted; all thin -> own line; CENSUS_THIN_GAPS; limit-error classification");
+}
+
+// ---- 13. #23 point 4 in the census process: a thin endpoint -> switch; rpcThin / rpcLimitErrors -------
+{
+  // #1 serves the pump stream with 2.5 s pauses (CENSUS_GAP_SEC=1 -> a gap per pause), #2 the full feed.
+  async function thinFeedServer(pauseMs) {
+    const W = await import("./mocks/ws-mock-census.mjs");
+    const wss = new WebSocket.Server({ port: 0, host: "127.0.0.1" });
+    wss.subs = 0;
+    wss.on("connection", (sock) => {
+      sock.on("message", (raw) => {
+        const m = JSON.parse(String(raw));
+        if (m.method !== "logsSubscribe") return;
+        if (m.params?.[0]?.mentions?.[0] !== "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P") {
+          sock.send(JSON.stringify({ jsonrpc: "2.0", result: 92, id: m.id }));
+          return;
+        }
+        wss.subs += 1;
+        sock.send(JSON.stringify({ jsonrpc: "2.0", result: 91, id: m.id }));
+        (async () => {
+          for (const n of W.buildNotifications()) {
+            if (sock.readyState !== WebSocket.OPEN) return;
+            sock.send(JSON.stringify({ jsonrpc: "2.0", method: "logsNotification", params: { subscription: 91, result: n.payload() } }));
+            await wait(pauseMs);
+          }
+        })();
+      });
+    });
+    await new Promise((r) => wss.on("listening", r));
+    return wss;
+  }
+  const r1 = await thinFeedServer(2500);
+  const { wss: r2 } = await censusFeedServer();
+  const dir = tmp("census-thin-");
+  const env = cleanEnv({
+    ROOT: tmp("census-thin-root-"),
+    RPC_URLS: `http://127.0.0.1:${r1.address().port}/FIXTUREKEYT1/,http://127.0.0.1:${r2.address().port}/FIXTUREKEYT2/`,
+    CENSUS_DIR: dir,
+    CENSUS_GAP_SEC: "1",
+    CENSUS_MAX_SEC: "16",
+  });
+  const child = startCensus(env);
+  const killer = setTimeout(() => child.kill(), 60_000);
+  const code = await child.done;
+  clearTimeout(killer);
+  r1.close();
+  r2.close();
+  assert.equal(code, 0, `census exited 0 (stderr: ${child.err.split(/\r?\n/).slice(0, 3).join(" | ")})`);
+  assert.match(child.out, /thin stream: 3 gaps in 10 min on one endpoint -> switch/);
+  assert.match(child.err, /\[rpc\] endpoint #1 127\.0\.0\.1 gives a thin stream \(3 gaps in 10 min\): switching to #2 127\.0\.0\.1/);
+  assert.equal(r2.subs, 1, "resubscribed on #2");
+  const rows = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl")).map((f) => fs.readFileSync(path.join(dir, f), "utf8")).join("").trim().split("\n").map((l) => JSON.parse(l));
+  const sw = rows.filter((r) => r.type === "rpc_switch");
+  assert.equal(sw.length, 1, `one switch (got ${JSON.stringify(sw)})`);
+  assert.equal(sw[0].reason, "census:thin-stream");
+  assert.equal(sw[0].state, "thin");
+  assert.equal(sw[0].thinGaps, 3);
+  assert.ok(rows.filter((r) => r.type === "census_gap").length >= 3, "the gaps that made the verdict are in the file");
+  const mem = rows.filter((r) => r.type === "census_mem").at(-1);
+  assert.deepEqual([mem.rpcIdx, mem.rpcSwitches, mem.rpcThin, mem.rpcUnreachable], [2, 1, 1, 0]);
+  assert.deepEqual(mem.rpcLimitErrors, {}, "no plan-limit error here");
+  assert.ok(!KEY_RE.test(child.out + child.err + JSON.stringify(rows)), "no key text");
+  ok("#23 census process: #1 gives a gap every 2.5 s -> after 3 gaps a 'thin stream' switch to #2 (rpc_switch census:thin-stream, census_mem rpcThin 1, rpcLimitErrors {}); no key text");
 }
 
 console.log("PASS: rpc-failover");

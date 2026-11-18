@@ -21,7 +21,9 @@
 // RPC endpoint failover (KODING #20): with RPC_URLS set (comma list, order = priority) the stream
 // moves to the next endpoint when a key is exhausted (handshake 429 / 401 / 402 / 403, a "limit / credits /
 // max usage" JSON-RPC error, RPC_FAILOVER_AFTER times in a row, or 60 s without a connect). Each
-// switch is an `rpc_switch` row in the census file; census_mem carries rpcIdx / rpcSwitches.
+// switch is an `rpc_switch` row in the census file; census_mem carries rpcIdx / rpcSwitches / rpcUnreachable / rpcThin / rpcLimitErrors.
+// #23: CENSUS_THIN_GAPS (3; 0 = off) gaps within 10 min on one endpoint = a thin stream -> switch
+// (state "thin", reason census:thin-stream); gaps after a census_stall do not count.
 // Endpoints are printed as "#n host" only. Without RPC_URLS: the single RPC_URL as before.
 //
 // Rev 2 (KODING #21): after each curve completion the census watches the mint's PumpSwap pool
@@ -60,14 +62,16 @@ const { PUMP_PROGRAM, PUMPSWAP_PROGRAM } = await import("../lib/constants.mjs");
 const { attachPoolStream } = await import("../lib/census-pool.mjs");
 const { SolanaWs } = await import("../lib/ws.mjs");
 const { stallGapMs } = await import("../lib/stall-guard.mjs");
-const { setupFailover } = await import("../lib/rpc-failover.mjs");
+const { setupFailover, thinGapsFromEnv, createThinStreamDetector, isLimitError, limitErrorKey } = await import("../lib/rpc-failover.mjs");
 
 const log0 = (m) => console.log(`[census] ${m}`);
 const DIR = process.env.CENSUS_DIR ? path.resolve(process.env.CENSUS_DIR) : path.join(ROOT, "data", "census");
 const LOCK = path.join(DIR, ".census.lock");
 
 let RPC;
+let thinGaps;
 try {
+  thinGaps = thinGapsFromEnv(process.env);
   RPC = setupFailover({ env: process.env, live: false, log: (level, m) => (level === "info" ? console.log : console.error)(`[census] ${m}`) });
 } catch (e) {
   console.error(`[census] ${e.message}`);
@@ -92,9 +96,37 @@ let handlerErrors = 0;
 let wsOpens = 0; // successful (re)connects of the socket; reconnects = opens - 1
 for (const l of RPC.lines) log0(l);
 if (RPC.failover) RPC.failover.onSwitch((row) => writer.write(row));
-const rpcStats = () => (RPC.failover ? { rpcIdx: RPC.failover.idx, rpcSwitches: RPC.failover.switches } : { rpcIdx: 1, rpcSwitches: 0 });
+// rpcUnreachable (KODING #23): the switches of them that were "unreachable" (no connect), not credits.
+// Thin stream (KODING #23): CENSUS_THIN_GAPS census_gap rows within 10 min on one endpoint (none
+// right after a census_stall, none started before the last switch) -> the failover switches with
+// state "thin". Only with RPC_URLS (there is nowhere to switch to otherwise).
+const thin = RPC.failover && thinGaps > 0 ? createThinStreamDetector({ gaps: thinGaps }) : null;
+if (thin) {
+  RPC.failover.onSwitch(() => thin.noteSwitch(Date.now()));
+  log0(`thin stream: ${thinGaps} gaps in 10 min on one endpoint -> switch (CENSUS_THIN_GAPS; gaps after a stall do not count)`);
+}
+const noteGaps = (rows) => {
+  if (!thin) return;
+  for (const r of rows) {
+    if (r?.type !== "census_gap") continue;
+    const v = thin.noteGap(Date.parse(r.startedAt), Date.parse(r.endedAt));
+    if (v) RPC.failover.thin(v);
+  }
+};
+// Plan-limit errors answered to any subscription (main, pools, vaults), by code (secret-free).
+const limitErrors = {};
+// rpcUnreachable / rpcThin (KODING #23): of the switches, those for no connect / a thin stream (not credits).
+const rpcStats = () => ({
+  ...(RPC.failover ? { rpcIdx: RPC.failover.idx, rpcSwitches: RPC.failover.switches, rpcUnreachable: RPC.failover.unreachableSwitches, rpcThin: RPC.failover.thinSwitches } : { rpcIdx: 1, rpcSwitches: 0, rpcUnreachable: 0, rpcThin: 0 }),
+  rpcLimitErrors: { ...limitErrors },
+});
 const ws = new SolanaWs();
 if (RPC.failover) ws.useFailover(RPC.failover);
+ws.onRpcError = (err) => {
+  if (!isLimitError(err)) return;
+  const k = limitErrorKey(err);
+  limitErrors[k] = (limitErrors[k] || 0) + 1;
+};
 ws.onOpen = () => {
   wsOpens += 1;
 };
@@ -104,7 +136,9 @@ ws.subscribeLogs(PUMP_PROGRAM.toBase58(), (result) => {
   if (!Array.isArray(logs)) return;
   if (!(logs[logs.length - 1] || "").includes("success")) return; // failed tx: no state change
   try {
-    writeRows(C.handleLogs(census, logs, { slot: result?.context?.slot ?? null, nowMs: Date.now() }));
+    const rows = C.handleLogs(census, logs, { slot: result?.context?.slot ?? null, nowMs: Date.now() });
+    writeRows(rows);
+    noteGaps(rows); // after the rows: a thin verdict switches the endpoint (an rpc_switch row)
   } catch (e) {
     handlerErrors += 1;
     if (handlerErrors === 1) log0(`handler error: ${e?.stack || e}`);
@@ -175,6 +209,7 @@ const timer = setInterval(() => {
   if (gap) {
     writer.write(C.noteStall(census, gap, now));
     stallAt = now;
+    thin?.noteStall(now); // the process did not run (phone sleep): these gaps are not the endpoint's
     notes.push(`STALL: the process did not run for ${Math.round(gap / 1000)}s; ${census.live.size} live mint(s) marked stall: true`);
   } else if (stallAt && now - stallAt >= STALL_CLEAR_MS) {
     C.clearStall(census);
