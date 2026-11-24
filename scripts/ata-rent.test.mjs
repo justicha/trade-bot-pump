@@ -90,10 +90,11 @@ asrt(fb.entrySolSol === 0.1 && fb.entrySource === "quote-fallback" && fb.ataRent
 // --- wiring: all three bots store the rent in the position and in the ledger -------------------
 for (const rel of ["bots/sniper/sniper.mjs", "bots/graduation-sniper/graduation.mjs", "bots/copy-trader/watcher.mjs"]) {
   const src = fs.readFileSync(path.join(here, "..", rel), "utf8");
-  asrt(/liveEntry\(ex, BUY_SOL\)/.test(src), `${rel}: entry comes from liveEntry(ex, BUY_SOL)`);
+  // copy-trader sizes each position itself (COPY_SIZE_MODE=proportional, 2026-11-24): liveEntry(ex, buySol)
+  asrt(/liveEntry\(ex, (BUY_SOL|buySol)\)/.test(src), `${rel}: entry comes from liveEntry(ex, BUY_SOL / buySol)`);
   asrt(/session\.ataRent\(/.test(src), `${rel}: the rent reaches the session ledger`);
   asrt(/ataRentSol/.test(src), `${rel}: the position / journal carries ataRentSol`);
-  asrt(!/ex\.solSpentSol > 0 \? ex\.solSpentSol : BUY_SOL/.test(src), `${rel}: no hand-rolled entry fallback left`);
+  asrt(!/ex\.solSpentSol > 0 \? ex\.solSpentSol : (BUY_SOL|buySol)/.test(src), `${rel}: no hand-rolled entry fallback left`);
 }
 // The rent must be measured, not assumed: no token-ATA rent constant in lib/exec.mjs.
 asrt(!/2_?074_?080/.test(fs.readFileSync(path.join(here, "..", "lib", "exec.mjs"), "utf8")), "lib/exec.mjs has no hardcoded Token-2022 ATA rent");

@@ -42,6 +42,11 @@
 // lib/census-pool.mjs). CENSUS_POOL_VAULTS=0 = logs for the whole window (rev 3); CENSUS_POOL_VAULT_CHECK=1
 // subscribes the vaults from the first pool trade and measures the vault price against the trade
 // events (census_mem vaultCheckErr*). census_mint `mayhem` is true / false / null.
+// #24: census_path rows (lib/census-path.mjs): the per-second curve path of every mint whose fill
+// reaches CENSUS_PATH_MIN_FILL (25, range 1..100), from its first trade to its finish or
+// CENSUS_PATH_MAX_SEC (3600) after the threshold second, at most CENSUS_PATH_MAX_BUCKETS (4000)
+// seconds per mint. CENSUS_PATH=0 = off (the other rows exactly as before). census_mem: pathMints /
+// pathBuckets / pathRows / pathBytes. Check a file with scripts/census-path-check.mjs.
 if (process.argv.includes("--live")) {
   console.error("[census] mint-census is read-only; --live is not accepted.");
   process.exit(1);
@@ -179,6 +184,7 @@ const poolStream = census.pools
 log0(
   `read-only, no RPC | milestones ${cfg.milestones.join(" ")} % | idle ${cfg.idleSec}s | gap after ${cfg.gapSec}s of silence | full row at maxFill >= ${cfg.fullMinFill} % | ` +
     `${census.pools ? `pools: mode ${census.pools.mode}, watch ${cfg.poolWatchSec}s, subscribe at fill ${cfg.poolPresubFill >= 100 ? "100 (completion)" : cfg.poolPresubFill}, ${cfg.poolVaults ? `logs until ${cfg.poolLogsSec}s / ${cfg.poolLogsMB} MB then vaults${cfg.poolVaultCheck ? " (vault check on)" : ""}` : "logs for the whole window (CENSUS_POOL_VAULTS=0)"}` : "pools: off (CENSUS_POOL=0)"} | ` +
+    `${census.paths ? `paths: fill >= ${cfg.pathMinFill}, ${cfg.pathMaxSec}s after it, <= ${cfg.pathMaxBuckets} s/mint` : "paths: off (CENSUS_PATH=0)"} | ` +
     `output ${writer.file()} (UTC date) | rev ${C.CENSUS_REV}${cfg.maxSec > 0 ? ` | stops after ${cfg.maxSec}s` : ""}`,
 );
 log0("do not select text in this window: a paused console freezes the recorder (stalls are journaled)");
@@ -230,7 +236,7 @@ const timer = setInterval(() => {
   if (MEM_MS > 0 && now - memAt >= MEM_MS) {
     memAt = now;
     const r = writeMem(now);
-    notes.push(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | live ${r.liveMints} | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}) | launchers ${r.launchers} | ${census.pools ? `pools live ${r.poolLive}, pending ${r.poolPending}, phase 2 ${r.poolPhase2}, rows ${r.poolRows}, no-complete ${r.poolActivatedNoComplete}, subs ${r.poolSubs} + vault ${r.vaultSubs}, logs ${r.poolLogMB} MB, vaults ${r.vaultMB} MB, mode ${r.poolMode} | ` : ""}${(r.bytesWritten / 1048576).toFixed(2)} MB written`);
+    notes.push(`memory: rss ${r.rssMB} MB, heap ${r.heapMB} MB | live ${r.liveMints} | rows ${r.rows} (full ${r.full}, compact ${r.compact}, migrated ${r.migrated}) | launchers ${r.launchers} | ${census.pools ? `pools live ${r.poolLive}, pending ${r.poolPending}, phase 2 ${r.poolPhase2}, rows ${r.poolRows}, no-complete ${r.poolActivatedNoComplete}, subs ${r.poolSubs} + vault ${r.vaultSubs}, logs ${r.poolLogMB} MB, vaults ${r.vaultMB} MB, mode ${r.poolMode} | ` : ""}${census.paths ? `paths live ${r.pathMints} (${r.pathBuckets} s), rows ${r.pathRows}, ${(r.pathBytes / 1048576).toFixed(2)} MB | ` : ""}${(r.bytesWritten / 1048576).toFixed(2)} MB written`);
   }
   for (const n of notes) log0(n); // console last: it is the thing that can block
 }, 1000);

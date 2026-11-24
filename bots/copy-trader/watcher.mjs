@@ -5,7 +5,10 @@
 //
 // Config via ENV or .env:
 //   COPY_TARGETS=addr1,addr2,...  — wallets to copy
-//   COPY_BUY_SOL=0.05            — buy amount (fixed)
+//   COPY_BUY_SOL=0.05            — buy amount (COPY_SIZE_MODE=fixed, the default)
+//   COPY_SIZE_MODE=fixed         — proportional: buy the same SHARE of our wallet that the target spent
+//                                   of its wallet (lib/copy-sizing.mjs); COPY_RESERVE_SOL (0.01) is kept
+//                                   aside, a buy below COPY_MIN_BUY_SOL (0.005) is skipped
 //   COPY_SELL_PCT=100             — percent sold when the target sells
 //   COPY_MAX_POSITIONS=5          — max concurrent positions
 //   COPY_MAX_HOLD_SEC=1800        — safety net: if the target has not sold within N seconds of our buy,
@@ -37,6 +40,7 @@ import { connection, getSOLBalance, sendTxWithRetry } from "../../lib/rpc.mjs";
 import { simulateThenSend } from "../../lib/send.mjs";
 import { readExecution } from "../../lib/exec.mjs";
 import { roundTripCosts } from "../../lib/fees.mjs";
+import { parseSizeEnv, proportionalBuySol } from "../../lib/copy-sizing.mjs";
 import { SessionLedger } from "../../lib/session.mjs";
 import { TradeJournal } from "../../lib/journal.mjs";
 import { recordStuck } from "../../lib/stuck.mjs";
@@ -53,6 +57,14 @@ import { SolanaWs } from "../../lib/ws.mjs";
 // the variable name, never silently become NaN. A NaN MAX_POSITIONS used to make the position-cap
 // check `positions.size + opening.size >= NaN` always false — i.e. the cap was silently disabled.
 const BUY_SOL = numOr(process.env.COPY_BUY_SOL, 0.05, "COPY_BUY_SOL");
+// Position size mode (human decision 2026-11-24): fixed COPY_BUY_SOL, or proportional to the target.
+let SIZE;
+try {
+  SIZE = parseSizeEnv(process.env, numOr);
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}
 const SELL_PCT = numOr(process.env.COPY_SELL_PCT, 100, "COPY_SELL_PCT");
 const MAX_POSITIONS = numOr(process.env.COPY_MAX_POSITIONS, 5, "COPY_MAX_POSITIONS");
 const TARGETS = (process.env.COPY_TARGETS || "").split(",").filter(Boolean);
@@ -151,44 +163,64 @@ let exitTimer = null; // set in Main, cleared in finish()
 // same mint twice (check → await → set race). Same fix as bots/sniper/sniper.mjs.
 const opening = new Set();
 
-async function copyBuy(mint, copiedFrom) {
+async function copyBuy(mint, copiedFrom, targetSolAmount = null) {
   if (opening.has(mint)) return;
   if (positions.has(mint)) return;
   if (positions.size + opening.size >= MAX_POSITIONS) return;
   opening.add(mint);
   try {
-    await copyBuyUnlocked(mint, copiedFrom);
+    await copyBuyUnlocked(mint, copiedFrom, targetSolAmount);
   } finally {
     opening.delete(mint);
   }
 }
 
-async function copyBuyUnlocked(mint, copiedFrom) {
+async function copyBuyUnlocked(mint, copiedFrom, targetSolAmount = null) {
   if (positions.size >= MAX_POSITIONS) return;
   if (positions.has(mint)) return;
+
+  // The size of this buy: COPY_BUY_SOL, or the target's share of its wallet applied to ours.
+  let buySol = BUY_SOL;
+  if (SIZE.mode === "proportional") {
+    let theirs;
+    let ours;
+    try {
+      [theirs, ours] = await Promise.all([getSOLBalance(new PublicKey(copiedFrom)), getSOLBalance(wallet.publicKey)]);
+    } catch (e) {
+      log(`COPY BUY from ${copiedFrom.slice(0, 8)}... skip: balance read failed (${e.message})`);
+      return;
+    }
+    const s = proportionalBuySol({ targetSpentSol: targetSolAmount, targetBalanceAfterSol: theirs, ourBalanceSol: ours, reserveSol: SIZE.reserveSol, minBuySol: SIZE.minBuySol });
+    if (!s.ok) {
+      log(`COPY BUY from ${copiedFrom.slice(0, 8)}... skip: ${s.reason}`);
+      return;
+    }
+    buySol = s.buySol;
+    log(`  size: target spent ${targetSolAmount} of ${(theirs + Number(targetSolAmount)).toFixed(4)} SOL = ${(s.fraction * 100).toFixed(2)} % -> ${buySol} SOL of our ${ours.toFixed(4)} SOL`);
+  }
 
   const mintPk = new PublicKey(mint);
   const state = await getBondingCurveState(mintPk, 0);
   if (!state || state.complete) return;
 
   const entryPrice = getPrice(state);
-  const expectedTokens = calcBuyTokens(state, BUY_SOL);
+  const expectedTokens = calcBuyTokens(state, buySol);
   const minTokens = (expectedTokens * BigInt(10000 - SLIPPAGE_BPS)) / 10000n;
 
   log(`COPY BUY from ${copiedFrom.slice(0, 8)}...`);
-  log(`  mint: ${mint.slice(0, 12)}... | ${BUY_SOL} SOL -> ~${(Number(expectedTokens) / 1e6).toFixed(0)} tokens`);
+  log(`  mint: ${mint.slice(0, 12)}... | ${buySol} SOL -> ~${(Number(expectedTokens) / 1e6).toFixed(0)} tokens`);
 
-  const gate = guard.checkOpen(BUY_SOL);
+  const gate = guard.checkOpen(buySol);
   if (!gate.ok) {
     log(`  skip: ${gate.reason}`);
     if (gate.terminal) requestStop(gate.reason); // session over -> finish with the summary
     return;
   }
-  guard.reserve(BUY_SOL); // synchronous reservation closes the concurrent-event race
+  guard.reserve(buySol); // synchronous reservation closes the concurrent-event race
 
   if (DRY_RUN) {
-    positions.set(mint, { entryPrice, entrySolSol: BUY_SOL, entryTime: Date.now(), copiedFrom });
-    session.buy(BUY_SOL);
+    positions.set(mint, { entryPrice, entrySolSol: buySol, buySol, entryTime: Date.now(), copiedFrom });
+    session.buy(buySol);
     log(`  [DRY RUN] tracked`);
     return;
   }
@@ -199,7 +231,7 @@ async function copyBuyUnlocked(mint, copiedFrom) {
     const ixs = [
       ...computeBudgetIxs(),
       userAtaIx(wallet.publicKey, mintPk),
-      buyIx(wallet.publicKey, mintPk, BUY_SOL, minTokens, {
+      buyIx(wallet.publicKey, mintPk, buySol, minTokens, {
         creator: state.creator ? new PublicKey(state.creator) : undefined,
         isMayhem: !!state.isMayhemMode,
       }),
@@ -209,10 +241,10 @@ async function copyBuyUnlocked(mint, copiedFrom) {
     // C5: entry from ACTUAL execution (tokens that arrived / SOL that left), falling back to the
     // quote if the transaction meta is not available yet.
     const ex = await readExecution(sig, wallet.publicKey, mintPk);
-    const entry = liveEntry(ex, BUY_SOL); // ATA rent is tracked apart, not inside the entry
+    const entry = liveEntry(ex, buySol); // ATA rent is tracked apart, not inside the entry
     const spent = entry.entrySolSol;
     const actualEntry = ex.found && ex.tokensReceived > 0n ? spent / (Number(ex.tokensReceived) / 1e6) : entryPrice;
-    positions.set(mint, { entryPrice: actualEntry, ...entry, entryTime: Date.now(), copiedFrom });
+    positions.set(mint, { entryPrice: actualEntry, ...entry, buySol, entryTime: Date.now(), copiedFrom });
     session.buy(spent);
     session.ataRent(entry.ataRentSol);
     log(`  copied${ex.found ? "" : " (quote-fallback)"}`);
@@ -222,16 +254,16 @@ async function copyBuyUnlocked(mint, copiedFrom) {
     if (err.sig) {
       const ex = await readExecution(err.sig, wallet.publicKey, mintPk).catch(() => null);
       if (ex && ex.found && ex.tokensReceived > 0n) {
-        const entry = liveEntry(ex, BUY_SOL);
+        const entry = liveEntry(ex, buySol);
         const spent = entry.entrySolSol;
-        positions.set(mint, { entryPrice: entryPrice, ...entry, entryTime: Date.now(), copiedFrom });
+        positions.set(mint, { entryPrice: entryPrice, ...entry, buySol, entryTime: Date.now(), copiedFrom });
         session.buy(spent);
         session.ataRent(entry.ataRentSol);
         log(`  copied (reconciled after confirm error, ${ex.tokensReceived} tokens)`);
         return;
       }
     }
-    guard.release(BUY_SOL);
+    guard.release(buySol);
     log(`  copy buy failed: ${err.message}`);
   }
 }
@@ -271,6 +303,7 @@ async function copySellOnce(mint, copiedFrom, { reason = null, retry = false, fi
   }
 
   const mintPk = new PublicKey(mint);
+  const posBuySol = pos.buySol ?? BUY_SOL; // this position's buy size (proportional mode: per position)
   const why = retry ? `retry ${(pos.attempts || 0) + 1}/${SELL_MAX_ATTEMPTS}: ${reason || "target sold"}` : reason;
   log(`COPY SELL from ${copiedFrom.slice(0, 8)}...${why ? ` (${why})` : ""}`);
 
@@ -279,11 +312,11 @@ async function copySellOnce(mint, copiedFrom, { reason = null, retry = false, fi
     if (state) {
       const sellPrice = getPrice(state);
       const ratio = sellPrice / pos.entryPrice;
-      const costs = roundTripCosts({ buySol: BUY_SOL, ratio });
+      const costs = roundTripCosts({ buySol: posBuySol, ratio });
       const pnlPct = ((sellPrice / pos.entryPrice) - 1) * 100;
-      const pnlSol = BUY_SOL * (pnlPct / 100);
+      const pnlSol = posBuySol * (pnlPct / 100);
       recordResult(pnlSol);
-      session.sell(BUY_SOL + pnlSol, pnlSol, costs);
+      session.sell(posBuySol + pnlSol, pnlSol, costs);
       totalTrades++;
       log(`  [DRY RUN] would sell: ${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%`);
     }
@@ -310,7 +343,7 @@ async function copySellOnce(mint, copiedFrom, { reason = null, retry = false, fi
         mintPk,
         pos,
         positions,
-        buySol: BUY_SOL,
+        buySol: posBuySol,
         readExecution,
         applyLiveSell,
         recordResult,
@@ -361,7 +394,7 @@ async function copySellOnce(mint, copiedFrom, { reason = null, retry = false, fi
       // remaining entry as an assumed loss so MAX_CONSEC_LOSSES sees it (lib/stuck.mjs).
       const why = state ? "curve complete: no AMM sell in this bot" : "curve unavailable: no AMM sell in this bot";
       const lossSol = recordStuck({
-        journal, recordResult, mint, pos: { ...pos, tokens: total }, buySol: BUY_SOL, reason: why,
+        journal, recordResult, mint, pos: { ...pos, tokens: total }, buySol: posBuySol, reason: why,
         fields: { mode: "LIVE", copiedFrom },
       });
       log(`  STUCK ${mint.slice(0, 8)}: ${why} — booked as an assumed loss of ${lossSol.toFixed(6)} SOL, use scripts/rescue-sell.mjs`);
@@ -390,7 +423,7 @@ async function copySellOnce(mint, copiedFrom, { reason = null, retry = false, fi
     // The same calculation as the sniper and graduation-sniper (lib/live-pnl.mjs applyLiveSell):
     // PnL against the SOLD share of the entry (H4), net of both real network fees; the ledger
     // gets the gross figures + the real fees as costs (no estimated tx fee / assumed slippage).
-    const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, quoteSol: Number(expectedSol) / 1e9, soldRaw: sellAmount, totalRaw: total });
+    const sale = applyLiveSell(pos, { buySol: posBuySol, ex, quoteSol: Number(expectedSol) / 1e9, soldRaw: sellAmount, totalRaw: total });
     const pnlSol = sale.acc.pnlSol;
     recordResult(pnlSol, { guardPnlSol: sale.guardPnlSol });
     session.sell(sale.acc.ledger.receivedSol, sale.acc.ledger.pnlSol, sale.acc.costs);
@@ -416,7 +449,7 @@ async function copySellOnce(mint, copiedFrom, { reason = null, retry = false, fi
         // for the remainder, and substitute BUY_SOL (break-even) when nothing arrived.
         const soldRaw = ex.tokensSold;
         const totalRaw = balanceBeforeSell({ balanceRaw: total, posTokens: pos.tokens, soldRaw });
-        const sale = applyLiveSell(pos, { buySol: BUY_SOL, ex, soldRaw, totalRaw });
+        const sale = applyLiveSell(pos, { buySol: posBuySol, ex, soldRaw, totalRaw });
         const pnlSol = sale.acc.pnlSol;
         recordResult(pnlSol, { guardPnlSol: sale.guardPnlSol });
         session.sell(sale.acc.ledger.receivedSol, sale.acc.ledger.pnlSol, sale.acc.costs);
@@ -508,7 +541,7 @@ async function finish(reason = stopReason || "stopped") {
   const endSol = LIVE ? await getSOLBalance(wallet.publicKey).catch(() => null) : null;
   // H9: openSpentSol = sum of REMAINING entry shares (partial sells reduce pos.entrySolSol), so
   // the session NET (received - closedSpent) does not mix partial-sell proceeds with open spend.
-  session.report({ reason, openPositions: positions.size, endSol, openSpentSol: [...positions.values()].reduce((a, p) => a + (p.entrySolSol ?? BUY_SOL), 0) });
+  session.report({ reason, openPositions: positions.size, endSol, openSpentSol: [...positions.values()].reduce((a, p) => a + (p.entrySolSol ?? p.buySol ?? BUY_SOL), 0) });
   process.exit(0);
 }
 
@@ -516,7 +549,7 @@ async function finish(reason = stopReason || "stopped") {
 log("=== COPY TRADER (V3) ===");
 log(`Wallet: ${wallet.publicKey.toBase58()}`);
 log(`Targets: ${TARGETS.map((t) => t.slice(0, 12) + "...").join(", ")}`);
-log(`Config: buy=${BUY_SOL} SOL, sell=${SELL_PCT}%, max=${MAX_POSITIONS} positions`);
+log(`Config: buy=${SIZE.mode === "proportional" ? `proportional to the target (reserve ${SIZE.reserveSol} SOL, min ${SIZE.minBuySol} SOL)` : `${BUY_SOL} SOL`}, sell=${SELL_PCT}%, max=${MAX_POSITIONS} positions`);
 if (LIVE) log(`MODE: LIVE — real transactions will be sent`);
 else log(`MODE: DRY RUN (no real transactions) — pass --live to trade`);
 log(`Exit safety: max hold ${MAX_HOLD_SEC > 0 ? `${MAX_HOLD_SEC}s` : "off"} (COPY_MAX_HOLD_SEC), sell attempts <= ${SELL_MAX_ATTEMPTS} (SELL_MAX_ATTEMPTS)`);
@@ -555,7 +588,7 @@ for (const target of TARGETS) {
       if (ev.user !== target) continue;
       if (ev.isBuy) {
         if (backlog) continue; // an old buy is not copied (the price it was made at is gone)
-        await copyBuy(ev.mint, target);
+        await copyBuy(ev.mint, target, ev.solAmount);
       } else {
         await copySell(ev.mint, target);
       }

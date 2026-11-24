@@ -254,7 +254,7 @@ const [on, off] = await Promise.all([runGrad("on", { STALL_GUARD_SEC: "2" }), ru
   asrt(gate > 0 && gate < handler.indexOf("curveStream.set(") && gate < handler.indexOf("for (const create of creates)") && gate < handler.indexOf("mintStats.set("), "sniper: the stale gate sits before the stream price, the counters and the create handling");
   asrt(/async function confirmExitPrice\(mint\)/.test(sniper) && /await confirmExitPrice\(mint\)/.test(sniper), "sniper: exits still go through the on-chain confirmation");
   // copy-trader: an old target BUY is not copied; a target SELL still goes to copySell (which reads the chain).
-  asrt(/const backlog = stallGuard\.isStale\(events\);/.test(copy) && /if \(ev\.isBuy\) \{\n        if \(backlog\) continue;[^\n]*\n        await copyBuy\(ev\.mint, target\);\n      \} else \{\n        await copySell\(ev\.mint, target\);/.test(copy), "copy-trader: backlog skips copyBuy only");
+  asrt(/const backlog = stallGuard\.isStale\(events\);/.test(copy) && /if \(ev\.isBuy\) \{\n        if \(backlog\) continue;[^\n]*\n        await copyBuy\(ev\.mint, target(, ev\.solAmount)?\);\n      \} else \{\n        await copySell\(ev\.mint, target\);/.test(copy), "copy-trader: backlog skips copyBuy only");
   asrt(/onStall: \(\) => \{\n    void checkExits\(\);/.test(copy), "copy-trader: stall -> the exit timer runs at once");
 }
 
